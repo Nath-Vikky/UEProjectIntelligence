@@ -73,12 +73,14 @@ MCP_ARTIFACT_DIR_NAME = "mcp_artifacts"
 
 
 def object_schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
-    return {
+    schema = {
         "type": "object",
         "properties": properties,
-        "required": required or [],
         "additionalProperties": False,
     }
+    if required:
+        schema["required"] = required
+    return schema
 
 
 TOKEN_BUDGET_PROPERTY = {
@@ -790,6 +792,18 @@ TOOL_SPECS: list[dict[str, Any]] = [
 ]
 
 TOOL_BY_NAME = {tool["name"]: tool for tool in TOOL_SPECS}
+CODEX_TOOL_PROFILE = {
+    "uepi_health",
+    "uepi_project_status",
+    "uepi_project_refresh",
+    "uepi_read_asset_context",
+    "uepi_read_blueprint",
+    "uepi_read_animation",
+    "uepi_summary",
+    "uepi_search",
+    "uepi_graph_query",
+    "uepi_security_audit",
+}
 JOB_ALLOWED_OPERATIONS = set(TOOL_BY_NAME) - {"uepi_job_start", "uepi_job_get"}
 INDEX_WRITE_TOOLS = [
     "uepi_ingest",
@@ -811,9 +825,13 @@ INDEX_WRITE_TOOLS = [
 READ_ONLY_TOOLS = sorted(set(TOOL_BY_NAME) - set(INDEX_WRITE_TOOLS) - {"uepi_job_start", "uepi_job_get"})
 
 
-def mcp_tool_specs(include_output_schema: bool = False) -> list[dict[str, Any]]:
+def mcp_tool_specs(include_output_schema: bool = False, tool_profile: str = "full") -> list[dict[str, Any]]:
     """Return tool metadata in the broadest MCP-client-compatible shape by default."""
     tools = json.loads(json.dumps(TOOL_SPECS))
+    if tool_profile == "codex":
+        tools = [tool for tool in tools if tool["name"] in CODEX_TOOL_PROFILE]
+    elif tool_profile != "full":
+        raise ValueError(f"Unknown MCP tool profile: {tool_profile}")
     if not include_output_schema:
         for tool in tools:
             tool.pop("outputSchema", None)
@@ -1695,10 +1713,17 @@ def write_message(stdout: Any, payload: dict[str, Any]) -> None:
 
 
 class UEPIMCPServer:
-    def __init__(self, db_path: Path, token_budget: int, include_output_schema: bool = False) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        token_budget: int,
+        include_output_schema: bool = False,
+        tool_profile: str = "full",
+    ) -> None:
         self.db_path = db_path
         self.token_budget = token_budget
         self.include_output_schema = include_output_schema
+        self.tool_profile = tool_profile
 
     def initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -1711,7 +1736,6 @@ class UEPIMCPServer:
             "serverInfo": {
                 "name": SERVER_NAME,
                 "version": SERVER_VERSION,
-                "official_sdk_available": OFFICIAL_SDK_AVAILABLE,
             },
         }
 
@@ -1943,7 +1967,7 @@ class UEPIMCPServer:
             elif method == "ping":
                 result = {}
             elif method == "tools/list":
-                result = {"tools": mcp_tool_specs(self.include_output_schema)}
+                result = {"tools": mcp_tool_specs(self.include_output_schema, self.tool_profile)}
             elif method == "tools/call":
                 name = params.get("name")
                 arguments = dict(params.get("arguments") or {})
@@ -1983,8 +2007,13 @@ class UEPIMCPServer:
             }
 
 
-def run_stdio(db_path: Path, token_budget: int, include_output_schema: bool = False) -> int:
-    server = UEPIMCPServer(db_path, token_budget, include_output_schema)
+def run_stdio(
+    db_path: Path,
+    token_budget: int,
+    include_output_schema: bool = False,
+    tool_profile: str = "full",
+) -> int:
+    server = UEPIMCPServer(db_path, token_budget, include_output_schema, tool_profile)
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
     while True:
@@ -2005,6 +2034,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Include non-essential outputSchema fields in tools/list for clients that support them.",
     )
+    parser.add_argument(
+        "--tool-profile",
+        choices=["full", "codex"],
+        default="full",
+        help="Limit advertised tools for clients that struggle with large MCP tool catalogs.",
+    )
     parser.add_argument("--sdk-status", action="store_true", help="Print official MCP SDK availability and exit.")
     args = parser.parse_args(argv)
 
@@ -2012,7 +2047,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"official_sdk_available": OFFICIAL_SDK_AVAILABLE}, indent=2))
         return 0
 
-    return run_stdio(args.db, args.token_budget, args.include_output_schema)
+    return run_stdio(args.db, args.token_budget, args.include_output_schema, args.tool_profile)
 
 
 if __name__ == "__main__":

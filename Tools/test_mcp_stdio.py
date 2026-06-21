@@ -64,6 +64,34 @@ def request(
     return response["result"]
 
 
+def notification(
+    process: subprocess.Popen[bytes],
+    method: str,
+    params: dict[str, Any] | None = None,
+    framing: str = "content-length",
+) -> None:
+    send_message(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or {},
+        },
+        framing,
+    )
+
+
+def assert_no_empty_required(value: Any) -> None:
+    if isinstance(value, dict):
+        if value.get("required") == []:
+            raise AssertionError("empty required arrays should be omitted from MCP schemas")
+        for child in value.values():
+            assert_no_empty_required(child)
+    elif isinstance(value, list):
+        for child in value:
+            assert_no_empty_required(child)
+
+
 def cleanup_db(db_path: Path) -> None:
     for candidate in [db_path, db_path.with_name(db_path.name + "-wal"), db_path.with_name(db_path.name + "-shm")]:
         if candidate.exists():
@@ -82,10 +110,12 @@ def cleanup_db(db_path: Path) -> None:
             pass
 
 
-def server_command(args: argparse.Namespace, include_output_schema: bool = False) -> list[str]:
+def server_command(args: argparse.Namespace, include_output_schema: bool = False, tool_profile: str = "full") -> list[str]:
     command = [sys.executable, "-B", str(args.server), "--db", str(args.db), "--token-budget", "4000"]
     if include_output_schema:
         command.append("--include-output-schema")
+    if tool_profile != "full":
+        command.extend(["--tool-profile", tool_profile])
     return command
 
 
@@ -119,6 +149,53 @@ def assert_include_output_schema_mode(args: argparse.Namespace) -> None:
             process.wait(timeout=5)
 
 
+def assert_codex_tool_profile(args: argparse.Namespace) -> None:
+    process = subprocess.Popen(
+        server_command(args, tool_profile="codex"),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        init = request(
+            process,
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "uepi-mcp-codex-profile-check", "version": "1"},
+            },
+        )
+        assert init["serverInfo"]["name"] == "uepi-mcp"
+        assert set(init["serverInfo"]) == {"name", "version"}
+        notification(process, "notifications/initialized")
+        tools = request(process, 2, "tools/list")["tools"]
+        tool_names = {tool["name"] for tool in tools}
+        assert tool_names == {
+            "uepi_health",
+            "uepi_project_status",
+            "uepi_project_refresh",
+            "uepi_read_asset_context",
+            "uepi_read_blueprint",
+            "uepi_read_animation",
+            "uepi_summary",
+            "uepi_search",
+            "uepi_graph_query",
+            "uepi_security_audit",
+        }
+        assert all("inputSchema" in tool and "outputSchema" not in tool for tool in tools)
+        assert_no_empty_required(tools)
+    finally:
+        if process.stdin:
+            process.stdin.close()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+
 def run_profile(args: argparse.Namespace, framing: str) -> None:
     cleanup_db(args.db)
     process = subprocess.Popen(
@@ -140,6 +217,8 @@ def run_profile(args: argparse.Namespace, framing: str) -> None:
             framing,
         )
         assert init["serverInfo"]["name"] == "uepi-mcp"
+        assert set(init["serverInfo"]) == {"name", "version"}
+        notification(process, "notifications/initialized", framing=framing)
 
         tools = request(process, 2, "tools/list", framing=framing)["tools"]
         tool_names = {tool["name"] for tool in tools}
@@ -168,6 +247,7 @@ def run_profile(args: argparse.Namespace, framing: str) -> None:
         }:
             assert required in tool_names
         assert "inputSchema" in tools[0] and "outputSchema" not in tools[0]
+        assert_no_empty_required(tools)
 
         ingest = request(process, 3, "tools/call", {"name": "uepi_ingest", "arguments": {"scan": str(args.scan)}}, framing)
         assert ingest["structuredContent"]["entity_count"] > 0
@@ -317,6 +397,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     assert_include_output_schema_mode(args)
+    assert_codex_tool_profile(args)
     run_profile(args, "content-length")
     run_profile(args, "json-line")
     print("mcp stdio compatibility assertions ok")
