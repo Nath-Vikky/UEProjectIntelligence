@@ -38,6 +38,9 @@ def read_message(process: subprocess.Popen[bytes]) -> dict[str, Any]:
     length = int(headers.get("content-length", "0"))
     if length <= 0:
         raise RuntimeError("MCP response did not include Content-Length.")
+    content_type = headers.get("content-type", "")
+    if not content_type.startswith("application/vscode-jsonrpc"):
+        raise RuntimeError(f"MCP response did not include JSON-RPC Content-Type: {content_type!r}")
     return json.loads(process.stdout.read(length).decode("utf-8"))
 
 

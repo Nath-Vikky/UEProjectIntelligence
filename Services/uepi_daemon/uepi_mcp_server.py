@@ -1750,7 +1750,13 @@ def read_message(stdin: Any) -> dict[str, Any] | None:
 
 def write_message(stdout: Any, payload: Any) -> None:
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    stdout.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    stdout.write(
+        (
+            f"Content-Length: {len(data)}\r\n"
+            "Content-Type: application/vscode-jsonrpc; charset=utf-8\r\n"
+            "\r\n"
+        ).encode("ascii")
+    )
     stdout.write(data)
     stdout.flush()
 
@@ -2111,6 +2117,15 @@ def run_stdio(
             return 0
         response = server.handle(request)
         if response is not None:
+            method = request.get("method") if isinstance(request, dict) else None
+            response_trace: dict[str, Any] = {
+                "method": method,
+                "has_error": isinstance(response, dict) and "error" in response,
+                "response_id": response.get("id") if isinstance(response, dict) else None,
+            }
+            if method == "initialize":
+                response_trace["payload"] = response
+            trace_event(trace_file, "response", **response_trace)
             write_message(stdout, response)
 
 
