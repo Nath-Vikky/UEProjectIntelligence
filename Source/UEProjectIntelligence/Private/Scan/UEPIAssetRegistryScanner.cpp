@@ -1007,88 +1007,107 @@ FProjectScanResult FAssetRegistryScanner::ScanProject(const FScanOptions& Option
 
 		if (Options.bReadBlueprintGraphs && Options.TargetObjectPaths.Num() > 0)
 		{
-			if (FWorldReader::AppendWorldPartitionActorDescAssetData(AssetData, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-			{
-			}
-			else
-			{
-				UObject* LoadedAsset = AssetData.GetAsset();
+			const bool bAppendedWorldPartitionActorDesc = FWorldReader::AppendWorldPartitionActorDescAssetData(
+				AssetData,
+				Result.ProjectId,
+				Entity,
+				Result.Entities,
+				Result.Relations);
+			bool bHandledStructuralAsset = bAppendedWorldPartitionActorDesc;
+			UObject* LoadedAsset = AssetData.GetAsset();
 
-				if (LoadedAsset && FCommonUIReader::AppendCommonUIAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-					if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
-					{
-						FBlueprintGraphReader::AppendBlueprintGraph(*Blueprint, Result.ProjectId, Entity, Result.Entities, Result.Relations);
-					}
-				}
-				else if (LoadedAsset && FUIReader::AppendUIAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-					if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
-					{
-						FBlueprintGraphReader::AppendBlueprintGraph(*Blueprint, Result.ProjectId, Entity, Result.Entities, Result.Relations);
-					}
-				}
-				else if (LoadedAsset && FGASReader::AppendGASAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-					if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
-					{
-						FBlueprintGraphReader::AppendBlueprintGraph(*Blueprint, Result.ProjectId, Entity, Result.Entities, Result.Relations);
-					}
-				}
-				else if (LoadedAsset && FStateTreeReader::AppendStateTreeAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-				}
-				else if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
+			if (LoadedAsset && FCommonUIReader::AppendCommonUIAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+				if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
 				{
 					FBlueprintGraphReader::AppendBlueprintGraph(*Blueprint, Result.ProjectId, Entity, Result.Entities, Result.Relations);
 				}
-				else if (LoadedAsset && FWorldReader::AppendWorldAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			}
+			else if (LoadedAsset && FUIReader::AppendUIAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+				if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
 				{
+					FBlueprintGraphReader::AppendBlueprintGraph(*Blueprint, Result.ProjectId, Entity, Result.Entities, Result.Relations);
 				}
-				else if (LoadedAsset && FAIReader::AppendAIAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			}
+			else if (LoadedAsset && FGASReader::AppendGASAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+				if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
 				{
+					FBlueprintGraphReader::AppendBlueprintGraph(*Blueprint, Result.ProjectId, Entity, Result.Entities, Result.Relations);
 				}
-				else if (LoadedAsset && FAnimationReader::AppendAnimationAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-				}
-				else if (LoadedAsset && FInputReader::AppendInputAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-				}
-				else if (LoadedAsset && FDataReader::AppendDataAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-				}
-				else if (LoadedAsset && FNiagaraReader::AppendNiagaraAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-				}
-				else if (LoadedAsset && FPCGReader::AppendPCGAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-					RestoreLoadedAssetPackageDirtyStateAfterRead(*LoadedAsset, bWasDirtyBeforeAssetRead);
-				}
-				else if (LoadedAsset && FMaterialReader::AppendMaterialAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-				}
-				else if (LoadedAsset && FMetaSoundReader::AppendMetaSoundAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-					RestoreLoadedAssetPackageDirtyStateAfterRead(*LoadedAsset, bWasDirtyBeforeAssetRead);
-				}
-				else if (LoadedAsset && FAudioReader::AppendAudioAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-				}
-				else if (LoadedAsset && FCinematicsReader::AppendCinematicsAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-				}
-				else if (LoadedAsset && FRenderAssetReader::AppendRenderAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
-				{
-				}
-				else
-				{
-					FDiagnostic Diagnostic;
-					Diagnostic.Code = TEXT("UEPI_L2_READER_MISSING");
-					Diagnostic.Severity = TEXT("warning");
-					Diagnostic.Message = TEXT("L2 structural scan requested for an asset without a specialized reader.");
-					Diagnostic.Context.Add(TEXT("object_path"), AssetData.GetObjectPathString());
-					Entity.Diagnostics.Add(MoveTemp(Diagnostic));
-				}
+			}
+			else if (LoadedAsset && FStateTreeReader::AppendStateTreeAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+			}
+			else if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
+			{
+				bHandledStructuralAsset = true;
+				FBlueprintGraphReader::AppendBlueprintGraph(*Blueprint, Result.ProjectId, Entity, Result.Entities, Result.Relations);
+			}
+			else if (LoadedAsset && FWorldReader::AppendWorldAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+			}
+			else if (LoadedAsset && FAIReader::AppendAIAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+			}
+			else if (LoadedAsset && FAnimationReader::AppendAnimationAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+			}
+			else if (LoadedAsset && FInputReader::AppendInputAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+			}
+			else if (LoadedAsset && FDataReader::AppendDataAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+			}
+			else if (LoadedAsset && FNiagaraReader::AppendNiagaraAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+			}
+			else if (LoadedAsset && FPCGReader::AppendPCGAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+				RestoreLoadedAssetPackageDirtyStateAfterRead(*LoadedAsset, bWasDirtyBeforeAssetRead);
+			}
+			else if (LoadedAsset && FMaterialReader::AppendMaterialAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+			}
+			else if (LoadedAsset && FMetaSoundReader::AppendMetaSoundAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+				RestoreLoadedAssetPackageDirtyStateAfterRead(*LoadedAsset, bWasDirtyBeforeAssetRead);
+			}
+			else if (LoadedAsset && FAudioReader::AppendAudioAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+			}
+			else if (LoadedAsset && FCinematicsReader::AppendCinematicsAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+			}
+			else if (LoadedAsset && FRenderAssetReader::AppendRenderAsset(*LoadedAsset, Result.ProjectId, Entity, Result.Entities, Result.Relations))
+			{
+				bHandledStructuralAsset = true;
+			}
+
+			if (!bHandledStructuralAsset)
+			{
+				FDiagnostic Diagnostic;
+				Diagnostic.Code = TEXT("UEPI_L2_READER_MISSING");
+				Diagnostic.Severity = TEXT("warning");
+				Diagnostic.Message = TEXT("L2 structural scan requested for an asset without a specialized reader.");
+				Diagnostic.Context.Add(TEXT("object_path"), AssetData.GetObjectPathString());
+				Entity.Diagnostics.Add(MoveTemp(Diagnostic));
 			}
 		}
 
