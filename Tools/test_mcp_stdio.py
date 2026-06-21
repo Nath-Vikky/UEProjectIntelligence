@@ -92,6 +92,28 @@ def assert_no_empty_required(value: Any) -> None:
             assert_no_empty_required(child)
 
 
+def assert_no_codex_schema_extras(value: Any) -> None:
+    disallowed = {
+        "additionalProperties",
+        "default",
+        "examples",
+        "exclusiveMaximum",
+        "exclusiveMinimum",
+        "format",
+        "maximum",
+        "minimum",
+    }
+    if isinstance(value, dict):
+        present = disallowed.intersection(value)
+        if present:
+            raise AssertionError(f"Codex profile schema contains extra keywords: {sorted(present)}")
+        for child in value.values():
+            assert_no_codex_schema_extras(child)
+    elif isinstance(value, list):
+        for child in value:
+            assert_no_codex_schema_extras(child)
+
+
 def cleanup_db(db_path: Path) -> None:
     for candidate in [db_path, db_path.with_name(db_path.name + "-wal"), db_path.with_name(db_path.name + "-shm")]:
         if candidate.exists():
@@ -110,12 +132,19 @@ def cleanup_db(db_path: Path) -> None:
             pass
 
 
-def server_command(args: argparse.Namespace, include_output_schema: bool = False, tool_profile: str = "full") -> list[str]:
+def server_command(
+    args: argparse.Namespace,
+    include_output_schema: bool = False,
+    tool_profile: str = "full",
+    trace_file: Path | None = None,
+) -> list[str]:
     command = [sys.executable, "-B", str(args.server), "--db", str(args.db), "--token-budget", "4000"]
     if include_output_schema:
         command.append("--include-output-schema")
     if tool_profile != "full":
         command.extend(["--tool-profile", tool_profile])
+    if trace_file:
+        command.extend(["--trace-file", str(trace_file)])
     return command
 
 
@@ -150,8 +179,11 @@ def assert_include_output_schema_mode(args: argparse.Namespace) -> None:
 
 
 def assert_codex_tool_profile(args: argparse.Namespace) -> None:
+    trace_file = args.db.parent / "uepi_mcp_trace_test.jsonl"
+    if trace_file.exists():
+        trace_file.unlink()
     process = subprocess.Popen(
-        server_command(args, tool_profile="codex"),
+        server_command(args, tool_profile="codex", trace_file=trace_file),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -186,6 +218,10 @@ def assert_codex_tool_profile(args: argparse.Namespace) -> None:
         }
         assert all("inputSchema" in tool and "outputSchema" not in tool for tool in tools)
         assert_no_empty_required(tools)
+        assert_no_codex_schema_extras(tools)
+        trace_text = trace_file.read_text(encoding="utf-8")
+        assert '"event":"tools_list"' in trace_text
+        assert '"tool_count":10' in trace_text
     finally:
         if process.stdin:
             process.stdin.close()
@@ -194,6 +230,8 @@ def assert_codex_tool_profile(args: argparse.Namespace) -> None:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
+        if trace_file.exists():
+            trace_file.unlink()
 
 
 def run_profile(args: argparse.Namespace, framing: str) -> None:

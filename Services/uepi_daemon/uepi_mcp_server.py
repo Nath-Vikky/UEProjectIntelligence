@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -825,17 +826,59 @@ INDEX_WRITE_TOOLS = [
 READ_ONLY_TOOLS = sorted(set(TOOL_BY_NAME) - set(INDEX_WRITE_TOOLS) - {"uepi_job_start", "uepi_job_get"})
 
 
+def simplify_schema_for_codex(value: Any) -> Any:
+    if isinstance(value, dict):
+        simplified: dict[str, Any] = {}
+        for key, child in value.items():
+            if key in {
+                "additionalProperties",
+                "default",
+                "examples",
+                "exclusiveMaximum",
+                "exclusiveMinimum",
+                "format",
+                "maximum",
+                "minimum",
+            }:
+                continue
+            if key == "required" and not child:
+                continue
+            simplified[key] = simplify_schema_for_codex(child)
+        return simplified
+    if isinstance(value, list):
+        return [simplify_schema_for_codex(item) for item in value]
+    return value
+
+
 def mcp_tool_specs(include_output_schema: bool = False, tool_profile: str = "full") -> list[dict[str, Any]]:
     """Return tool metadata in the broadest MCP-client-compatible shape by default."""
     tools = json.loads(json.dumps(TOOL_SPECS))
     if tool_profile == "codex":
         tools = [tool for tool in tools if tool["name"] in CODEX_TOOL_PROFILE]
+        for tool in tools:
+            tool["inputSchema"] = simplify_schema_for_codex(tool["inputSchema"])
     elif tool_profile != "full":
         raise ValueError(f"Unknown MCP tool profile: {tool_profile}")
     if not include_output_schema:
         for tool in tools:
             tool.pop("outputSchema", None)
     return tools
+
+
+def trace_event(trace_file: Path | None, event: str, **fields: Any) -> None:
+    if not trace_file:
+        return
+    try:
+        trace_file.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "event": event,
+            **fields,
+        }
+        with trace_file.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, default=str, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
 
 
 def as_int(value: Any, default: int) -> int:
@@ -1687,7 +1730,7 @@ def read_message(stdin: Any) -> dict[str, Any] | None:
         return None
 
     stripped = line.strip()
-    if stripped.startswith(b"{"):
+    if stripped.startswith((b"{", b"[")):
         return json.loads(stripped.decode("utf-8"))
 
     headers: dict[str, str] = {}
@@ -1705,7 +1748,7 @@ def read_message(stdin: Any) -> dict[str, Any] | None:
     return json.loads(body.decode("utf-8"))
 
 
-def write_message(stdout: Any, payload: dict[str, Any]) -> None:
+def write_message(stdout: Any, payload: Any) -> None:
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     stdout.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
     stdout.write(data)
@@ -1719,13 +1762,28 @@ class UEPIMCPServer:
         token_budget: int,
         include_output_schema: bool = False,
         tool_profile: str = "full",
+        trace_file: Path | None = None,
     ) -> None:
         self.db_path = db_path
         self.token_budget = token_budget
         self.include_output_schema = include_output_schema
         self.tool_profile = tool_profile
+        self.trace_file = trace_file
+        trace_event(
+            self.trace_file,
+            "server_init",
+            db_path=str(db_path),
+            include_output_schema=include_output_schema,
+            tool_profile=tool_profile,
+        )
 
     def initialize(self, params: dict[str, Any]) -> dict[str, Any]:
+        trace_event(
+            self.trace_file,
+            "initialize",
+            protocol_version=params.get("protocolVersion"),
+            client_info=params.get("clientInfo"),
+        )
         return {
             "protocolVersion": params.get("protocolVersion", "2024-11-05"),
             "capabilities": {
@@ -1954,10 +2012,22 @@ class UEPIMCPServer:
             "messages": [{"role": "user", "content": {"type": "text", "text": text}}],
         }
 
-    def handle(self, request: dict[str, Any]) -> dict[str, Any] | None:
+    def handle(self, request: Any) -> Any:
+        if isinstance(request, list):
+            trace_event(self.trace_file, "batch_request", count=len(request))
+            responses = [self.handle(item) for item in request]
+            return [response for response in responses if response is not None] or None
+        if not isinstance(request, dict):
+            trace_event(self.trace_file, "invalid_request", request_type=type(request).__name__)
+            return {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32600, "message": "Invalid Request"},
+            }
         method = request.get("method")
         params = request.get("params") or {}
         request_id = request.get("id")
+        trace_event(self.trace_file, "request", method=method, has_id=request_id is not None)
         if request_id is None:
             return None
 
@@ -1967,7 +2037,15 @@ class UEPIMCPServer:
             elif method == "ping":
                 result = {}
             elif method == "tools/list":
-                result = {"tools": mcp_tool_specs(self.include_output_schema, self.tool_profile)}
+                tools = mcp_tool_specs(self.include_output_schema, self.tool_profile)
+                trace_event(
+                    self.trace_file,
+                    "tools_list",
+                    tool_profile=self.tool_profile,
+                    tool_count=len(tools),
+                    tool_names=[tool["name"] for tool in tools],
+                )
+                result = {"tools": tools}
             elif method == "tools/call":
                 name = params.get("name")
                 arguments = dict(params.get("arguments") or {})
@@ -2012,13 +2090,19 @@ def run_stdio(
     token_budget: int,
     include_output_schema: bool = False,
     tool_profile: str = "full",
+    trace_file: Path | None = None,
 ) -> int:
-    server = UEPIMCPServer(db_path, token_budget, include_output_schema, tool_profile)
+    server = UEPIMCPServer(db_path, token_budget, include_output_schema, tool_profile, trace_file)
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
     while True:
-        request = read_message(stdin)
+        try:
+            request = read_message(stdin)
+        except Exception as exc:
+            trace_event(trace_file, "read_error", error=type(exc).__name__, message=str(exc))
+            raise
         if request is None:
+            trace_event(trace_file, "stdin_closed")
             return 0
         response = server.handle(request)
         if response is not None:
@@ -2040,6 +2124,12 @@ def main(argv: list[str] | None = None) -> int:
         default="full",
         help="Limit advertised tools for clients that struggle with large MCP tool catalogs.",
     )
+    parser.add_argument(
+        "--trace-file",
+        type=Path,
+        default=None,
+        help="Optional JSONL trace file for MCP startup and tools/list diagnostics.",
+    )
     parser.add_argument("--sdk-status", action="store_true", help="Print official MCP SDK availability and exit.")
     args = parser.parse_args(argv)
 
@@ -2047,7 +2137,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"official_sdk_available": OFFICIAL_SDK_AVAILABLE}, indent=2))
         return 0
 
-    return run_stdio(args.db, args.token_budget, args.include_output_schema, args.tool_profile)
+    env_trace = os.environ.get("UEPI_MCP_TRACE")
+    trace_file = args.trace_file or (Path(env_trace) if env_trace else None)
+    return run_stdio(args.db, args.token_budget, args.include_output_schema, args.tool_profile, trace_file)
 
 
 if __name__ == "__main__":
