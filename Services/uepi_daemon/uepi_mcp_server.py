@@ -1784,13 +1784,14 @@ class UEPIMCPServer:
             protocol_version=params.get("protocolVersion"),
             client_info=params.get("clientInfo"),
         )
+        capabilities = {"tools": {}} if self.tool_profile == "codex" else {
+            "tools": {"listChanged": False},
+            "resources": {"subscribe": False, "listChanged": False},
+            "prompts": {"listChanged": False},
+        }
         return {
             "protocolVersion": params.get("protocolVersion", "2024-11-05"),
-            "capabilities": {
-                "tools": {"listChanged": False},
-                "resources": {"subscribe": False, "listChanged": False},
-                "prompts": {"listChanged": False},
-            },
+            "capabilities": capabilities,
             "serverInfo": {
                 "name": SERVER_NAME,
                 "version": SERVER_VERSION,
@@ -2027,7 +2028,11 @@ class UEPIMCPServer:
         method = request.get("method")
         params = request.get("params") or {}
         request_id = request.get("id")
-        trace_event(self.trace_file, "request", method=method, has_id=request_id is not None)
+        request_trace: dict[str, Any] = {"method": method, "has_id": request_id is not None}
+        if method is None:
+            request_trace["keys"] = list(request.keys())
+            request_trace["payload"] = request
+        trace_event(self.trace_file, "request", **request_trace)
         if request_id is None:
             return None
 

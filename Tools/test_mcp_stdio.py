@@ -201,6 +201,7 @@ def assert_codex_tool_profile(args: argparse.Namespace) -> None:
         )
         assert init["serverInfo"]["name"] == "uepi-mcp"
         assert set(init["serverInfo"]) == {"name", "version"}
+        assert init["capabilities"] == {"tools": {}}
         notification(process, "notifications/initialized")
         tools = request(process, 2, "tools/list")["tools"]
         tool_names = {tool["name"] for tool in tools}
