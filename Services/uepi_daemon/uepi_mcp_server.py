@@ -811,6 +811,15 @@ INDEX_WRITE_TOOLS = [
 READ_ONLY_TOOLS = sorted(set(TOOL_BY_NAME) - set(INDEX_WRITE_TOOLS) - {"uepi_job_start", "uepi_job_get"})
 
 
+def mcp_tool_specs(include_output_schema: bool = False) -> list[dict[str, Any]]:
+    """Return tool metadata in the broadest MCP-client-compatible shape by default."""
+    tools = json.loads(json.dumps(TOOL_SPECS))
+    if not include_output_schema:
+        for tool in tools:
+            tool.pop("outputSchema", None)
+    return tools
+
+
 def as_int(value: Any, default: int) -> int:
     if value is None or value == "":
         return default
@@ -1686,9 +1695,10 @@ def write_message(stdout: Any, payload: dict[str, Any]) -> None:
 
 
 class UEPIMCPServer:
-    def __init__(self, db_path: Path, token_budget: int) -> None:
+    def __init__(self, db_path: Path, token_budget: int, include_output_schema: bool = False) -> None:
         self.db_path = db_path
         self.token_budget = token_budget
+        self.include_output_schema = include_output_schema
 
     def initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -1933,7 +1943,7 @@ class UEPIMCPServer:
             elif method == "ping":
                 result = {}
             elif method == "tools/list":
-                result = {"tools": TOOL_SPECS}
+                result = {"tools": mcp_tool_specs(self.include_output_schema)}
             elif method == "tools/call":
                 name = params.get("name")
                 arguments = dict(params.get("arguments") or {})
@@ -1973,8 +1983,8 @@ class UEPIMCPServer:
             }
 
 
-def run_stdio(db_path: Path, token_budget: int) -> int:
-    server = UEPIMCPServer(db_path, token_budget)
+def run_stdio(db_path: Path, token_budget: int, include_output_schema: bool = False) -> int:
+    server = UEPIMCPServer(db_path, token_budget, include_output_schema)
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
     while True:
@@ -1990,6 +2000,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="UEPI MCP stdio server.")
     parser.add_argument("--db", type=Path, default=Path(".uepi/index.sqlite3"), help="SQLite database path.")
     parser.add_argument("--token-budget", type=int, default=6000, help="Default approximate response token budget.")
+    parser.add_argument(
+        "--include-output-schema",
+        action="store_true",
+        help="Include non-essential outputSchema fields in tools/list for clients that support them.",
+    )
     parser.add_argument("--sdk-status", action="store_true", help="Print official MCP SDK availability and exit.")
     args = parser.parse_args(argv)
 
@@ -1997,7 +2012,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"official_sdk_available": OFFICIAL_SDK_AVAILABLE}, indent=2))
         return 0
 
-    return run_stdio(args.db, args.token_budget)
+    return run_stdio(args.db, args.token_budget, args.include_output_schema)
 
 
 if __name__ == "__main__":

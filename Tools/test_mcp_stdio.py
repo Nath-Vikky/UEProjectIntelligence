@@ -82,10 +82,47 @@ def cleanup_db(db_path: Path) -> None:
             pass
 
 
+def server_command(args: argparse.Namespace, include_output_schema: bool = False) -> list[str]:
+    command = [sys.executable, "-B", str(args.server), "--db", str(args.db), "--token-budget", "4000"]
+    if include_output_schema:
+        command.append("--include-output-schema")
+    return command
+
+
+def assert_include_output_schema_mode(args: argparse.Namespace) -> None:
+    process = subprocess.Popen(
+        server_command(args, include_output_schema=True),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        request(
+            process,
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "uepi-mcp-output-schema-check", "version": "1"},
+            },
+        )
+        tools = request(process, 2, "tools/list")["tools"]
+        assert "inputSchema" in tools[0] and "outputSchema" in tools[0]
+    finally:
+        if process.stdin:
+            process.stdin.close()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+
 def run_profile(args: argparse.Namespace, framing: str) -> None:
     cleanup_db(args.db)
     process = subprocess.Popen(
-        [sys.executable, "-B", str(args.server), "--db", str(args.db), "--token-budget", "4000"],
+        server_command(args),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -130,7 +167,7 @@ def run_profile(args: argparse.Namespace, framing: str) -> None:
             "uepi_job_start",
         }:
             assert required in tool_names
-        assert "inputSchema" in tools[0] and "outputSchema" in tools[0]
+        assert "inputSchema" in tools[0] and "outputSchema" not in tools[0]
 
         ingest = request(process, 3, "tools/call", {"name": "uepi_ingest", "arguments": {"scan": str(args.scan)}}, framing)
         assert ingest["structuredContent"]["entity_count"] > 0
@@ -279,6 +316,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    assert_include_output_schema_mode(args)
     run_profile(args, "content-length")
     run_profile(args, "json-line")
     print("mcp stdio compatibility assertions ok")
