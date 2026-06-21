@@ -2,6 +2,8 @@
 
 UE Project Intelligence is a read-only Unreal Editor plugin for extracting project intelligence from UE 5.3.2 projects.
 
+For the end-to-end MCP workflow, including a Codex configuration example, see [Docs/user-guide.md](Docs/user-guide.md).
+
 Current implementation focuses on the first development-plan spine:
 
 - L0 Asset Registry scan.
