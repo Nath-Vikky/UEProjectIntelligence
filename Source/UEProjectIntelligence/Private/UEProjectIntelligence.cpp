@@ -159,6 +159,14 @@ TSharedRef<SDockTab> FUEProjectIntelligenceModule::SpawnDashboardTab(const FSpaw
 						.Padding(0.0f, 0.0f, 8.0f, 0.0f)
 						[
 							SNew(SButton)
+							.Text(LOCTEXT("UEPIStartWorkerButton", "Start Live Worker"))
+							.OnClicked_Raw(this, &FUEProjectIntelligenceModule::StartLiveWorker)
+						]
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.Padding(0.0f, 0.0f, 8.0f, 0.0f)
+						[
+							SNew(SButton)
 							.Text(LOCTEXT("UEPIWriteEventsButton", "Write Events Snapshot"))
 							.OnClicked_Raw(this, &FUEProjectIntelligenceModule::WriteIncrementalEventsSnapshot)
 						]
@@ -186,6 +194,7 @@ TSharedRef<SDockTab> FUEProjectIntelligenceModule::SpawnDashboardTab(const FSpaw
 FText FUEProjectIntelligenceModule::GetDashboardStatusText() const
 {
 	int32 IncrementalEventCount = 0;
+	FString WorkerStatus = TEXT("not registered");
 	if (GEditor)
 	{
 		if (const UUEPIEditorSubsystem* Subsystem = GEditor->GetEditorSubsystem<UUEPIEditorSubsystem>())
@@ -193,6 +202,16 @@ FText FUEProjectIntelligenceModule::GetDashboardStatusText() const
 			TArray<FUEPIIncrementalEvent> Events;
 			Subsystem->GetIncrementalEvents(Events);
 			IncrementalEventCount = Events.Num();
+			const FUEPIWorkerSessionStatus Status = Subsystem->GetWorkerSessionStatus();
+			WorkerStatus = FString::Printf(
+				TEXT("%s worker=%s session=%s polling=%s active_job=%s completed=%d error=%s"),
+				*Status.Status,
+				Status.WorkerId.IsEmpty() ? TEXT("-") : *Status.WorkerId,
+				Status.SessionId.IsEmpty() ? TEXT("-") : *Status.SessionId,
+				Status.bPollingEnabled ? TEXT("yes") : TEXT("no"),
+				Status.ActiveJobId.IsEmpty() ? TEXT("-") : *Status.ActiveJobId,
+				Status.CompletedJobCount,
+				Status.LastError.IsEmpty() ? TEXT("-") : *Status.LastError);
 		}
 	}
 
@@ -201,10 +220,11 @@ FText FUEProjectIntelligenceModule::GetDashboardStatusText() const
 	return FText::Format(
 		LOCTEXT(
 			"UEPIDashboardStatus",
-			"Project: {0}\nLast scan: {1}\nIncremental events: {2}\nSaved directory: {3}\nWeb UI: {4}"),
+			"Project: {0}\nLast scan: {1}\nIncremental events: {2}\nLive worker: {3}\nSaved directory: {4}\nWeb UI: {5}"),
 		FText::FromString(FApp::GetProjectName()),
 		FText::FromString(FPaths::FileExists(LastScan) ? LastScan : FString(TEXT("not generated"))),
 		FText::AsNumber(IncrementalEventCount),
+		FText::FromString(WorkerStatus),
 		FText::FromString(UEPISavedDirectory()),
 		FText::FromString(FPaths::FileExists(WebUi) ? WebUi : FString(TEXT("not installed"))));
 }
@@ -235,6 +255,27 @@ FReply FUEProjectIntelligenceModule::RunMetadataScan()
 	LastActionMessage = bSuccess
 		? FString::Printf(TEXT("Metadata scan wrote %s"), *ReportPath)
 		: FString::Printf(TEXT("Metadata scan completed with diagnostics or error: %s"), Error.IsEmpty() ? *ReportPath : *Error);
+	return FReply::Handled();
+}
+
+FReply FUEProjectIntelligenceModule::StartLiveWorker()
+{
+	if (!GEditor)
+	{
+		LastActionMessage = TEXT("Editor is not available.");
+		return FReply::Handled();
+	}
+
+	UUEPIEditorSubsystem* Subsystem = GEditor->GetEditorSubsystem<UUEPIEditorSubsystem>();
+	if (!Subsystem)
+	{
+		LastActionMessage = TEXT("UEPI editor subsystem is not available.");
+		return FReply::Handled();
+	}
+
+	FString Error;
+	const bool bStarted = Subsystem->StartLiveWorker(FString(), FString(), Error);
+	LastActionMessage = bStarted ? TEXT("Live worker registration started.") : Error;
 	return FReply::Handled();
 }
 

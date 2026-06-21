@@ -22,6 +22,7 @@ private:
 	FText GetDashboardStatusText() const;
 	FText GetLastActionText() const;
 	FReply RunMetadataScan();
+	FReply StartLiveWorker();
 	FReply WriteIncrementalEventsSnapshot();
 	FReply OpenSavedFolder() const;
 	FReply OpenWebUi() const;

@@ -3,7 +3,7 @@
 UUEPISettings::UUEPISettings()
 	: bAutoConnectDaemon(true)
 	, DaemonHost(TEXT("127.0.0.1"))
-	, DaemonPort(17831)
+	, DaemonPort(8765)
 	, bAutoStartDaemon(true)
 	, bEnableLiveIncrementalIndex(true)
 	, bAllowBlueprintCompile(false)
