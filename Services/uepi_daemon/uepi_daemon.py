@@ -3524,11 +3524,17 @@ def like_search_rows(
     ).fetchall()
 
 
-def related(db_path: Path, entity: str, limit: int, include_snapshot: bool = False) -> dict[str, Any]:
+def related(
+    db_path: Path,
+    entity: str,
+    limit: int,
+    include_snapshot: bool = False,
+    scan_id: str | None = None,
+) -> dict[str, Any]:
     conn = connect(db_path)
     try:
-        scan_id = latest_scan_id(conn)
-        entity_row_data = find_entity(conn, scan_id, entity)
+        resolved_scan_id = resolve_scan_id(conn, scan_id, "Target") if scan_id else latest_scan_id(conn)
+        entity_row_data = find_entity(conn, resolved_scan_id, entity)
         if not entity_row_data:
             raise SystemExit(f"Entity not found by id or canonical key: {entity}")
 
@@ -3546,10 +3552,11 @@ def related(db_path: Path, entity: str, limit: int, include_snapshot: bool = Fal
             ORDER BY r.type, to_key, from_key
             LIMIT ?
             """,
-            (scan_id, entity_id, entity_id, limit),
+            (resolved_scan_id, entity_id, entity_id, limit),
         ).fetchall()
 
         return {
+            "scan_id": resolved_scan_id,
             "entity": entity_row(entity_row_data, include_snapshot=include_snapshot),
             "relations": [
                 {
@@ -3578,11 +3585,12 @@ def subgraph(
     depth: int,
     limit: int,
     relation_types: list[str] | None = None,
+    scan_id: str | None = None,
 ) -> dict[str, Any]:
     conn = connect(db_path)
     try:
-        scan_id = latest_scan_id(conn)
-        root = find_entity(conn, scan_id, entity)
+        resolved_scan_id = resolve_scan_id(conn, scan_id, "Target") if scan_id else latest_scan_id(conn)
+        root = find_entity(conn, resolved_scan_id, entity)
         if not root:
             raise SystemExit(f"Entity not found by id or canonical key: {entity}")
 
@@ -3596,7 +3604,7 @@ def subgraph(
                 break
 
             placeholders = ",".join("?" for _ in frontier)
-            params: list[Any] = [scan_id, *sorted(frontier), *sorted(frontier)]
+            params: list[Any] = [resolved_scan_id, *sorted(frontier), *sorted(frontier)]
             type_clause = ""
             if relation_types:
                 type_placeholders = ",".join("?" for _ in relation_types)
@@ -3626,10 +3634,11 @@ def subgraph(
 
             frontier = next_frontier
 
-        nodes = fetch_entities_by_id(conn, scan_id, sorted(seen_node_ids))
-        edges = fetch_edge_views(conn, scan_id, list(edge_rows.values()))
+        nodes = fetch_entities_by_id(conn, resolved_scan_id, sorted(seen_node_ids))
+        edges = fetch_edge_views(conn, resolved_scan_id, list(edge_rows.values()))
 
         return {
+            "scan_id": resolved_scan_id,
             "root": entity_row(root),
             "depth": depth,
             "node_count": len(nodes),

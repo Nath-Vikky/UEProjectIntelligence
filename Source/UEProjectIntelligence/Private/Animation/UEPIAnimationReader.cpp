@@ -98,6 +98,178 @@ TSharedRef<FJsonObject> AnimTransformObject(const FTransform& Transform)
 	return Object;
 }
 
+struct FAnimTrackMotionMetrics
+{
+	FName BoneName;
+	int32 TrackIndex = 0;
+	int32 KeyCount = 0;
+	double TranslationRange = 0.0;
+	double TranslationMaxDelta = 0.0;
+	double TranslationStepMaxDelta = 0.0;
+	double RotationRangeDegrees = 0.0;
+	double RotationStepMaxDeltaDegrees = 0.0;
+	double ScaleRange = 0.0;
+	double ScaleMaxDelta = 0.0;
+	double ScaleStepMaxDelta = 0.0;
+	bool bTranslationChanges = false;
+	bool bRotationChanges = false;
+	bool bScaleChanges = false;
+
+	bool Changes() const
+	{
+		return bTranslationChanges || bRotationChanges || bScaleChanges;
+	}
+
+	double Score() const
+	{
+		return TranslationMaxDelta + (RotationRangeDegrees * 0.01) + ScaleMaxDelta;
+	}
+};
+
+void ExpandVectorBounds(FVector& MinValue, FVector& MaxValue, const FVector& Value)
+{
+	MinValue.X = FMath::Min(MinValue.X, Value.X);
+	MinValue.Y = FMath::Min(MinValue.Y, Value.Y);
+	MinValue.Z = FMath::Min(MinValue.Z, Value.Z);
+	MaxValue.X = FMath::Max(MaxValue.X, Value.X);
+	MaxValue.Y = FMath::Max(MaxValue.Y, Value.Y);
+	MaxValue.Z = FMath::Max(MaxValue.Z, Value.Z);
+}
+
+double QuatAngularDistanceDegrees(const FQuat& Left, const FQuat& Right)
+{
+	const FQuat NormalizedLeft = Left.GetNormalized();
+	const FQuat NormalizedRight = Right.GetNormalized();
+	const double Dot = FMath::Clamp(FMath::Abs(
+		NormalizedLeft.X * NormalizedRight.X +
+		NormalizedLeft.Y * NormalizedRight.Y +
+		NormalizedLeft.Z * NormalizedRight.Z +
+		NormalizedLeft.W * NormalizedRight.W), 0.0, 1.0);
+	return FMath::RadiansToDegrees(2.0 * FMath::Acos(Dot));
+}
+
+FAnimTrackMotionMetrics CalculateTrackMotionMetrics(
+	const FName& BoneName,
+	int32 TrackIndex,
+	const TArray<FTransform>& RawLocalTransforms)
+{
+	FAnimTrackMotionMetrics Metrics;
+	Metrics.BoneName = BoneName;
+	Metrics.TrackIndex = TrackIndex;
+	Metrics.KeyCount = RawLocalTransforms.Num();
+	if (RawLocalTransforms.Num() == 0)
+	{
+		return Metrics;
+	}
+
+	const FTransform& FirstTransform = RawLocalTransforms[0];
+	const FVector FirstTranslation = FirstTransform.GetTranslation();
+	const FQuat FirstRotation = FirstTransform.GetRotation();
+	const FVector FirstScale = FirstTransform.GetScale3D();
+	FVector MinTranslation = FirstTranslation;
+	FVector MaxTranslation = FirstTranslation;
+	FVector MinScale = FirstScale;
+	FVector MaxScale = FirstScale;
+	FTransform PreviousTransform = FirstTransform;
+
+	for (int32 KeyIndex = 0; KeyIndex < RawLocalTransforms.Num(); ++KeyIndex)
+	{
+		const FTransform& Transform = RawLocalTransforms[KeyIndex];
+		const FVector Translation = Transform.GetTranslation();
+		const FQuat Rotation = Transform.GetRotation();
+		const FVector Scale = Transform.GetScale3D();
+		ExpandVectorBounds(MinTranslation, MaxTranslation, Translation);
+		ExpandVectorBounds(MinScale, MaxScale, Scale);
+		Metrics.TranslationMaxDelta = FMath::Max(Metrics.TranslationMaxDelta, (Translation - FirstTranslation).Size());
+		Metrics.RotationRangeDegrees = FMath::Max(Metrics.RotationRangeDegrees, QuatAngularDistanceDegrees(FirstRotation, Rotation));
+		Metrics.ScaleMaxDelta = FMath::Max(Metrics.ScaleMaxDelta, (Scale - FirstScale).Size());
+		if (KeyIndex > 0)
+		{
+			Metrics.TranslationStepMaxDelta = FMath::Max(Metrics.TranslationStepMaxDelta, (Translation - PreviousTransform.GetTranslation()).Size());
+			Metrics.RotationStepMaxDeltaDegrees = FMath::Max(Metrics.RotationStepMaxDeltaDegrees, QuatAngularDistanceDegrees(PreviousTransform.GetRotation(), Rotation));
+			Metrics.ScaleStepMaxDelta = FMath::Max(Metrics.ScaleStepMaxDelta, (Scale - PreviousTransform.GetScale3D()).Size());
+		}
+		PreviousTransform = Transform;
+	}
+
+	Metrics.TranslationRange = (MaxTranslation - MinTranslation).Size();
+	Metrics.ScaleRange = (MaxScale - MinScale).Size();
+	Metrics.bTranslationChanges = Metrics.TranslationRange > 0.001 || Metrics.TranslationMaxDelta > 0.001;
+	Metrics.bRotationChanges = Metrics.RotationRangeDegrees > 0.01;
+	Metrics.bScaleChanges = Metrics.ScaleRange > 0.001 || Metrics.ScaleMaxDelta > 0.001;
+	return Metrics;
+}
+
+TSharedRef<FJsonObject> AnimTrackMotionObject(const FAnimTrackMotionMetrics& Metrics)
+{
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetStringField(TEXT("bone_name"), Metrics.BoneName.ToString());
+	Object->SetNumberField(TEXT("track_index"), Metrics.TrackIndex);
+	Object->SetNumberField(TEXT("raw_local_key_count"), Metrics.KeyCount);
+	Object->SetBoolField(TEXT("changes"), Metrics.Changes());
+	Object->SetBoolField(TEXT("translation_changes"), Metrics.bTranslationChanges);
+	Object->SetBoolField(TEXT("rotation_changes"), Metrics.bRotationChanges);
+	Object->SetBoolField(TEXT("scale_changes"), Metrics.bScaleChanges);
+	Object->SetNumberField(TEXT("translation_range"), Metrics.TranslationRange);
+	Object->SetNumberField(TEXT("translation_max_delta"), Metrics.TranslationMaxDelta);
+	Object->SetNumberField(TEXT("translation_step_max_delta"), Metrics.TranslationStepMaxDelta);
+	Object->SetNumberField(TEXT("rotation_range_degrees"), Metrics.RotationRangeDegrees);
+	Object->SetNumberField(TEXT("rotation_step_max_delta_degrees"), Metrics.RotationStepMaxDeltaDegrees);
+	Object->SetNumberField(TEXT("scale_range"), Metrics.ScaleRange);
+	Object->SetNumberField(TEXT("scale_max_delta"), Metrics.ScaleMaxDelta);
+	Object->SetNumberField(TEXT("scale_step_max_delta"), Metrics.ScaleStepMaxDelta);
+
+	TArray<TSharedPtr<FJsonValue>> ChannelValues;
+	if (Metrics.bTranslationChanges)
+	{
+		ChannelValues.Add(MakeShared<FJsonValueString>(TEXT("translation")));
+	}
+	if (Metrics.bRotationChanges)
+	{
+		ChannelValues.Add(MakeShared<FJsonValueString>(TEXT("rotation")));
+	}
+	if (Metrics.bScaleChanges)
+	{
+		ChannelValues.Add(MakeShared<FJsonValueString>(TEXT("scale")));
+	}
+	Object->SetArrayField(TEXT("change_channels"), MoveTemp(ChannelValues));
+	return Object;
+}
+
+TSharedRef<FJsonObject> AnimationMotionSummaryObject(
+	const UAnimSequence& Sequence,
+	const TArray<FAnimTrackMotionMetrics>& MotionMetrics)
+{
+	TArray<FAnimTrackMotionMetrics> ChangingMetrics;
+	for (const FAnimTrackMotionMetrics& Metrics : MotionMetrics)
+	{
+		if (Metrics.Changes())
+		{
+			ChangingMetrics.Add(Metrics);
+		}
+	}
+	ChangingMetrics.Sort([](const FAnimTrackMotionMetrics& Left, const FAnimTrackMotionMetrics& Right)
+	{
+		return Left.Score() > Right.Score();
+	});
+
+	TArray<TSharedPtr<FJsonValue>> ChangingBoneValues;
+	for (const FAnimTrackMotionMetrics& Metrics : ChangingMetrics)
+	{
+		ChangingBoneValues.Add(MakeShared<FJsonValueObject>(AnimTrackMotionObject(Metrics)));
+	}
+
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetStringField(TEXT("schema_version"), TEXT("uepi.animation_motion_summary.v1"));
+	Object->SetStringField(TEXT("source"), TEXT("raw_local_all_keys"));
+	Object->SetStringField(TEXT("sequence_path"), Sequence.GetPathName());
+	Object->SetNumberField(TEXT("track_count"), MotionMetrics.Num());
+	Object->SetNumberField(TEXT("changing_bone_count"), ChangingMetrics.Num());
+	Object->SetNumberField(TEXT("static_bone_count"), FMath::Max(MotionMetrics.Num() - ChangingMetrics.Num(), 0));
+	Object->SetArrayField(TEXT("changing_bones"), MoveTemp(ChangingBoneValues));
+	return Object;
+}
+
 TSharedRef<FJsonObject> AnimBoundsObject(const FBoxSphereBounds& Bounds)
 {
 	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
@@ -759,7 +931,7 @@ FString AddAnimationSequenceEntity(
 	Entity.Attributes.Add(TEXT("curve_count"), DataModel ? FString::FromInt(DataModel->GetNumberOfFloatCurves() + DataModel->GetNumberOfTransformCurves()) : TEXT("0"));
 	Entity.Attributes.Add(TEXT("collection_level"), LexToString(ECollectionLevel::Structural));
 	Entity.Completeness.State = ECompletenessState::Partial;
-	Entity.Completeness.Covered = { TEXT("sequence_metadata"), TEXT("bone_track_metadata"), TEXT("frame_time_samples"), TEXT("raw_local_track_samples"), TEXT("component_space_pose_samples"), TEXT("root_motion_metadata"), TEXT("additive_metadata"), TEXT("notify_metadata"), TEXT("curve_counts") };
+	Entity.Completeness.Covered = { TEXT("sequence_metadata"), TEXT("bone_track_metadata"), TEXT("frame_time_samples"), TEXT("raw_local_track_samples"), TEXT("component_space_pose_samples"), TEXT("root_motion_metadata"), TEXT("additive_metadata"), TEXT("notify_metadata"), TEXT("curve_counts"), TEXT("motion_summary") };
 	Entity.Completeness.Omitted = { TEXT("full_per_frame_pose_samples"), TEXT("raw_curve_keys"), TEXT("compressed_track_data") };
 	AddAnimEvidence(Entity, SequencePath, TEXT("UAnimSequence metadata read through Animation Data Model."));
 	OutEntities.Add(MoveTemp(Entity));
@@ -2534,6 +2706,7 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 	const TArray<int32> SampleFrameNumbers = DataModel ? AnimSequenceSampleFrames(*DataModel) : TArray<int32>();
 
 	TArray<TSharedPtr<FJsonValue>> TrackValues;
+	TArray<FAnimTrackMotionMetrics> MotionMetricsValues;
 	for (int32 TrackIndex = 0; TrackIndex < TrackNames.Num(); ++TrackIndex)
 	{
 		const FName TrackName = TrackNames[TrackIndex];
@@ -2542,6 +2715,8 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 		{
 			DataModel->GetBoneTrackTransforms(TrackName, RawLocalTransforms);
 		}
+		const FAnimTrackMotionMetrics MotionMetrics = CalculateTrackMotionMetrics(TrackName, TrackIndex, RawLocalTransforms);
+		MotionMetricsValues.Add(MotionMetrics);
 
 		const FString CanonicalKey = FString::Printf(TEXT("%s:track:%d:%s"), *Sequence.GetPathName(), TrackIndex, *TrackName.ToString());
 		const FString TrackId = MakeStableId(ProjectId, TEXT("animation_track"), CanonicalKey);
@@ -2557,10 +2732,24 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 			TrackEntity.Attributes.Add(TEXT("track_index"), FString::FromInt(TrackIndex));
 			TrackEntity.Attributes.Add(TEXT("bone_name"), TrackName.ToString());
 			TrackEntity.Attributes.Add(TEXT("raw_local_key_count"), FString::FromInt(RawLocalTransforms.Num()));
+			TrackEntity.Attributes.Add(TEXT("motion_changes"), AnimBool(MotionMetrics.Changes()));
+			TrackEntity.Attributes.Add(TEXT("translation_changes"), AnimBool(MotionMetrics.bTranslationChanges));
+			TrackEntity.Attributes.Add(TEXT("rotation_changes"), AnimBool(MotionMetrics.bRotationChanges));
+			TrackEntity.Attributes.Add(TEXT("scale_changes"), AnimBool(MotionMetrics.bScaleChanges));
+			TrackEntity.Attributes.Add(TEXT("translation_range"), AnimNumber(MotionMetrics.TranslationRange));
+			TrackEntity.Attributes.Add(TEXT("translation_max_delta"), AnimNumber(MotionMetrics.TranslationMaxDelta));
+			TrackEntity.Attributes.Add(TEXT("rotation_range_degrees"), AnimNumber(MotionMetrics.RotationRangeDegrees));
+			TrackEntity.Attributes.Add(TEXT("scale_range"), AnimNumber(MotionMetrics.ScaleRange));
 			TrackEntity.Attributes.Add(TEXT("collection_level"), LexToString(ECollectionLevel::Structural));
 			TrackEntity.Completeness.State = ECompletenessState::Partial;
-			TrackEntity.Completeness.Covered = { TEXT("track_metadata"), TEXT("raw_local_key_count"), TEXT("raw_local_samples") };
+			TrackEntity.Completeness.Covered = { TEXT("track_metadata"), TEXT("raw_local_key_count"), TEXT("raw_local_samples"), TEXT("motion_summary") };
 			TrackEntity.Completeness.Omitted = { TEXT("full_raw_local_track_artifact") };
+			TSharedRef<FJsonObject> TrackSnapshot = MakeShared<FJsonObject>();
+			TrackSnapshot->SetStringField(TEXT("schema_version"), TEXT("uepi.anim_track.v1"));
+			TrackSnapshot->SetStringField(TEXT("sequence_path"), Sequence.GetPathName());
+			TrackSnapshot->SetStringField(TEXT("bone_name"), TrackName.ToString());
+			TrackSnapshot->SetObjectField(TEXT("motion"), AnimTrackMotionObject(MotionMetrics));
+			TrackEntity.Snapshot = TrackSnapshot;
 			AddAnimEvidence(TrackEntity, Sequence.GetPathName(), TEXT("Bone animation track read from Animation Data Model."));
 			OutEntities.Add(MoveTemp(TrackEntity));
 		}
@@ -2576,6 +2765,7 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 		TrackObject->SetNumberField(TEXT("index"), TrackIndex);
 		TrackObject->SetStringField(TEXT("bone_name"), TrackName.ToString());
 		TrackObject->SetNumberField(TEXT("raw_local_key_count"), RawLocalTransforms.Num());
+		TrackObject->SetObjectField(TEXT("motion"), AnimTrackMotionObject(MotionMetrics));
 		if (RawLocalTransforms.Num() > 0)
 		{
 			TrackObject->SetObjectField(TEXT("raw_local_first"), AnimTransformObject(RawLocalTransforms[0]));
@@ -2593,6 +2783,21 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 		}
 		TrackObject->SetArrayField(TEXT("raw_local_samples"), MoveTemp(RawLocalSampleValues));
 		TrackValues.Add(MakeShared<FJsonValueObject>(TrackObject));
+	}
+	const TSharedRef<FJsonObject> MotionSummaryObject = AnimationMotionSummaryObject(Sequence, MotionMetricsValues);
+	if (FEntityRecord* SequenceEntity = FindEntity(OutEntities, SequenceId))
+	{
+		int32 ChangingBoneCount = 0;
+		for (const FAnimTrackMotionMetrics& Metrics : MotionMetricsValues)
+		{
+			if (Metrics.Changes())
+			{
+				++ChangingBoneCount;
+			}
+		}
+		SequenceEntity->Attributes.Add(TEXT("motion_changing_bone_count"), FString::FromInt(ChangingBoneCount));
+		SequenceEntity->Attributes.Add(TEXT("motion_static_bone_count"), FString::FromInt(FMath::Max(MotionMetricsValues.Num() - ChangingBoneCount, 0)));
+		SequenceEntity->Completeness.Covered.AddUnique(TEXT("motion_summary"));
 	}
 
 	TArray<TSharedPtr<FJsonValue>> NotifyValues;
@@ -2694,6 +2899,7 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 	Object->SetNumberField(TEXT("notify_count"), NotifyValues.Num());
 	Object->SetNumberField(TEXT("sampled_pose_count"), PoseSampleValues.Num());
 	Object->SetArrayField(TEXT("tracks"), TrackValues);
+	Object->SetObjectField(TEXT("motion_summary"), MotionSummaryObject);
 	Object->SetArrayField(TEXT("notifies"), NotifyValues);
 	Object->SetArrayField(TEXT("pose_samples"), MoveTemp(PoseSampleValues));
 	return Object;
@@ -2848,6 +3054,7 @@ bool FAnimationReader::AppendAnimationAsset(
 		AssetEntity.Completeness.State = ECompletenessState::Partial;
 		AssetEntity.Completeness.Covered.AddUnique(TEXT("animation_sequence_metadata"));
 		AssetEntity.Completeness.Covered.AddUnique(TEXT("animation_bone_tracks"));
+		AssetEntity.Completeness.Covered.AddUnique(TEXT("animation_motion_summary"));
 		AssetEntity.Completeness.Covered.AddUnique(TEXT("animation_notifies"));
 		AssetEntity.Completeness.Omitted.AddUnique(TEXT("per_frame_pose_samples"));
 		AssetEntity.Completeness.Omitted.AddUnique(TEXT("runtime_pose_evaluation"));

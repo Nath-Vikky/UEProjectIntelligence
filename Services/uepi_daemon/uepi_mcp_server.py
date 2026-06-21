@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -200,6 +201,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
                     "graph_depth": {"type": "integer", "default": 2},
                     "graph_limit": {"type": "integer", "default": 300},
                     "candidate_limit": {"type": "integer", "default": 10},
+                    "motion_bone_limit": {"type": "integer", "default": 200},
                 },
                 ["asset"],
             )
@@ -1046,6 +1048,260 @@ def refresh_output_path(db_path: Path, asset: str) -> str:
     return str((root / f"{safe_slug(asset)}_{stamp}.json").resolve())
 
 
+def _row_attributes(row: Any) -> dict[str, Any]:
+    try:
+        return json.loads(row["attributes_json"] or "{}")
+    except (KeyError, TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _row_value(row: Any, key: str, default: Any = "") -> Any:
+    try:
+        return row[key] if key in row.keys() else default
+    except (AttributeError, KeyError, TypeError):
+        return default
+
+
+def _asset_resolution(row: Any, input_asset: str, scan_id: str, strategy: str) -> dict[str, Any]:
+    attributes = _row_attributes(row)
+    object_path = str(attributes.get("object_path") or _row_value(row, "revision_object_path") or row["canonical_key"])
+    package_name = str(attributes.get("package_name") or _row_value(row, "revision_package_name") or "")
+    return {
+        "input": input_asset,
+        "strategy": strategy,
+        "scan_id": scan_id,
+        "entity_id": row["id"],
+        "entity_kind": row["kind"],
+        "canonical_key": row["canonical_key"],
+        "display_name": row["display_name"],
+        "resolved_asset": row["canonical_key"],
+        "refresh_asset": object_path,
+        "object_path": object_path,
+        "package_name": package_name,
+        "package_path": str(attributes.get("package_path") or _row_value(row, "revision_package_path") or ""),
+        "asset_class_path": str(attributes.get("asset_class_path") or _row_value(row, "revision_asset_class_path") or ""),
+        "is_current_revision": bool(_row_value(row, "revision_is_current", 0)),
+    }
+
+
+def _entity_select(prefix: str = "e") -> str:
+    return (
+        f"{prefix}.scan_id, {prefix}.id, {prefix}.kind, {prefix}.canonical_key, "
+        f"{prefix}.display_name, {prefix}.source_layer, {prefix}.attributes_json, {prefix}.snapshot_json"
+    )
+
+
+def _score_asset_row(row: Any, asset: str) -> tuple[int, int, str]:
+    query = asset.strip().lower()
+    slug = safe_slug(asset, "").lower()
+    attributes = _row_attributes(row)
+    values = [
+        str(row["id"]),
+        str(row["canonical_key"]),
+        str(row["display_name"]),
+        str(attributes.get("object_path") or _row_value(row, "revision_object_path") or ""),
+        str(attributes.get("package_name") or _row_value(row, "revision_package_name") or ""),
+        str(attributes.get("package_path") or _row_value(row, "revision_package_path") or ""),
+    ]
+    lowered = [value.lower() for value in values if value]
+    if query and any(value == query for value in lowered):
+        match_score = 0
+    elif slug and any(value == slug or value.endswith("/" + slug) or value.endswith("." + slug) for value in lowered):
+        match_score = 1
+    elif slug and any(slug in value for value in lowered):
+        match_score = 2
+    elif query and any(query in value for value in lowered):
+        match_score = 3
+    else:
+        match_score = 4
+    current_score = 0 if bool(_row_value(row, "revision_is_current", 0)) else 1
+    ingested = str(_row_value(row, "scan_ingested_at_utc", ""))
+    return match_score, current_score, "".join(chr(255 - ord(ch)) for ch in ingested)
+
+
+def _dedupe_rows(rows: list[Any]) -> list[Any]:
+    seen: set[tuple[str, str]] = set()
+    result = []
+    for row in rows:
+        key = (str(row["scan_id"]), str(row["id"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(row)
+    return result
+
+
+def _best_row(rows: list[Any], asset: str) -> Any | None:
+    if not rows:
+        return None
+    return sorted(_dedupe_rows(rows), key=lambda row: _score_asset_row(row, asset))[0]
+
+
+def _find_entity_across_scans(conn: Any, asset: str) -> tuple[Any | None, str]:
+    rows = conn.execute(
+        f"""
+        SELECT {_entity_select("e")}, s.ingested_at_utc AS scan_ingested_at_utc
+        FROM entities e
+        JOIN scans s ON s.scan_id = e.scan_id
+        WHERE e.id = ? OR e.canonical_key = ?
+        ORDER BY s.ingested_at_utc DESC
+        LIMIT 1
+        """,
+        (asset, asset),
+    ).fetchall()
+    if rows:
+        return rows[0], "scan_exact"
+    return None, ""
+
+
+def _find_asset_revision_row(conn: Any, asset: str, fuzzy: bool) -> tuple[Any | None, str]:
+    query = asset.strip()
+    slug = safe_slug(asset, "")
+    rows: list[Any] = []
+    if fuzzy:
+        needles = [query]
+        if slug and slug != query:
+            needles.append(slug)
+        for needle in needles:
+            like = f"%{needle}%"
+            rows.extend(
+                conn.execute(
+                    f"""
+                    SELECT {_entity_select("e")},
+                           ar.object_path AS revision_object_path,
+                           ar.package_name AS revision_package_name,
+                           ar.package_path AS revision_package_path,
+                           ar.asset_class_path AS revision_asset_class_path,
+                           ar.is_current AS revision_is_current,
+                           s.ingested_at_utc AS scan_ingested_at_utc
+                    FROM asset_revisions ar
+                    JOIN entities e ON e.scan_id = ar.scan_id AND e.id = ar.asset_entity_id
+                    JOIN scans s ON s.scan_id = ar.scan_id
+                    WHERE ar.asset_key LIKE ?
+                       OR ar.object_path LIKE ?
+                       OR ar.package_name LIKE ?
+                       OR ar.package_path LIKE ?
+                       OR e.canonical_key LIKE ?
+                       OR e.display_name LIKE ?
+                       OR e.attributes_json LIKE ?
+                    ORDER BY ar.is_current DESC, s.ingested_at_utc DESC, ar.asset_key ASC
+                    LIMIT 50
+                    """,
+                    (like, like, like, like, like, like, like),
+                ).fetchall()
+            )
+        return _best_row(rows, asset), "asset_revision_fuzzy"
+
+    rows = conn.execute(
+        f"""
+        SELECT {_entity_select("e")},
+               ar.object_path AS revision_object_path,
+               ar.package_name AS revision_package_name,
+               ar.package_path AS revision_package_path,
+               ar.asset_class_path AS revision_asset_class_path,
+               ar.is_current AS revision_is_current,
+               s.ingested_at_utc AS scan_ingested_at_utc
+        FROM asset_revisions ar
+        JOIN entities e ON e.scan_id = ar.scan_id AND e.id = ar.asset_entity_id
+        JOIN scans s ON s.scan_id = ar.scan_id
+        WHERE ar.asset_key = ?
+           OR ar.asset_entity_id = ?
+           OR ar.object_path = ?
+           OR ar.package_name = ?
+           OR e.canonical_key = ?
+           OR e.id = ?
+        ORDER BY ar.is_current DESC, s.ingested_at_utc DESC
+        LIMIT 1
+        """,
+        (query, query, query, query, query, query),
+    ).fetchall()
+    return (rows[0] if rows else None), "asset_revision_exact"
+
+
+def _find_entity_fuzzy_row(conn: Any, asset: str) -> tuple[Any | None, str]:
+    rows: list[Any] = []
+    needles = [asset.strip()]
+    slug = safe_slug(asset, "")
+    if slug and slug not in needles:
+        needles.append(slug)
+    for needle in needles:
+        like = f"%{needle}%"
+        rows.extend(
+            conn.execute(
+                f"""
+                SELECT {_entity_select("e")},
+                       0 AS revision_is_current,
+                       s.ingested_at_utc AS scan_ingested_at_utc
+                FROM entities e
+                JOIN scans s ON s.scan_id = e.scan_id
+                WHERE e.canonical_key LIKE ?
+                   OR e.display_name LIKE ?
+                   OR e.attributes_json LIKE ?
+                ORDER BY s.ingested_at_utc DESC, e.kind ASC, e.canonical_key ASC
+                LIMIT 50
+                """,
+                (like, like, like),
+            ).fetchall()
+        )
+    return _best_row(rows, asset), "entity_fuzzy"
+
+
+def resolve_entity_context(
+    db_path: Path,
+    asset: str,
+    include_snapshot: bool,
+) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None, dict[str, str] | None]:
+    try:
+        conn = connect(db_path)
+        try:
+            scan_id = latest_scan_id(conn)
+            row = find_entity(conn, scan_id, asset)
+            if row:
+                resolution = _asset_resolution(row, asset, scan_id, "latest_exact")
+                return entity_row(row, include_snapshot), scan_id, resolution, None
+
+            row, strategy = _find_entity_across_scans(conn, asset)
+            if not row:
+                row, strategy = _find_asset_revision_row(conn, asset, fuzzy=False)
+            if not row:
+                row, strategy = _find_asset_revision_row(conn, asset, fuzzy=True)
+            if not row:
+                row, strategy = _find_entity_fuzzy_row(conn, asset)
+            if row:
+                resolved_scan_id = str(row["scan_id"])
+                resolution = _asset_resolution(row, asset, resolved_scan_id, strategy)
+                return entity_row(row, include_snapshot), resolved_scan_id, resolution, None
+            return None, scan_id, None, None
+        finally:
+            conn.close()
+    except BaseException as exc:
+        if isinstance(exc, KeyboardInterrupt):
+            raise
+        return None, None, None, caught_error(exc)
+
+
+def resolve_refresh_assets(db_path: Path, assets: list[str]) -> tuple[list[str], list[dict[str, Any]]]:
+    resolved_assets: list[str] = []
+    resolutions: list[dict[str, Any]] = []
+    for asset in assets:
+        _, _, resolution, error = resolve_entity_context(db_path, asset, False)
+        if resolution and str(resolution.get("refresh_asset") or "").strip():
+            resolved_assets.append(str(resolution["refresh_asset"]))
+            resolutions.append(resolution)
+        else:
+            resolved_assets.append(asset)
+            if error:
+                resolutions.append({"input": asset, "strategy": "unresolved", "error": error})
+    return resolved_assets, resolutions
+
+
+def entity_candidate(row: Any, input_asset: str, strategy: str) -> dict[str, Any]:
+    candidate = entity_row(row, include_snapshot=False)
+    candidate["scan_id"] = row["scan_id"]
+    candidate["resolution"] = _asset_resolution(row, input_asset, str(row["scan_id"]), strategy)
+    return candidate
+
+
 def wait_for_queue_job(db_path: Path, job_id: str, wait_seconds: int, poll_interval_seconds: float) -> tuple[dict[str, Any], bool]:
     deadline = time.monotonic() + max(0, wait_seconds)
     interval = max(0.1, min(float(poll_interval_seconds or 0.5), 5.0))
@@ -1128,7 +1384,9 @@ def project_refresh(db_path: Path, arguments: dict[str, Any]) -> dict[str, Any]:
     assets = as_list(arguments.get("assets"))
     if asset and asset not in assets:
         assets.insert(0, asset)
-    output_path = str(arguments.get("output_path") or "").strip() or refresh_output_path(db_path, asset or "project")
+    resolved_assets, asset_resolutions = resolve_refresh_assets(db_path, assets) if assets else ([], [])
+    refresh_asset_label = resolved_assets[0] if resolved_assets else (asset or "project")
+    output_path = str(arguments.get("output_path") or "").strip() or refresh_output_path(db_path, refresh_asset_label)
     request: dict[str, Any] = {
         "level": str(arguments.get("level") or "L2"),
         "output_path": output_path,
@@ -1136,10 +1394,10 @@ def project_refresh(db_path: Path, arguments: dict[str, Any]) -> dict[str, Any]:
         "read_blueprint_graphs": as_bool(arguments.get("read_blueprints"), True),
         "read_uobject_reflection": as_bool(arguments.get("read_uobject_reflection"), True),
     }
-    if len(assets) == 1:
-        request["asset"] = assets[0]
-    elif len(assets) > 1:
-        request["assets"] = assets
+    if len(resolved_assets) == 1:
+        request["asset"] = resolved_assets[0]
+    elif len(resolved_assets) > 1:
+        request["assets"] = resolved_assets
 
     submitted = submit_job(
         db_path,
@@ -1176,25 +1434,11 @@ def project_refresh(db_path: Path, arguments: dict[str, Any]) -> dict[str, Any]:
         "job": job,
         "timed_out": timed_out,
         "scan_path": scan_path or output_path,
+        "asset_resolution": asset_resolutions,
         "ingest": ingest_result,
         "ingest_error": ingest_error,
         "status": "ready" if ingest_result else ("pending" if timed_out or str(job.get("state")) not in JOB_TERMINAL_STATES else str(job.get("state"))),
     }
-
-
-def exact_entity_context(db_path: Path, asset: str, include_snapshot: bool) -> tuple[dict[str, Any] | None, str | None, dict[str, str] | None]:
-    try:
-        conn = connect(db_path)
-        try:
-            scan_id = latest_scan_id(conn)
-            row = find_entity(conn, scan_id, asset)
-            return (entity_row(row, include_snapshot) if row else None), scan_id, None
-        finally:
-            conn.close()
-    except BaseException as exc:
-        if isinstance(exc, KeyboardInterrupt):
-            raise
-        return None, None, caught_error(exc)
 
 
 def search_candidates(db_path: Path, asset: str, limit: int) -> list[dict[str, Any]]:
@@ -1204,7 +1448,31 @@ def search_candidates(db_path: Path, asset: str, limit: int) -> list[dict[str, A
     fallback = safe_slug(asset, "")
     if fallback and fallback != asset:
         fallback_candidates, _ = call_or_error(lambda: search(db_path, fallback, limit, False), [])
-        return fallback_candidates or []
+        if fallback_candidates:
+            return fallback_candidates
+    try:
+        conn = connect(db_path)
+        try:
+            rows: list[tuple[Any, str]] = []
+            row, strategy = _find_asset_revision_row(conn, asset, fuzzy=True)
+            if row:
+                rows.append((row, strategy))
+            fuzzy_row, fuzzy_strategy = _find_entity_fuzzy_row(conn, asset)
+            if fuzzy_row:
+                rows.append((fuzzy_row, fuzzy_strategy))
+            seen: set[tuple[str, str]] = set()
+            unique_rows: list[tuple[Any, str]] = []
+            for row, row_strategy in sorted(rows, key=lambda item: _score_asset_row(item[0], asset)):
+                key = (str(row["scan_id"]), str(row["id"]))
+                if key in seen:
+                    continue
+                seen.add(key)
+                unique_rows.append((row, row_strategy))
+            return [entity_candidate(row, asset, row_strategy) for row, row_strategy in unique_rows[:max(limit, 0)]]
+        finally:
+            conn.close()
+    except BaseException:
+        return []
     return []
 
 
@@ -1223,11 +1491,12 @@ def read_asset_context(
         refresh_result = project_refresh(db_path, refresh_args)
 
     include_snapshot = as_bool(arguments.get("include_snapshot"), True)
-    entity, scan_id, entity_error = exact_entity_context(db_path, asset, include_snapshot)
+    entity, scan_id, resolution, entity_error = resolve_entity_context(db_path, asset, include_snapshot)
     relation_limit = as_int(arguments.get("relation_limit"), 80)
     graph_depth = as_int(arguments.get("graph_depth"), 1)
     graph_limit = as_int(arguments.get("graph_limit"), 200)
     requested_relation_types = as_list(arguments.get("relation_type")) or list(relation_types or [])
+    resolved_asset = str((resolution or {}).get("resolved_asset") or (entity or {}).get("canonical_key") or asset)
 
     related_result = None
     related_error = None
@@ -1235,11 +1504,11 @@ def read_asset_context(
     subgraph_error = None
     if entity:
         related_result, related_error = call_or_error(
-            lambda: related(db_path, asset, relation_limit, include_snapshot),
+            lambda: related(db_path, resolved_asset, relation_limit, include_snapshot, scan_id),
             None,
         )
         subgraph_result, subgraph_error = call_or_error(
-            lambda: subgraph(db_path, asset, graph_depth, graph_limit, requested_relation_types),
+            lambda: subgraph(db_path, resolved_asset, graph_depth, graph_limit, requested_relation_types, scan_id),
             None,
         )
 
@@ -1249,10 +1518,17 @@ def read_asset_context(
         freshness, freshness_error = call_or_error(lambda: staleness(db_path, scan_id, 25), None)
 
     candidates = [] if entity else search_candidates(db_path, asset, as_int(arguments.get("candidate_limit"), 10))
+    warnings = []
+    if not entity:
+        warnings.append("asset not found in indexed scan history")
+    elif resolution and resolution.get("strategy") != "latest_exact":
+        warnings.append(f"asset resolved via {resolution.get('strategy')}; context scan may differ from latest scan")
     return {
         "schema_version": "uepi.read_context.v1",
         "domain": domain,
         "asset": asset,
+        "resolved_asset": resolved_asset,
+        "resolution": resolution,
         "scan_id": scan_id,
         "context_found": entity is not None,
         "entity": entity,
@@ -1265,7 +1541,7 @@ def read_asset_context(
             "state": "complete" if entity else "missing",
             "covered": ["indexed_entity", "relations", "subgraph"] if entity else ["candidate_search"],
             "omitted": [] if entity else ["exact_entity_context"],
-            "warnings": ["exact asset not found in latest scan"] if not entity else [],
+            "warnings": warnings,
         },
         "errors": [
             {"scope": scope, **error}
@@ -1280,19 +1556,289 @@ def read_asset_context(
     }
 
 
+def blueprint_graph_summary(entity: dict[str, Any] | None, node_limit: int = 200) -> dict[str, Any] | None:
+    if not entity:
+        return None
+    snapshot = entity.get("snapshot") if isinstance(entity.get("snapshot"), dict) else {}
+    blueprint = snapshot.get("blueprint_graphs") if isinstance(snapshot, dict) else None
+    if not isinstance(blueprint, dict):
+        return {
+            "schema_version": "uepi.blueprint_graph_summary.v1",
+            "available": False,
+            "warnings": ["blueprint graph snapshot is not present; refresh with read_blueprints/read_blueprint_graphs enabled"],
+        }
+
+    graph_summaries = blueprint.get("graph_summaries")
+    event_graph_nodes = blueprint.get("event_graph_nodes")
+    if isinstance(graph_summaries, list) and isinstance(event_graph_nodes, list):
+        return {
+            "schema_version": "uepi.blueprint_graph_summary.v1",
+            "available": True,
+            "blueprint_path": blueprint.get("blueprint_path", entity.get("canonical_key", "")),
+            "graph_count": blueprint.get("graph_count", len(graph_summaries)),
+            "event_graph_node_count": blueprint.get("event_graph_node_count", len(event_graph_nodes)),
+            "graphs": graph_summaries,
+            "event_graph_nodes": event_graph_nodes[:node_limit],
+            "truncated_event_graph_node_count": max(len(event_graph_nodes) - max(node_limit, 0), 0),
+        }
+
+    graphs = [graph for graph in blueprint.get("graphs", []) if isinstance(graph, dict)]
+    summaries: list[dict[str, Any]] = []
+    event_nodes: list[dict[str, Any]] = []
+    total_nodes = 0
+    total_pins = 0
+    for graph in graphs:
+        nodes = [node for node in graph.get("nodes", []) if isinstance(node, dict)]
+        pin_count = sum(len(node.get("pins", [])) for node in nodes if isinstance(node.get("pins"), list))
+        total_nodes += len(nodes)
+        total_pins += pin_count
+        graph_name = str(graph.get("name") or "")
+        graph_path = str(graph.get("path") or "")
+        role = "event_graph" if graph_name.lower() == "eventgraph" or "ubergraph" in graph_path.lower() else "graph"
+        summaries.append(
+            {
+                "id": graph.get("id", ""),
+                "name": graph_name,
+                "path": graph_path,
+                "role": role,
+                "node_count": len(nodes),
+                "pin_count": pin_count,
+                "cfg_basic_block_count": graph.get("cfg_basic_block_count", 0),
+                "dfg_value_count": graph.get("dfg_value_count", 0),
+            }
+        )
+        if role != "event_graph":
+            continue
+        for node in nodes:
+            pins = node.get("pins", []) if isinstance(node.get("pins"), list) else []
+            semantic = node.get("semantic") if isinstance(node.get("semantic"), dict) else {}
+            event_nodes.append(
+                {
+                    "graph_id": graph.get("id", ""),
+                    "graph_name": graph_name,
+                    "id": node.get("id", ""),
+                    "name": node.get("name", ""),
+                    "title": node.get("title", ""),
+                    "class": node.get("class", ""),
+                    "semantic_kind": semantic.get("kind", ""),
+                    "pin_count": len(pins),
+                    "has_exec_pin": any(
+                        isinstance(pin, dict)
+                        and isinstance(pin.get("type"), dict)
+                        and str(pin["type"].get("category", "")).lower() == "exec"
+                        for pin in pins
+                    ),
+                }
+            )
+
+    return {
+        "schema_version": "uepi.blueprint_graph_summary.v1",
+        "available": True,
+        "blueprint_path": blueprint.get("blueprint_path", entity.get("canonical_key", "")),
+        "graph_count": len(graphs),
+        "total_node_count": total_nodes,
+        "total_pin_count": total_pins,
+        "event_graph_count": sum(1 for item in summaries if item.get("role") == "event_graph"),
+        "event_graph_node_count": len(event_nodes),
+        "graphs": summaries,
+        "event_graph_nodes": event_nodes[:node_limit],
+        "truncated_event_graph_node_count": max(len(event_nodes) - max(node_limit, 0), 0),
+    }
+
+
+def _number(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _vector(value: Any) -> tuple[float, float, float]:
+    if not isinstance(value, dict):
+        return 0.0, 0.0, 0.0
+    return _number(value.get("x")), _number(value.get("y")), _number(value.get("z"))
+
+
+def _vector_distance(left: tuple[float, float, float], right: tuple[float, float, float]) -> float:
+    return math.sqrt(sum((left[index] - right[index]) ** 2 for index in range(3)))
+
+
+def _quat(value: Any) -> tuple[float, float, float, float]:
+    if not isinstance(value, dict):
+        return 0.0, 0.0, 0.0, 1.0
+    return _number(value.get("x")), _number(value.get("y")), _number(value.get("z")), _number(value.get("w", 1.0))
+
+
+def _quat_angle_degrees(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> float:
+    dot = abs(sum(left[index] * right[index] for index in range(4)))
+    dot = max(-1.0, min(1.0, dot))
+    return math.degrees(2.0 * math.acos(dot))
+
+
+def _transform_motion_metrics(transforms: list[dict[str, Any]]) -> dict[str, Any]:
+    if not transforms:
+        return {
+            "translation_max_delta": 0.0,
+            "rotation_max_delta_degrees": 0.0,
+            "scale_max_delta": 0.0,
+            "translation_changes": False,
+            "rotation_changes": False,
+            "scale_changes": False,
+        }
+    first = transforms[0]
+    first_translation = _vector(first.get("translation"))
+    first_rotation = _quat(first.get("rotation"))
+    first_scale = _vector(first.get("scale3d"))
+    translation_max = 0.0
+    rotation_max = 0.0
+    scale_max = 0.0
+    for transform in transforms[1:]:
+        translation_max = max(translation_max, _vector_distance(first_translation, _vector(transform.get("translation"))))
+        rotation_max = max(rotation_max, _quat_angle_degrees(first_rotation, _quat(transform.get("rotation"))))
+        scale_max = max(scale_max, _vector_distance(first_scale, _vector(transform.get("scale3d"))))
+    return {
+        "translation_max_delta": translation_max,
+        "rotation_max_delta_degrees": rotation_max,
+        "scale_max_delta": scale_max,
+        "translation_changes": translation_max > 0.001,
+        "rotation_changes": rotation_max > 0.01,
+        "scale_changes": scale_max > 0.001,
+    }
+
+
+def _track_motion_from_samples(track: dict[str, Any]) -> dict[str, Any]:
+    explicit_motion = track.get("motion")
+    if isinstance(explicit_motion, dict):
+        return explicit_motion
+
+    transforms: list[dict[str, Any]] = []
+    first = track.get("raw_local_first")
+    if isinstance(first, dict):
+        transforms.append(first)
+    for sample in track.get("raw_local_samples", []):
+        if isinstance(sample, dict) and isinstance(sample.get("transform"), dict):
+            transforms.append(sample["transform"])
+    last = track.get("raw_local_last")
+    if isinstance(last, dict):
+        transforms.append(last)
+    metrics = _transform_motion_metrics(transforms)
+    metrics.update(
+        {
+            "bone_name": track.get("bone_name", ""),
+            "raw_local_key_count": track.get("raw_local_key_count", 0),
+            "sampled_fallback": True,
+        }
+    )
+    return metrics
+
+
+def _sequence_snapshots_from_animation_context(
+    entity: dict[str, Any] | None,
+    manifest: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    snapshots: list[dict[str, Any]] = []
+    if entity and isinstance(entity.get("snapshot"), dict):
+        snapshot = entity["snapshot"]
+        nested = snapshot.get("animation_sequence")
+        if isinstance(nested, dict):
+            snapshots.append(nested)
+        elif snapshot.get("schema_version") == "uepi.anim_sequence.v1":
+            snapshots.append(snapshot)
+    if manifest:
+        for item in manifest.get("entities", []):
+            if not isinstance(item, dict) or not isinstance(item.get("snapshot"), dict):
+                continue
+            snapshot = item["snapshot"]
+            if snapshot.get("schema_version") == "uepi.anim_sequence.v1":
+                snapshots.append(snapshot)
+    return snapshots
+
+
+def animation_motion_summary(
+    entity: dict[str, Any] | None,
+    manifest: dict[str, Any] | None,
+    bone_limit: int = 200,
+) -> dict[str, Any] | None:
+    snapshots = _sequence_snapshots_from_animation_context(entity, manifest)
+    if not snapshots:
+        return None
+
+    sequence = snapshots[0]
+    existing_summary = sequence.get("motion_summary")
+    if isinstance(existing_summary, dict):
+        changed = existing_summary.get("changing_bones")
+        if isinstance(changed, list):
+            existing_summary = dict(existing_summary)
+            existing_summary["changing_bones"] = changed[:bone_limit]
+            existing_summary["truncated_changing_bone_count"] = max(len(changed) - max(bone_limit, 0), 0)
+        return existing_summary
+
+    tracks = [track for track in sequence.get("tracks", []) if isinstance(track, dict)]
+    changing_bones: list[dict[str, Any]] = []
+    for track in tracks:
+        motion = _track_motion_from_samples(track)
+        change_channels = [
+            name
+            for name, changed in [
+                ("translation", motion.get("translation_changes")),
+                ("rotation", motion.get("rotation_changes")),
+                ("scale", motion.get("scale_changes")),
+            ]
+            if changed
+        ]
+        if not change_channels:
+            continue
+        changing_bones.append(
+            {
+                "bone_name": motion.get("bone_name") or track.get("bone_name", ""),
+                "track_index": track.get("index", 0),
+                "change_channels": change_channels,
+                "translation_max_delta": motion.get("translation_max_delta", motion.get("translation_range", 0.0)),
+                "rotation_max_delta_degrees": motion.get("rotation_max_delta_degrees", motion.get("rotation_range_degrees", 0.0)),
+                "scale_max_delta": motion.get("scale_max_delta", motion.get("scale_range", 0.0)),
+                "raw_local_key_count": motion.get("raw_local_key_count", track.get("raw_local_key_count", 0)),
+                "sampled_fallback": bool(motion.get("sampled_fallback", False)),
+            }
+        )
+    changing_bones.sort(
+        key=lambda item: (
+            _number(item.get("translation_max_delta"))
+            + _number(item.get("rotation_max_delta_degrees")) * 0.01
+            + _number(item.get("scale_max_delta"))
+        ),
+        reverse=True,
+    )
+    return {
+        "schema_version": "uepi.animation_motion_summary.v1",
+        "source": "sampled_raw_local_transforms",
+        "sequence_path": sequence.get("sequence_path", ""),
+        "track_count": len(tracks),
+        "changing_bone_count": len(changing_bones),
+        "static_bone_count": max(len(tracks) - len(changing_bones), 0),
+        "changing_bones": changing_bones[:bone_limit],
+        "truncated_changing_bone_count": max(len(changing_bones) - max(bone_limit, 0), 0),
+        "warnings": ["summary derived from first/middle/last raw-local samples until the asset is refreshed with motion metrics"],
+    }
+
+
 def read_blueprint_context(db_path: Path, arguments: dict[str, Any]) -> dict[str, Any]:
     args = dict(arguments)
     args.setdefault("read_blueprints", True)
     args.setdefault("read_uobject_reflection", True)
     args.setdefault("level", "L2")
     result = read_asset_context(db_path, args, domain="blueprint", relation_types=BLUEPRINT_CONTEXT_RELATIONS)
+    result["blueprint_graph_summary"] = blueprint_graph_summary(
+        result.get("entity") if isinstance(result.get("entity"), dict) else None,
+        as_int(arguments.get("graph_limit"), 200),
+    )
     if as_bool(arguments.get("include_cpp_links"), True):
+        link_asset = str(result.get("resolved_asset") or arguments["asset"])
         links, error = call_or_error(
             lambda: blueprint_cpp_links(
                 db_path,
                 result.get("scan_id"),
                 arguments.get("project"),
-                str(arguments["asset"]),
+                link_asset,
                 50,
             ),
             None,
@@ -1307,17 +1853,23 @@ def read_animation_context(db_path: Path, arguments: dict[str, Any]) -> dict[str
     args = dict(arguments)
     args.setdefault("level", "L2")
     result = read_asset_context(db_path, args, domain="animation", relation_types=ANIMATION_CONTEXT_RELATIONS)
+    manifest_asset = str(result.get("resolved_asset") or arguments["asset"])
     manifest, error = call_or_error(
         lambda: animation_query(
             db_path,
             result.get("scan_id"),
-            str(arguments["asset"]),
+            manifest_asset,
             as_int(arguments.get("relation_limit"), 100),
             as_bool(arguments.get("include_snapshot"), True),
         ),
         None,
     )
     result["animation_manifest"] = manifest
+    result["animation_motion_summary"] = animation_motion_summary(
+        result.get("entity") if isinstance(result.get("entity"), dict) else None,
+        manifest if isinstance(manifest, dict) else None,
+        as_int(arguments.get("motion_bone_limit"), 200),
+    )
     if error:
         result.setdefault("errors", []).append({"scope": "animation_manifest", **error})
     return result

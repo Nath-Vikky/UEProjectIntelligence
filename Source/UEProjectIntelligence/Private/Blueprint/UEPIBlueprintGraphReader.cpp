@@ -98,6 +98,49 @@ FString NodeCanonicalKey(const UEdGraph& Graph, const UEdGraphNode& Node)
 	return Graph.GetPathName() + TEXT(":node:") + (GuidString(Node.NodeGuid).IsEmpty() ? Node.GetName() : GuidString(Node.NodeGuid));
 }
 
+FString GraphRoleString(const UBlueprint& Blueprint, const UEdGraph& Graph)
+{
+	const auto ContainsGraph = [&Graph](const auto& GraphArray)
+	{
+		for (const auto& Candidate : GraphArray)
+		{
+			const UEdGraph* CandidateGraph = Candidate;
+			if (CandidateGraph == &Graph)
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+
+	if (ContainsGraph(Blueprint.UbergraphPages))
+	{
+		return TEXT("event_graph");
+	}
+	if (ContainsGraph(Blueprint.FunctionGraphs))
+	{
+		return TEXT("function_graph");
+	}
+	if (ContainsGraph(Blueprint.MacroGraphs))
+	{
+		return TEXT("macro_graph");
+	}
+	if (ContainsGraph(Blueprint.DelegateSignatureGraphs))
+	{
+		return TEXT("delegate_signature_graph");
+	}
+
+	const FString GraphName = Graph.GetName();
+	const FString GraphPath = Graph.GetPathName();
+	if (GraphName.Equals(TEXT("EventGraph"), ESearchCase::IgnoreCase) ||
+		GraphPath.Contains(TEXT("Ubergraph"), ESearchCase::IgnoreCase))
+	{
+		return TEXT("event_graph");
+	}
+
+	return TEXT("graph");
+}
+
 FString PinKey(const FString& NodeId, const UEdGraphPin& Pin, int32 PinIndex)
 {
 	const FString PinGuid = GuidString(Pin.PinId);
@@ -2122,8 +2165,21 @@ FEntityRecord MakeGraphEntity(const FString& ProjectId, const FString& GraphId, 
 	Entity.SourceLayer = LexToString(ESourceLayer::EditorSourceGraph);
 	Entity.Attributes.Add(TEXT("asset_path"), Blueprint.GetPathName());
 	Entity.Attributes.Add(TEXT("graph_name"), Graph.GetName());
+	Entity.Attributes.Add(TEXT("graph_role"), GraphRoleString(Blueprint, Graph));
 	Entity.Attributes.Add(TEXT("graph_guid"), GuidString(Graph.GraphGuid));
 	Entity.Attributes.Add(TEXT("schema_class"), Graph.Schema ? Graph.Schema->GetClass()->GetPathName() : FString());
+	int32 NodeCount = 0;
+	int32 PinCount = 0;
+	for (const UEdGraphNode* Node : Graph.Nodes)
+	{
+		if (Node)
+		{
+			++NodeCount;
+			PinCount += Node->Pins.Num();
+		}
+	}
+	Entity.Attributes.Add(TEXT("node_count"), FString::FromInt(NodeCount));
+	Entity.Attributes.Add(TEXT("pin_count"), FString::FromInt(PinCount));
 	Entity.Attributes.Add(TEXT("collection_level"), LexToString(ECollectionLevel::Structural));
 	Entity.Completeness.State = ECompletenessState::Complete;
 	Entity.Completeness.Covered = { TEXT("graph_metadata"), TEXT("node_membership") };
@@ -2666,17 +2722,21 @@ void FBlueprintGraphReader::AppendBlueprintGraph(
 	}
 
 	TArray<TSharedPtr<FJsonValue>> GraphValues;
+	TArray<TSharedPtr<FJsonValue>> GraphSummaryValues;
+	TArray<TSharedPtr<FJsonValue>> EventGraphNodeSummaryValues;
 	TArray<FAnimBlueprintNodeRecord> AnimBlueprintNodeRecords;
 
 	for (const UEdGraph* Graph : Graphs)
 	{
 		const FString GraphId = MakeStableId(ProjectId, TEXT("blueprint_graph"), GraphKey(Blueprint, *Graph));
+		const FString GraphRole = GraphRoleString(Blueprint, *Graph);
 		OutEntities.Add(MakeGraphEntity(ProjectId, GraphId, Blueprint, *Graph));
 		AddRelation(ProjectId, TEXT("contains_graph"), AssetEntity.Id, GraphId, Graph->GetPathName(), TEXT("Blueprint contains UEdGraph."), OutRelations);
 
 		TSharedRef<FJsonObject> GraphObject = MakeShared<FJsonObject>();
 		GraphObject->SetStringField(TEXT("id"), GraphId);
 		GraphObject->SetStringField(TEXT("name"), Graph->GetName());
+		GraphObject->SetStringField(TEXT("role"), GraphRole);
 		GraphObject->SetStringField(TEXT("guid"), GuidString(Graph->GraphGuid));
 		GraphObject->SetStringField(TEXT("path"), Graph->GetPathName());
 
@@ -2684,6 +2744,8 @@ void FBlueprintGraphReader::AppendBlueprintGraph(
 		TArray<FNodeProjectionRecord> NodeProjectionRecords;
 		TArray<FExecProjectionEdge> ExecProjectionEdges;
 		TArray<FDataProjectionEdge> DataProjectionEdges;
+		int32 GraphPinCount = 0;
+		int32 GraphExecPinCount = 0;
 		TArray<UEdGraphNode*> Nodes = Graph->Nodes;
 		Nodes.RemoveAll([](const UEdGraphNode* Node)
 		{
@@ -2726,6 +2788,7 @@ void FBlueprintGraphReader::AppendBlueprintGraph(
 
 			TArray<TSharedPtr<FJsonValue>> PinValues;
 			bool bNodeHasExecPin = false;
+			int32 NodeExecPinCount = 0;
 			for (int32 PinIndex = 0; PinIndex < Node->Pins.Num(); ++PinIndex)
 			{
 				const UEdGraphPin* Pin = Node->Pins[PinIndex];
@@ -2734,9 +2797,12 @@ void FBlueprintGraphReader::AppendBlueprintGraph(
 					continue;
 				}
 
+				++GraphPinCount;
 				if (Pin->PinType.PinCategory.ToString().Equals(TEXT("exec"), ESearchCase::IgnoreCase))
 				{
 					bNodeHasExecPin = true;
+					++NodeExecPinCount;
+					++GraphExecPinCount;
 				}
 
 				const FString PinId = MakeStableId(ProjectId, TEXT("blueprint_pin"), PinKey(NodeId, *Pin, PinIndex));
@@ -2838,7 +2904,33 @@ void FBlueprintGraphReader::AppendBlueprintGraph(
 				PinValues.Add(MakeShared<FJsonValueObject>(PinObject));
 			}
 			NodeObject->SetArrayField(TEXT("pins"), PinValues);
+			NodeObject->SetNumberField(TEXT("pin_count"), PinValues.Num());
+			NodeObject->SetNumberField(TEXT("exec_pin_count"), NodeExecPinCount);
 			NodeValues.Add(MakeShared<FJsonValueObject>(NodeObject));
+
+			if (GraphRole == TEXT("event_graph"))
+			{
+				FString SemanticKind;
+				if (SemanticObject.IsValid())
+				{
+					SemanticObject->TryGetStringField(TEXT("kind"), SemanticKind);
+				}
+				TSharedRef<FJsonObject> NodeSummaryObject = MakeShared<FJsonObject>();
+				NodeSummaryObject->SetStringField(TEXT("graph_id"), GraphId);
+				NodeSummaryObject->SetStringField(TEXT("graph_name"), Graph->GetName());
+				NodeSummaryObject->SetStringField(TEXT("id"), NodeId);
+				NodeSummaryObject->SetStringField(TEXT("name"), Node->GetName());
+				NodeSummaryObject->SetStringField(TEXT("guid"), GuidString(Node->NodeGuid));
+				NodeSummaryObject->SetStringField(TEXT("class"), Node->GetClass()->GetPathName());
+				NodeSummaryObject->SetStringField(TEXT("title"), NodeDisplayName);
+				NodeSummaryObject->SetStringField(TEXT("semantic_kind"), SemanticKind);
+				NodeSummaryObject->SetNumberField(TEXT("pin_count"), PinValues.Num());
+				NodeSummaryObject->SetNumberField(TEXT("exec_pin_count"), NodeExecPinCount);
+				NodeSummaryObject->SetBoolField(TEXT("has_exec_pin"), bNodeHasExecPin);
+				NodeSummaryObject->SetNumberField(TEXT("node_pos_x"), Node->NodePosX);
+				NodeSummaryObject->SetNumberField(TEXT("node_pos_y"), Node->NodePosY);
+				EventGraphNodeSummaryValues.Add(MakeShared<FJsonValueObject>(NodeSummaryObject));
+			}
 
 			FNodeProjectionRecord ProjectionRecord;
 			ProjectionRecord.NodeId = NodeId;
@@ -2864,12 +2956,34 @@ void FBlueprintGraphReader::AppendBlueprintGraph(
 
 		AppendCfgBasicBlocks(ProjectId, GraphId, *Graph, NodeProjectionRecords, ExecProjectionEdges, OutEntities, OutRelations, GraphObject);
 		AppendDfgDefUse(ProjectId, Blueprint, *Graph, NodeProjectionRecords, DataProjectionEdges, OutEntities, OutRelations, GraphObject);
+		GraphObject->SetNumberField(TEXT("node_count"), NodeValues.Num());
+		GraphObject->SetNumberField(TEXT("pin_count"), GraphPinCount);
+		GraphObject->SetNumberField(TEXT("exec_pin_count"), GraphExecPinCount);
+		GraphObject->SetNumberField(TEXT("exec_edge_count"), ExecProjectionEdges.Num());
+		GraphObject->SetNumberField(TEXT("data_edge_count"), DataProjectionEdges.Num());
 		GraphObject->SetArrayField(TEXT("nodes"), NodeValues);
 		GraphValues.Add(MakeShared<FJsonValueObject>(GraphObject));
+
+		TSharedRef<FJsonObject> GraphSummaryObject = MakeShared<FJsonObject>();
+		GraphSummaryObject->SetStringField(TEXT("id"), GraphId);
+		GraphSummaryObject->SetStringField(TEXT("name"), Graph->GetName());
+		GraphSummaryObject->SetStringField(TEXT("role"), GraphRole);
+		GraphSummaryObject->SetStringField(TEXT("path"), Graph->GetPathName());
+		GraphSummaryObject->SetNumberField(TEXT("node_count"), NodeValues.Num());
+		GraphSummaryObject->SetNumberField(TEXT("pin_count"), GraphPinCount);
+		GraphSummaryObject->SetNumberField(TEXT("exec_pin_count"), GraphExecPinCount);
+		GraphSummaryObject->SetNumberField(TEXT("exec_edge_count"), ExecProjectionEdges.Num());
+		GraphSummaryObject->SetNumberField(TEXT("data_edge_count"), DataProjectionEdges.Num());
+		GraphSummaryObject->SetNumberField(TEXT("cfg_basic_block_count"), GraphObject->GetNumberField(TEXT("cfg_basic_block_count")));
+		GraphSummaryObject->SetNumberField(TEXT("dfg_value_count"), GraphObject->GetNumberField(TEXT("dfg_value_count")));
+		GraphSummaryValues.Add(MakeShared<FJsonValueObject>(GraphSummaryObject));
 	}
 
 	BlueprintSnapshot->SetNumberField(TEXT("graph_count"), GraphValues.Num());
 	BlueprintSnapshot->SetArrayField(TEXT("graphs"), GraphValues);
+	BlueprintSnapshot->SetArrayField(TEXT("graph_summaries"), GraphSummaryValues);
+	BlueprintSnapshot->SetNumberField(TEXT("event_graph_node_count"), EventGraphNodeSummaryValues.Num());
+	BlueprintSnapshot->SetArrayField(TEXT("event_graph_nodes"), EventGraphNodeSummaryValues);
 	BlueprintSnapshot->SetNumberField(TEXT("component_template_count"), ComponentTemplateValues.Num());
 	BlueprintSnapshot->SetArrayField(TEXT("component_templates"), ComponentTemplateValues);
 
