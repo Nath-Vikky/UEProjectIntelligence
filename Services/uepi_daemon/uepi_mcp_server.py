@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import time
 import traceback
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
@@ -29,6 +30,7 @@ from uepi_daemon import (
     data_query,
     data_snapshot_page,
     export_graph,
+    find_entity,
     get_job,
     graph_page,
     graph_query,
@@ -59,6 +61,7 @@ from uepi_daemon import (
     update_job,
     upload_job_chunk,
     worker_heartbeat,
+    entity_row,
 )
 
 
@@ -100,6 +103,104 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "name": "uepi_health",
         "description": "Check SQLite index availability and MCP server status.",
         "inputSchema": with_token_budget(object_schema({})),
+        "outputSchema": {"type": "object"},
+    },
+    {
+        "name": "uepi_project_status",
+        "description": "Return the LLM-facing UEPI project, index, freshness, worker, and queue status.",
+        "inputSchema": with_token_budget(
+            object_schema(
+                {
+                    "include_stale": {"type": "boolean", "default": True},
+                    "job_limit": {"type": "integer", "default": 10},
+                    "worker_limit": {"type": "integer", "default": 20},
+                }
+            )
+        ),
+        "outputSchema": {"type": "object"},
+    },
+    {
+        "name": "uepi_project_refresh",
+        "description": "Submit a read-only metadata_scan job, optionally wait for completion, and ingest the resulting scan artifact.",
+        "inputSchema": with_token_budget(
+            object_schema(
+                {
+                    "asset": {"type": "string", "description": "Optional target object path or canonical asset key."},
+                    "assets": array_of_strings("Optional target object paths."),
+                    "level": {"type": "string", "default": "L2"},
+                    "output_path": {"type": "string"},
+                    "wait_seconds": {"type": "integer", "default": 0},
+                    "poll_interval_seconds": {"type": "number", "default": 0.5},
+                    "priority": {"type": "integer", "default": 0},
+                    "timeout_seconds": {"type": "integer", "default": 900},
+                    "read_blueprints": {"type": "boolean", "default": True},
+                    "read_uobject_reflection": {"type": "boolean", "default": True},
+                    "ingest_on_success": {"type": "boolean", "default": True},
+                }
+            )
+        ),
+        "outputSchema": {"type": "object"},
+    },
+    {
+        "name": "uepi_read_asset_context",
+        "description": "Return LLM-ready read-only context for one asset, with optional refresh, related entities, subgraph, and candidates.",
+        "inputSchema": with_token_budget(
+            object_schema(
+                {
+                    "asset": {"type": "string"},
+                    "refresh": {"type": "boolean", "default": False},
+                    "wait_seconds": {"type": "integer", "default": 0},
+                    "include_snapshot": {"type": "boolean", "default": True},
+                    "relation_limit": {"type": "integer", "default": 80},
+                    "graph_depth": {"type": "integer", "default": 1},
+                    "graph_limit": {"type": "integer", "default": 200},
+                    "candidate_limit": {"type": "integer", "default": 10},
+                    "relation_type": array_of_strings("Optional relation type filters for the subgraph."),
+                },
+                ["asset"],
+            )
+        ),
+        "outputSchema": {"type": "object"},
+    },
+    {
+        "name": "uepi_read_blueprint",
+        "description": "Return LLM-ready Blueprint graph, node, pin, semantic, CFG/DFG, and source-link context for one Blueprint asset.",
+        "inputSchema": with_token_budget(
+            object_schema(
+                {
+                    "asset": {"type": "string"},
+                    "refresh": {"type": "boolean", "default": False},
+                    "wait_seconds": {"type": "integer", "default": 0},
+                    "include_snapshot": {"type": "boolean", "default": True},
+                    "relation_limit": {"type": "integer", "default": 120},
+                    "graph_depth": {"type": "integer", "default": 2},
+                    "graph_limit": {"type": "integer", "default": 400},
+                    "candidate_limit": {"type": "integer", "default": 10},
+                    "include_cpp_links": {"type": "boolean", "default": True},
+                },
+                ["asset"],
+            )
+        ),
+        "outputSchema": {"type": "object"},
+    },
+    {
+        "name": "uepi_read_animation",
+        "description": "Return LLM-ready animation-domain manifest, relation, subgraph, and snapshot context for one animation asset.",
+        "inputSchema": with_token_budget(
+            object_schema(
+                {
+                    "asset": {"type": "string"},
+                    "refresh": {"type": "boolean", "default": False},
+                    "wait_seconds": {"type": "integer", "default": 0},
+                    "include_snapshot": {"type": "boolean", "default": True},
+                    "relation_limit": {"type": "integer", "default": 100},
+                    "graph_depth": {"type": "integer", "default": 2},
+                    "graph_limit": {"type": "integer", "default": 300},
+                    "candidate_limit": {"type": "integer", "default": 10},
+                },
+                ["asset"],
+            )
+        ),
         "outputSchema": {"type": "object"},
     },
     {
@@ -692,6 +793,10 @@ TOOL_BY_NAME = {tool["name"]: tool for tool in TOOL_SPECS}
 JOB_ALLOWED_OPERATIONS = set(TOOL_BY_NAME) - {"uepi_job_start", "uepi_job_get"}
 INDEX_WRITE_TOOLS = [
     "uepi_ingest",
+    "uepi_project_refresh",
+    "uepi_read_asset_context",
+    "uepi_read_blueprint",
+    "uepi_read_animation",
     "uepi_recover",
     "uepi_source_index",
     "uepi_worker_register",
@@ -794,9 +899,389 @@ def security_audit(db_path: Path) -> dict[str, Any]:
     }
 
 
+JOB_TERMINAL_STATES = {"succeeded", "failed", "cancelled"}
+
+BLUEPRINT_CONTEXT_RELATIONS = [
+    "contains_graph",
+    "contains_node",
+    "has_pin",
+    "connects_to",
+    "exec_flows_to",
+    "data_flows_to",
+    "contains_cfg_block",
+    "cfg_flows_to",
+    "contains_dfg_value",
+    "dfg_defines",
+    "dfg_uses",
+    "calls_function",
+    "reads_variable",
+    "writes_variable",
+    "casts_to",
+    "spawns_class",
+    "loads_asset",
+    "declares_function",
+    "declares_variable",
+    "class_references",
+    "asset_reference",
+]
+
+ANIMATION_CONTEXT_RELATIONS = [
+    "uses_skeleton",
+    "uses_skeletal_mesh",
+    "contains_bone",
+    "contains_virtual_bone",
+    "contains_socket",
+    "contains_track",
+    "animates_bone",
+    "contains_montage",
+    "contains_composite",
+    "contains_blend_space",
+    "contains_blend_sample",
+    "samples_animation",
+    "contains_pose_asset",
+    "contains_pose",
+    "contains_curve",
+    "uses_animation",
+    "contains_anim_blueprint",
+    "contains_anim_state_machine",
+    "contains_anim_state",
+    "contains_anim_transition",
+    "contains_anim_asset_player",
+    "contains_anim_cached_pose",
+    "contains_anim_slot",
+    "state_transitions_to",
+    "uses_blendspace",
+    "uses_cached_pose",
+    "uses_source_ik_rig",
+    "uses_target_ik_rig",
+]
+
+
+def caught_error(exc: BaseException) -> dict[str, str]:
+    return {"type": type(exc).__name__, "message": str(exc)}
+
+
+def call_or_error(fn: Any, default: Any = None) -> tuple[Any, dict[str, str] | None]:
+    try:
+        return fn(), None
+    except BaseException as exc:  # Keep high-level LLM tools from terminating the stdio server on lookup misses.
+        if isinstance(exc, KeyboardInterrupt):
+            raise
+        return default, caught_error(exc)
+
+
+def safe_slug(value: str, default: str = "project") -> str:
+    text = value.strip().replace("\\", "/")
+    if "." in text:
+        text = text.rsplit(".", 1)[-1]
+    if "/" in text:
+        text = text.rsplit("/", 1)[-1]
+    safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in text)
+    return safe[:80] or default
+
+
+def refresh_output_path(db_path: Path, asset: str) -> str:
+    root = db_path.parent / "mcp_live_scans"
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = int(time.time() * 1000)
+    return str((root / f"{safe_slug(asset)}_{stamp}.json").resolve())
+
+
+def wait_for_queue_job(db_path: Path, job_id: str, wait_seconds: int, poll_interval_seconds: float) -> tuple[dict[str, Any], bool]:
+    deadline = time.monotonic() + max(0, wait_seconds)
+    interval = max(0.1, min(float(poll_interval_seconds or 0.5), 5.0))
+    while True:
+        job = get_job(db_path, job_id, True)
+        if str(job.get("state")) in JOB_TERMINAL_STATES:
+            return job, False
+        if time.monotonic() >= deadline:
+            return job, True
+        time.sleep(interval)
+
+
+def project_status(db_path: Path, include_stale: bool = True, job_limit: int = 10, worker_limit: int = 20) -> dict[str, Any]:
+    recover_result, recover_error = call_or_error(lambda: recover_jobs(db_path), {})
+    health_result, health_error = call_or_error(lambda: health(db_path), {"ok": False, "scan_count": 0})
+    workers_result, workers_error = call_or_error(lambda: list_worker_sessions(db_path, None, worker_limit), {"workers": []})
+    jobs_result, jobs_error = call_or_error(lambda: list_jobs(db_path, None, job_limit, False), {"jobs": []})
+
+    latest_summary = None
+    latest_error = None
+    freshness = None
+    freshness_error = None
+    if int(health_result.get("scan_count") or 0) > 0:
+        latest_summary, latest_error = call_or_error(lambda: scan_summary(db_path, None))
+        if include_stale:
+            freshness, freshness_error = call_or_error(lambda: staleness(db_path, None, 25))
+
+    workers = workers_result.get("workers", []) if isinstance(workers_result, dict) else []
+    online_workers = [
+        worker for worker in workers
+        if str(worker.get("status")).lower() in {"online", "registered", "idle", "busy"}
+    ]
+    live_editor_workers = [worker for worker in online_workers if str(worker.get("worker_type")).lower() == "editor"]
+    commandlet_workers = [worker for worker in online_workers if str(worker.get("worker_type")).lower() == "commandlet"]
+    jobs = jobs_result.get("jobs", []) if isinstance(jobs_result, dict) else []
+    queue_counts: dict[str, int] = {}
+    for job in jobs:
+        state = str(job.get("state") or "unknown")
+        queue_counts[state] = queue_counts.get(state, 0) + 1
+
+    errors = [
+        {"scope": scope, **error}
+        for scope, error in [
+            ("recover", recover_error),
+            ("health", health_error),
+            ("workers", workers_error),
+            ("jobs", jobs_error),
+            ("summary", latest_error),
+            ("freshness", freshness_error),
+        ]
+        if error
+    ]
+    return {
+        "schema_version": "uepi.project_status.v1",
+        "ok": bool(health_result.get("ok")) and not health_error,
+        "db_path": str(db_path),
+        "project_state": "indexed" if int(health_result.get("scan_count") or 0) > 0 else "empty",
+        "latest_scan_id": health_result.get("latest_scan_id"),
+        "latest_summary": latest_summary,
+        "freshness": freshness,
+        "workers": workers,
+        "online_worker_count": len(online_workers),
+        "live_editor_worker_count": len(live_editor_workers),
+        "commandlet_worker_count": len(commandlet_workers),
+        "jobs": jobs,
+        "queue_counts": queue_counts,
+        "recover": recover_result,
+        "llm_readiness": {
+            "can_query_index": int(health_result.get("scan_count") or 0) > 0,
+            "has_live_editor_worker": bool(live_editor_workers),
+            "has_commandlet_worker": bool(commandlet_workers),
+            "can_refresh_with_worker": bool(live_editor_workers or commandlet_workers),
+        },
+        "errors": errors,
+    }
+
+
+def project_refresh(db_path: Path, arguments: dict[str, Any]) -> dict[str, Any]:
+    asset = str(arguments.get("asset") or "").strip()
+    assets = as_list(arguments.get("assets"))
+    if asset and asset not in assets:
+        assets.insert(0, asset)
+    output_path = str(arguments.get("output_path") or "").strip() or refresh_output_path(db_path, asset or "project")
+    request: dict[str, Any] = {
+        "level": str(arguments.get("level") or "L2"),
+        "output_path": output_path,
+        "read_blueprints": as_bool(arguments.get("read_blueprints"), True),
+        "read_blueprint_graphs": as_bool(arguments.get("read_blueprints"), True),
+        "read_uobject_reflection": as_bool(arguments.get("read_uobject_reflection"), True),
+    }
+    if len(assets) == 1:
+        request["asset"] = assets[0]
+    elif len(assets) > 1:
+        request["assets"] = assets
+
+    submitted = submit_job(
+        db_path,
+        "metadata_scan",
+        request,
+        as_int(arguments.get("priority"), 0),
+        as_int(arguments.get("timeout_seconds"), 900),
+        1,
+        arguments.get("trace_id"),
+    )
+    wait_seconds = as_int(arguments.get("wait_seconds"), 0)
+    timed_out = False
+    job = submitted
+    if wait_seconds > 0:
+        job, timed_out = wait_for_queue_job(
+            db_path,
+            str(submitted["job_id"]),
+            wait_seconds,
+            float(arguments.get("poll_interval_seconds") or 0.5),
+        )
+
+    ingest_result = None
+    ingest_error = None
+    scan_path = ""
+    if str(job.get("state")) == "succeeded" and as_bool(arguments.get("ingest_on_success"), True):
+        result = job.get("result") if isinstance(job.get("result"), dict) else {}
+        scan_path = str(result.get("scan_path") or request.get("output_path") or "")
+        if scan_path:
+            ingest_result, ingest_error = call_or_error(lambda: ingest(Path(scan_path), db_path))
+
+    return {
+        "schema_version": "uepi.project_refresh.v1",
+        "submitted": submitted,
+        "job": job,
+        "timed_out": timed_out,
+        "scan_path": scan_path or output_path,
+        "ingest": ingest_result,
+        "ingest_error": ingest_error,
+        "status": "ready" if ingest_result else ("pending" if timed_out or str(job.get("state")) not in JOB_TERMINAL_STATES else str(job.get("state"))),
+    }
+
+
+def exact_entity_context(db_path: Path, asset: str, include_snapshot: bool) -> tuple[dict[str, Any] | None, str | None, dict[str, str] | None]:
+    try:
+        conn = connect(db_path)
+        try:
+            scan_id = latest_scan_id(conn)
+            row = find_entity(conn, scan_id, asset)
+            return (entity_row(row, include_snapshot) if row else None), scan_id, None
+        finally:
+            conn.close()
+    except BaseException as exc:
+        if isinstance(exc, KeyboardInterrupt):
+            raise
+        return None, None, caught_error(exc)
+
+
+def search_candidates(db_path: Path, asset: str, limit: int) -> list[dict[str, Any]]:
+    candidates, _ = call_or_error(lambda: search(db_path, asset, limit, False), [])
+    if candidates:
+        return candidates
+    fallback = safe_slug(asset, "")
+    if fallback and fallback != asset:
+        fallback_candidates, _ = call_or_error(lambda: search(db_path, fallback, limit, False), [])
+        return fallback_candidates or []
+    return []
+
+
+def read_asset_context(
+    db_path: Path,
+    arguments: dict[str, Any],
+    *,
+    domain: str = "asset",
+    relation_types: list[str] | None = None,
+) -> dict[str, Any]:
+    asset = str(arguments["asset"]).strip()
+    refresh_result = None
+    if as_bool(arguments.get("refresh"), False):
+        refresh_args = dict(arguments)
+        refresh_args.setdefault("asset", asset)
+        refresh_result = project_refresh(db_path, refresh_args)
+
+    include_snapshot = as_bool(arguments.get("include_snapshot"), True)
+    entity, scan_id, entity_error = exact_entity_context(db_path, asset, include_snapshot)
+    relation_limit = as_int(arguments.get("relation_limit"), 80)
+    graph_depth = as_int(arguments.get("graph_depth"), 1)
+    graph_limit = as_int(arguments.get("graph_limit"), 200)
+    requested_relation_types = as_list(arguments.get("relation_type")) or list(relation_types or [])
+
+    related_result = None
+    related_error = None
+    subgraph_result = None
+    subgraph_error = None
+    if entity:
+        related_result, related_error = call_or_error(
+            lambda: related(db_path, asset, relation_limit, include_snapshot),
+            None,
+        )
+        subgraph_result, subgraph_error = call_or_error(
+            lambda: subgraph(db_path, asset, graph_depth, graph_limit, requested_relation_types),
+            None,
+        )
+
+    freshness = None
+    freshness_error = None
+    if scan_id:
+        freshness, freshness_error = call_or_error(lambda: staleness(db_path, scan_id, 25), None)
+
+    candidates = [] if entity else search_candidates(db_path, asset, as_int(arguments.get("candidate_limit"), 10))
+    return {
+        "schema_version": "uepi.read_context.v1",
+        "domain": domain,
+        "asset": asset,
+        "scan_id": scan_id,
+        "context_found": entity is not None,
+        "entity": entity,
+        "related": related_result,
+        "subgraph": subgraph_result,
+        "candidates": candidates,
+        "freshness": freshness,
+        "refresh": refresh_result,
+        "completeness": {
+            "state": "complete" if entity else "missing",
+            "covered": ["indexed_entity", "relations", "subgraph"] if entity else ["candidate_search"],
+            "omitted": [] if entity else ["exact_entity_context"],
+            "warnings": ["exact asset not found in latest scan"] if not entity else [],
+        },
+        "errors": [
+            {"scope": scope, **error}
+            for scope, error in [
+                ("entity", entity_error),
+                ("related", related_error),
+                ("subgraph", subgraph_error),
+                ("freshness", freshness_error),
+            ]
+            if error
+        ],
+    }
+
+
+def read_blueprint_context(db_path: Path, arguments: dict[str, Any]) -> dict[str, Any]:
+    args = dict(arguments)
+    args.setdefault("read_blueprints", True)
+    args.setdefault("read_uobject_reflection", True)
+    args.setdefault("level", "L2")
+    result = read_asset_context(db_path, args, domain="blueprint", relation_types=BLUEPRINT_CONTEXT_RELATIONS)
+    if as_bool(arguments.get("include_cpp_links"), True):
+        links, error = call_or_error(
+            lambda: blueprint_cpp_links(
+                db_path,
+                result.get("scan_id"),
+                arguments.get("project"),
+                str(arguments["asset"]),
+                50,
+            ),
+            None,
+        )
+        result["blueprint_cpp_links"] = links
+        if error:
+            result.setdefault("errors", []).append({"scope": "blueprint_cpp_links", **error})
+    return result
+
+
+def read_animation_context(db_path: Path, arguments: dict[str, Any]) -> dict[str, Any]:
+    args = dict(arguments)
+    args.setdefault("level", "L2")
+    result = read_asset_context(db_path, args, domain="animation", relation_types=ANIMATION_CONTEXT_RELATIONS)
+    manifest, error = call_or_error(
+        lambda: animation_query(
+            db_path,
+            result.get("scan_id"),
+            str(arguments["asset"]),
+            as_int(arguments.get("relation_limit"), 100),
+            as_bool(arguments.get("include_snapshot"), True),
+        ),
+        None,
+    )
+    result["animation_manifest"] = manifest
+    if error:
+        result.setdefault("errors", []).append({"scope": "animation_manifest", **error})
+    return result
+
+
 def run_tool(name: str, arguments: dict[str, Any], db_path: Path) -> Any:
     if name == "uepi_health":
         return health(db_path)
+    if name == "uepi_project_status":
+        return project_status(
+            db_path,
+            as_bool(arguments.get("include_stale"), True),
+            as_int(arguments.get("job_limit"), 10),
+            as_int(arguments.get("worker_limit"), 20),
+        )
+    if name == "uepi_project_refresh":
+        return project_refresh(db_path, arguments)
+    if name == "uepi_read_asset_context":
+        return read_asset_context(db_path, arguments)
+    if name == "uepi_read_blueprint":
+        return read_blueprint_context(db_path, arguments)
+    if name == "uepi_read_animation":
+        return read_animation_context(db_path, arguments)
     if name == "uepi_ingest":
         return ingest(Path(str(arguments["scan"])), db_path)
     if name == "uepi_summary":

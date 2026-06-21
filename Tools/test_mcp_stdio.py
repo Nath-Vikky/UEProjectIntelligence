@@ -108,6 +108,11 @@ def run_profile(args: argparse.Namespace, framing: str) -> None:
         tool_names = {tool["name"] for tool in tools}
         for required in {
             "uepi_ingest",
+            "uepi_project_status",
+            "uepi_project_refresh",
+            "uepi_read_asset_context",
+            "uepi_read_blueprint",
+            "uepi_read_animation",
             "uepi_summary",
             "uepi_graph_query",
             "uepi_report",
@@ -132,6 +137,31 @@ def run_profile(args: argparse.Namespace, framing: str) -> None:
 
         summary = request(process, 4, "tools/call", {"name": "uepi_summary", "arguments": {}}, framing)
         assert summary["structuredContent"]["scan_id"] == ingest["structuredContent"]["scan_id"]
+
+        project_status = request(process, 23, "tools/call", {"name": "uepi_project_status", "arguments": {}}, framing)
+        assert project_status["structuredContent"]["llm_readiness"]["can_query_index"]
+
+        blueprint_context = request(
+            process,
+            24,
+            "tools/call",
+            {
+                "name": "uepi_read_blueprint",
+                "arguments": {
+                    "asset": "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter",
+                    "graph_depth": 1,
+                    "graph_limit": 80,
+                    "relation_limit": 40,
+                    "include_cpp_links": True,
+                    "token_budget": 100000,
+                },
+            },
+            framing,
+        )
+        assert blueprint_context["structuredContent"]["context_found"]
+        assert blueprint_context["structuredContent"]["domain"] == "blueprint"
+        assert blueprint_context["structuredContent"]["entity"]["kind"] == "asset"
+        assert "freshness" in blueprint_context["structuredContent"]
 
         animation_manifest = request(process, 20, "tools/call", {"name": "uepi_animation_query", "arguments": {"limit": 5}}, framing)
         assert animation_manifest["structuredContent"]["domain"] == "animation"
