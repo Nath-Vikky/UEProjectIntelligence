@@ -209,6 +209,11 @@ namespace
 void UUEPIEditorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	if (IsRunningCommandlet())
+	{
+		return;
+	}
+
 	RegisterIncrementalDelegates();
 	if (!WorkerTickerHandle.IsValid())
 	{
@@ -320,7 +325,8 @@ bool UUEPIEditorSubsystem::RegisterWorkerSession(FString DaemonUrl, FString Work
 	WorkerSessionStatus.DaemonUrl = UEPINormalizeDaemonUrl(DaemonUrl);
 	if (WorkerId.IsEmpty())
 	{
-		WorkerId = FString::Printf(TEXT("%s-editor-%s"), FApp::GetProjectName(), *FPlatformProcess::ComputerName());
+		const FString ComputerName = FPlatformProcess::ComputerName();
+		WorkerId = FString::Printf(TEXT("%s-editor-%s"), FApp::GetProjectName(), *ComputerName);
 	}
 	WorkerSessionStatus.WorkerId = WorkerId;
 	WorkerSessionStatus.Status = TEXT("registering");
