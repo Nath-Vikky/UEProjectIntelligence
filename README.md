@@ -87,6 +87,14 @@ Saved/UEProjectIntelligence/incremental_events.jsonl
 
 The event log is read-only with respect to project assets; it records observations and does not trigger package saves, Blueprint compiles, or automatic rescans by itself.
 
+Editor Live Worker mode:
+
+1. Start the local daemon on `127.0.0.1:8765`.
+2. Open the project in Unreal Editor.
+3. Open `Tools > UE Project Intelligence` and click `Start Live Worker` if auto-connect did not already register.
+
+The editor worker registers as `worker_type=editor`, keeps heartbeat alive, long-polls `/v1/jobs/poll`, executes read-only `metadata_scan` jobs inside the open editor process, writes scan JSON artifacts, and posts `succeeded` or `failed` updates back to the daemon. It does not compile Blueprints, save packages, rename assets, delete assets, launch shell commands, or expose an HTTP server inside Unreal.
+
 Commandlet worker mode:
 
 ```powershell
@@ -98,7 +106,7 @@ Commandlet worker mode:
   -UEPIWorkerMaxJobs=1
 ```
 
-The worker registers as `worker_type=commandlet`, sends heartbeat updates, long-polls `/v1/jobs/poll`, executes leased `metadata_scan` jobs, writes the scan JSON, and posts `running`/`succeeded` or `failed` state updates back to the daemon. Job requests accept fields such as `level`, `asset` or `assets`, `output_path`, `read_blueprints`, `read_uobject_reflection`, and scope/budget overrides.
+The commandlet worker registers as `worker_type=commandlet`, sends heartbeat updates, long-polls `/v1/jobs/poll`, executes leased `metadata_scan` jobs, writes the scan JSON, and posts `running`/`succeeded` or `failed` state updates back to the daemon. Job requests accept fields such as `level`, `asset` or `assets`, `output_path`, `read_blueprints`, `read_uobject_reflection`, and scope/budget overrides.
 
 ```powershell
 python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py job-submit `
@@ -621,9 +629,26 @@ python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_mcp_server.py --s
 python Plugins\UEProjectIntelligence\Tools\test_mcp_stdio.py
 ```
 
-The server exposes `tools/list`, `tools/call`, `resources/list`, `resources/read`, `resources/templates/list`, `prompts/list`, and `prompts/get`. Tools include health, ingest, summary, paginated scans/entities/relations, search, related, subgraph, graph JSON paging, graph DSL, graph export, artifact range, Markdown report, diff, stale, history, animation/data query, data snapshot paging with optional collection artifacts, Sequencer key-time paging with optional key artifacts, source index/search, Blueprint-to-C++ symbol links, config effective values, security audit, worker protocol/session tools, SQLite-backed queue tools, and MCP job start/get. Tool calls return MCP `structuredContent` plus a text copy, advertise input and output schemas, and honor `token_budget`; oversized structured results are written to `uepi://mcp-artifact/{artifact_id}` with a small preview in the tool response.
+The server exposes `tools/list`, `tools/call`, `resources/list`, `resources/read`, `resources/templates/list`, `prompts/list`, and `prompts/get`. Tools include LLM-facing project status, refresh, asset context, Blueprint context, and animation context tools (`uepi_project_status`, `uepi_project_refresh`, `uepi_read_asset_context`, `uepi_read_blueprint`, `uepi_read_animation`), plus health, ingest, summary, paginated scans/entities/relations, search, related, subgraph, graph JSON paging, graph DSL, graph export, artifact range, Markdown report, diff, stale, history, animation/data query, data snapshot paging with optional collection artifacts, Sequencer key-time paging with optional key artifacts, source index/search, Blueprint-to-C++ symbol links, config effective values, security audit, worker protocol/session tools, SQLite-backed queue tools, and MCP job start/get. Tool calls return MCP `structuredContent` plus a text copy, advertise input and output schemas, and honor `token_budget`; oversized structured results are written to `uepi://mcp-artifact/{artifact_id}` with a small preview in the tool response.
 
-Resources include `uepi://summary`, `uepi://scans`, `uepi://report`, `uepi://openapi`, `uepi://security-audit`, `uepi://agent-protocol`, `uepi://workers`, `uepi://jobs`, `uepi://animation-query`, `uepi://data-query`, `uepi://source-symbols`, `uepi://source-references`, `uepi://blueprint-cpp-links`, `uepi://config-values`, `uepi://history/{asset}`, `uepi://artifact/{scan}?offset={offset}&length={length}`, and `uepi://mcp-artifact/{artifact_id}`. Prompt templates include scan triage and asset review workflows. The MCP adapter does not expose shell execution, arbitrary code execution, editor launch, Blueprint compile, package save, rename, delete, or write-asset tools; `uepi_ingest`, source indexing, and queue tools only write the selected SQLite index plus local result/chunk artifacts under the index directory. `requirements-mcp.txt` records the optional official Python MCP SDK dependency for host setups that want it, while the compatibility server itself remains standard-library only.
+Resources include `uepi://summary`, `uepi://scans`, `uepi://report`, `uepi://openapi`, `uepi://security-audit`, `uepi://agent-protocol`, `uepi://workers`, `uepi://jobs`, `uepi://animation-query`, `uepi://data-query`, `uepi://source-symbols`, `uepi://source-references`, `uepi://blueprint-cpp-links`, `uepi://config-values`, `uepi://history/{asset}`, `uepi://artifact/{scan}?offset={offset}&length={length}`, and `uepi://mcp-artifact/{artifact_id}`. Prompt templates include scan triage and asset review workflows. The MCP adapter does not expose shell execution, arbitrary code execution, editor launch, Blueprint compile, package save, rename, delete, or write-asset tools; `uepi_project_refresh` and `uepi_read_*` with `refresh=true` only write queued job rows, scan artifacts, MCP artifacts, and the selected SQLite index. `requirements-mcp.txt` records the optional official Python MCP SDK dependency for host setups that want it, while the compatibility server itself remains standard-library only.
+
+Example MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "ue-project-intelligence": {
+      "command": "python",
+      "args": [
+        "F:/Epic Games/UE5project/GasDemo/Plugins/UEProjectIntelligence/Services/uepi_daemon/uepi_mcp_server.py",
+        "--db",
+        "F:/Epic Games/UE5project/GasDemo/Saved/UEProjectIntelligence/index.sqlite3"
+      ]
+    }
+  }
+}
+```
 
 ## Validation
 
