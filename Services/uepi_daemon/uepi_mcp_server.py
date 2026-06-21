@@ -1794,7 +1794,7 @@ class UEPIMCPServer:
             protocol_version=params.get("protocolVersion"),
             client_info=params.get("clientInfo"),
         )
-        capabilities = {"tools": {}} if self.tool_profile == "codex" else {
+        capabilities = {"tools": {"listChanged": False}} if self.tool_profile == "codex" else {
             "tools": {"listChanged": False},
             "resources": {"subscribe": False, "listChanged": False},
             "prompts": {"listChanged": False},
