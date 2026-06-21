@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/ai.schema.json",
+  "title": "UEPI AI Asset Snapshots",
+  "oneOf": [
+    { "$ref": "#/$defs/blackboard" },
+    { "$ref": "#/$defs/behavior_tree" },
+    { "$ref": "#/$defs/env_query" }
+  ],
+  "$defs": {
+    "blackboard_key": {
+      "type": "object",
+      "required": ["id", "index", "name", "key_type_class", "instance_synced", "description", "category"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "key_type_class": { "type": "string" },
+        "instance_synced": { "type": "boolean" },
+        "description": { "type": "string" },
+        "category": { "type": "string" }
+      }
+    },
+    "blackboard": {
+      "type": "object",
+      "required": ["schema_version", "source_layer", "id", "blackboard_path", "parent_path", "has_synchronized_keys", "key_count", "keys"],
+      "properties": {
+        "schema_version": { "const": "uepi.blackboard.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "blackboard_path": { "type": "string" },
+        "parent_path": { "type": "string" },
+        "has_synchronized_keys": { "type": "boolean" },
+        "key_count": { "type": "integer", "minimum": 0 },
+        "keys": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/blackboard_key" }
+        }
+      }
+    },
+    "behavior_tree_node": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "node_path",
+        "node_name",
+        "node_role",
+        "node_class_path",
+        "execution_index",
+        "tree_depth",
+        "static_description",
+        "child_count",
+        "service_count"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "node_path": { "type": "string" },
+        "node_name": { "type": "string" },
+        "node_role": { "type": "string" },
+        "node_class_path": { "type": "string" },
+        "execution_index": { "type": "integer", "minimum": 0 },
+        "tree_depth": { "type": "integer", "minimum": 0 },
+        "static_description": { "type": "string" },
+        "child_count": { "type": "integer", "minimum": 0 },
+        "service_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "behavior_tree": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "id",
+        "tree_path",
+        "blackboard_path",
+        "root_node_id",
+        "root_decorator_count",
+        "instance_memory_size",
+        "node_count",
+        "nodes"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.behavior_tree.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "tree_path": { "type": "string" },
+        "blackboard_path": { "type": "string" },
+        "root_node_id": { "type": "string" },
+        "root_decorator_count": { "type": "integer", "minimum": 0 },
+        "instance_memory_size": { "type": "integer", "minimum": 0 },
+        "node_count": { "type": "integer", "minimum": 0 },
+        "nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/behavior_tree_node" }
+        }
+      }
+    },
+    "env_query_generator": {
+      "type": "object",
+      "required": ["id", "path", "class_path", "option_name", "item_type_class", "auto_sort_tests"],
+      "properties": {
+        "id": { "type": "string" },
+        "path": { "type": "string" },
+        "class_path": { "type": "string" },
+        "option_name": { "type": "string" },
+        "item_type_class": { "type": "string" },
+        "auto_sort_tests": { "type": "boolean" }
+      }
+    },
+    "env_query_test": {
+      "type": "object",
+      "required": ["id", "index", "test_order", "path", "class_path", "purpose", "filter_type", "scoring_equation", "cost", "comment"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "test_order": { "type": "integer", "minimum": 0 },
+        "path": { "type": "string" },
+        "class_path": { "type": "string" },
+        "purpose": { "type": "string" },
+        "filter_type": { "type": "string" },
+        "scoring_equation": { "type": "string" },
+        "cost": { "type": "string" },
+        "comment": { "type": "string" }
+      }
+    },
+    "env_query_option": {
+      "type": "object",
+      "required": ["id", "index", "title", "details", "generator", "test_count", "tests"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "title": { "type": "string" },
+        "details": { "type": "string" },
+        "generator": { "$ref": "#/$defs/env_query_generator" },
+        "test_count": { "type": "integer", "minimum": 0 },
+        "tests": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/env_query_test" }
+        }
+      }
+    },
+    "env_query": {
+      "type": "object",
+      "required": ["schema_version", "source_layer", "id", "query_path", "query_name", "option_count", "options"],
+      "properties": {
+        "schema_version": { "const": "uepi.env_query.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "query_path": { "type": "string" },
+        "query_name": { "type": "string" },
+        "option_count": { "type": "integer", "minimum": 0 },
+        "options": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/env_query_option" }
+        }
+      }
+    }
+  }
+}

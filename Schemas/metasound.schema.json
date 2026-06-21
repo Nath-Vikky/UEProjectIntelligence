@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/metasound.schema.json",
+  "title": "UEPI MetaSound Snapshot",
+  "$ref": "#/$defs/metasound",
+  "$defs": {
+    "universal_graph": {
+      "type": "object",
+      "required": ["domain", "graph", "nodes", "ports", "links", "domain_semantics"],
+      "properties": {
+        "domain": { "const": "metasound" },
+        "graph": {
+          "type": "object",
+          "required": ["id", "path", "class", "name"],
+          "properties": {
+            "id": { "type": "string" },
+            "path": { "type": "string" },
+            "class": { "type": "string" },
+            "name": { "type": "string" }
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "class", "semantic_kind", "x", "y"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "class": { "type": "string" },
+              "semantic_kind": { "type": "string" },
+              "x": { "type": "number" },
+              "y": { "type": "number" }
+            }
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "node_id", "name", "direction", "type", "domain_type"],
+            "properties": {
+              "id": { "type": "string" },
+              "node_id": { "type": "string" },
+              "name": { "type": "string" },
+              "direction": { "enum": ["input", "output"] },
+              "type": { "type": "string" },
+              "domain_type": { "type": "string" }
+            }
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "source_port_id", "target_port_id"],
+            "properties": {
+              "id": { "type": "string" },
+              "source_port_id": { "type": "string" },
+              "target_port_id": { "type": "string" }
+            }
+          }
+        },
+        "domain_semantics": { "type": "object" }
+      }
+    },
+    "metasound": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "asset_path",
+        "asset_class",
+        "base_metasound_class",
+        "asset_type",
+        "output_audio_format",
+        "document_version_name",
+        "document_version_major",
+        "document_version_minor",
+        "preset",
+        "interface_count",
+        "graph_count",
+        "subgraph_count",
+        "node_count",
+        "vertex_count",
+        "edge_count",
+        "literal_count",
+        "dependency_count",
+        "interfaces",
+        "graphs",
+        "nodes",
+        "vertices",
+        "edges",
+        "literals",
+        "dependencies",
+        "universal_graph"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.metasound.v1" },
+        "source_layer": { "const": "editor_source_graph" },
+        "asset_path": { "type": "string" },
+        "asset_class": { "type": "string" },
+        "base_metasound_class": { "type": "string" },
+        "asset_type": { "enum": ["source", "patch"] },
+        "output_audio_format": { "type": "string" },
+        "document_version_name": { "type": "string" },
+        "document_version_major": { "type": "integer", "minimum": 0 },
+        "document_version_minor": { "type": "integer", "minimum": 0 },
+        "preset": { "type": "boolean" },
+        "interface_count": { "type": "integer", "minimum": 0 },
+        "graph_count": { "type": "integer", "minimum": 0 },
+        "subgraph_count": { "type": "integer", "minimum": 0 },
+        "node_count": { "type": "integer", "minimum": 0 },
+        "vertex_count": { "type": "integer", "minimum": 0 },
+        "edge_count": { "type": "integer", "minimum": 0 },
+        "literal_count": { "type": "integer", "minimum": 0 },
+        "dependency_count": { "type": "integer", "minimum": 0 },
+        "interfaces": { "type": "array" },
+        "graphs": { "type": "array" },
+        "nodes": { "type": "array" },
+        "vertices": { "type": "array" },
+        "edges": { "type": "array" },
+        "literals": { "type": "array" },
+        "dependencies": { "type": "array" },
+        "universal_graph": { "$ref": "#/$defs/universal_graph" }
+      }
+    }
+  }
+}

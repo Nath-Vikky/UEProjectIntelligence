@@ -1,0 +1,38 @@
+{
+  "attributed_relation_count": 17,
+  "diagnostic_count": 0,
+  "entity_count": 98,
+  "entity_kinds": {
+    "asset": 1,
+    "asset_reference": 2,
+    "config_file": 4,
+    "module": 3,
+    "module_reference": 26,
+    "niagara_parameter_definition": 17,
+    "niagara_parameter_definitions": 1,
+    "plugin_descriptor": 2,
+    "plugin_reference": 1,
+    "project_descriptor": 1,
+    "source_file": 40
+  },
+  "niagara_parameter_definition_advanced_display_count": 0,
+  "niagara_parameter_definition_count": 17,
+  "niagara_parameter_definition_static_switch_count": 0,
+  "niagara_parameter_definitions_snapshot_count": 1,
+  "project_name": "GasDemo",
+  "relation_count": 107,
+  "relation_types": {
+    "belongs_to_module": 38,
+    "config_references_asset": 2,
+    "configured_by": 4,
+    "contains_niagara_parameter_definition": 17,
+    "contains_niagara_parameter_definitions": 1,
+    "contains_subobject": 2,
+    "declared_in": 5,
+    "declares_module": 3,
+    "implemented_in": 2,
+    "module_depends_on": 32,
+    "plugin_depends_on": 1
+  },
+  "schema_version": "uepi.scan.v1"
+}

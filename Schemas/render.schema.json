@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/render.schema.json",
+  "title": "UEPI Render Asset Snapshots",
+  "oneOf": [
+    { "$ref": "#/$defs/static_mesh" },
+    { "$ref": "#/$defs/texture" },
+    { "$ref": "#/$defs/texture2d" },
+    { "$ref": "#/$defs/texture_cube" }
+  ],
+  "$defs": {
+    "vector": {
+      "type": "object",
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" }
+      }
+    },
+    "bounds": {
+      "type": "object",
+      "required": ["origin", "box_extent", "sphere_radius"],
+      "properties": {
+        "origin": { "$ref": "#/$defs/vector" },
+        "box_extent": { "$ref": "#/$defs/vector" },
+        "sphere_radius": { "type": "number" }
+      }
+    },
+    "static_mesh_lod": {
+      "type": "object",
+      "required": ["id", "index", "vertex_count", "triangle_count", "section_count"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "vertex_count": { "type": "integer", "minimum": 0 },
+        "triangle_count": { "type": "integer", "minimum": 0 },
+        "section_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "static_mesh_material": {
+      "type": "object",
+      "required": ["slot_index", "slot_name", "imported_slot_name", "material_path"],
+      "properties": {
+        "slot_index": { "type": "integer", "minimum": 0 },
+        "slot_name": { "type": "string" },
+        "imported_slot_name": { "type": "string" },
+        "material_path": { "type": "string" }
+      }
+    },
+    "static_mesh": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "mesh_path",
+        "lod_count",
+        "material_count",
+        "bounds",
+        "lods",
+        "materials"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.static_mesh.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "mesh_path": { "type": "string" },
+        "lod_count": { "type": "integer", "minimum": 0 },
+        "material_count": { "type": "integer", "minimum": 0 },
+        "bounds": { "$ref": "#/$defs/bounds" },
+        "lods": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/static_mesh_lod" }
+        },
+        "materials": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/static_mesh_material" }
+        }
+      }
+    },
+    "texture2d": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "texture_path",
+        "dimension_source",
+        "size_x",
+        "size_y",
+        "mip_count",
+        "pixel_format",
+        "compression_settings",
+        "address_x",
+        "address_y",
+        "srgb"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.texture2d.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "texture_path": { "type": "string" },
+        "dimension_source": { "enum": ["editor_source", "platform_api"] },
+        "size_x": { "type": "integer", "minimum": 0 },
+        "size_y": { "type": "integer", "minimum": 0 },
+        "mip_count": { "type": "integer", "minimum": 0 },
+        "pixel_format": { "type": "string" },
+        "compression_settings": { "type": "string" },
+        "address_x": { "type": "string" },
+        "address_y": { "type": "string" },
+        "srgb": { "type": "boolean" }
+      }
+    },
+    "texture": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "texture_path",
+        "texture_class",
+        "texture_classification",
+        "material_type",
+        "dimension_source",
+        "surface_width",
+        "surface_height",
+        "surface_depth",
+        "surface_array_size",
+        "source_size_x",
+        "source_size_y",
+        "source_slice_count",
+        "source_mip_count",
+        "source_format",
+        "source_is_long_lat",
+        "compression_settings",
+        "lod_group",
+        "srgb"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.texture.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "texture_path": { "type": "string" },
+        "texture_class": { "type": "string" },
+        "texture_classification": { "type": "string" },
+        "material_type": { "type": "string" },
+        "dimension_source": { "enum": ["editor_source", "platform_api"] },
+        "surface_width": { "type": "number", "minimum": 0 },
+        "surface_height": { "type": "number", "minimum": 0 },
+        "surface_depth": { "type": "number", "minimum": 0 },
+        "surface_array_size": { "type": "number", "minimum": 0 },
+        "source_size_x": { "type": "integer", "minimum": 0 },
+        "source_size_y": { "type": "integer", "minimum": 0 },
+        "source_slice_count": { "type": "integer", "minimum": 0 },
+        "source_mip_count": { "type": "integer", "minimum": 0 },
+        "source_format": { "type": "string" },
+        "source_is_long_lat": { "type": "boolean" },
+        "compression_settings": { "type": "string" },
+        "lod_group": { "type": "string" },
+        "srgb": { "type": "boolean" }
+      }
+    },
+    "texture_cube": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "texture_path",
+        "texture_class",
+        "dimension_source",
+        "size_x",
+        "size_y",
+        "face_count",
+        "source_slice_count",
+        "mip_count",
+        "pixel_format",
+        "compression_settings",
+        "source_format",
+        "source_is_long_lat",
+        "srgb"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.texture_cube.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "texture_path": { "type": "string" },
+        "texture_class": { "type": "string" },
+        "dimension_source": { "enum": ["editor_source", "platform_api"] },
+        "size_x": { "type": "integer", "minimum": 0 },
+        "size_y": { "type": "integer", "minimum": 0 },
+        "face_count": { "const": 6 },
+        "source_slice_count": { "type": "integer", "minimum": 0 },
+        "mip_count": { "type": "integer", "minimum": 0 },
+        "pixel_format": { "type": "string" },
+        "compression_settings": { "type": "string" },
+        "source_format": { "type": "string" },
+        "source_is_long_lat": { "type": "boolean" },
+        "srgb": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "blueprint_graph_count": 0,
+  "cfg_basic_block_count": 0,
+  "curve_channel_count": 4,
+  "curve_key_count": 13,
+  "curve_snapshot_count": 1,
+  "dfg_value_count": 0,
+  "diagnostic_count": 0,
+  "entity_count": 98,
+  "entity_kinds": {
+    "asset": 1,
+    "asset_reference": 2,
+    "config_file": 4,
+    "curve": 1,
+    "curve_channel": 4,
+    "curve_key": 13,
+    "module": 3,
+    "module_reference": 26,
+    "plugin_descriptor": 2,
+    "plugin_reference": 1,
+    "project_descriptor": 1,
+    "source_file": 40
+  },
+  "project_name": "GasDemo",
+  "relation_count": 107,
+  "relation_types": {
+    "belongs_to_module": 38,
+    "config_references_asset": 2,
+    "configured_by": 4,
+    "contains_curve": 1,
+    "contains_curve_channel": 4,
+    "contains_curve_key": 13,
+    "contains_subobject": 2,
+    "declared_in": 5,
+    "declares_module": 3,
+    "implemented_in": 2,
+    "module_depends_on": 32,
+    "plugin_depends_on": 1
+  },
+  "schema_version": "uepi.scan.v1"
+}

@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/common_ui.schema.json",
+  "title": "UEPI CommonUI Snapshots",
+  "oneOf": [
+    { "$ref": "#/$defs/common_ui_input_data" },
+    { "$ref": "#/$defs/common_ui_hold_data" },
+    { "$ref": "#/$defs/common_ui_input_action_table" }
+  ],
+  "$defs": {
+    "row_handle": {
+      "type": "object",
+      "required": ["table_path", "row_name"],
+      "properties": {
+        "table_path": { "type": "string" },
+        "row_name": { "type": "string" }
+      }
+    },
+    "input_action_reference": {
+      "type": "object",
+      "required": ["path", "name"],
+      "properties": {
+        "path": { "type": "string" },
+        "name": { "type": "string" }
+      }
+    },
+    "hold_data": {
+      "type": "object",
+      "required": ["hold_time", "hold_rollback_time"],
+      "properties": {
+        "hold_time": { "type": "number", "minimum": 0 },
+        "hold_rollback_time": { "type": "number", "minimum": 0 }
+      }
+    },
+    "input_type_info": {
+      "type": "object",
+      "required": [
+        "key",
+        "override_state",
+        "action_requires_hold",
+        "hold_time",
+        "hold_rollback_time",
+        "override_brush_resource"
+      ],
+      "properties": {
+        "key": { "type": "string" },
+        "override_state": { "enum": ["enabled", "disabled", "hidden", "hidden_and_disabled", "unknown"] },
+        "action_requires_hold": { "type": "boolean" },
+        "hold_time": { "type": "number", "minimum": 0 },
+        "hold_rollback_time": { "type": "number", "minimum": 0 },
+        "override_brush_resource": { "type": "string" }
+      }
+    },
+    "common_ui_input_action_row": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "row_name",
+        "display_name",
+        "hold_display_name",
+        "nav_bar_priority",
+        "has_hold_bindings",
+        "keyboard",
+        "gamepad",
+        "touch"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "row_name": { "type": "string" },
+        "display_name": { "type": "string" },
+        "hold_display_name": { "type": "string" },
+        "nav_bar_priority": { "type": "integer" },
+        "has_hold_bindings": { "type": "boolean" },
+        "keyboard": { "$ref": "#/$defs/input_type_info" },
+        "gamepad": { "$ref": "#/$defs/input_type_info" },
+        "touch": { "$ref": "#/$defs/input_type_info" }
+      }
+    },
+    "common_ui_input_data": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "id",
+        "asset_path",
+        "data_object_path",
+        "data_class_path",
+        "default_click_action",
+        "default_back_action",
+        "default_hold_data_class",
+        "enhanced_input_click_action",
+        "enhanced_input_back_action"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.common_ui_input_data.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "asset_path": { "type": "string" },
+        "data_object_path": { "type": "string" },
+        "data_class_path": { "type": "string" },
+        "default_click_action": { "$ref": "#/$defs/row_handle" },
+        "default_back_action": { "$ref": "#/$defs/row_handle" },
+        "default_hold_data_class": { "type": "string" },
+        "enhanced_input_click_action": { "$ref": "#/$defs/input_action_reference" },
+        "enhanced_input_back_action": { "$ref": "#/$defs/input_action_reference" }
+      }
+    },
+    "common_ui_hold_data": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "id",
+        "asset_path",
+        "data_object_path",
+        "data_class_path",
+        "keyboard_and_mouse",
+        "gamepad",
+        "touch"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.common_ui_hold_data.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "asset_path": { "type": "string" },
+        "data_object_path": { "type": "string" },
+        "data_class_path": { "type": "string" },
+        "keyboard_and_mouse": { "$ref": "#/$defs/hold_data" },
+        "gamepad": { "$ref": "#/$defs/hold_data" },
+        "touch": { "$ref": "#/$defs/hold_data" }
+      }
+    },
+    "common_ui_input_action_table": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "id",
+        "table_path",
+        "row_struct_path",
+        "row_struct_name",
+        "row_count",
+        "rows"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.common_ui_input_action_table.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "table_path": { "type": "string" },
+        "row_struct_path": { "type": "string" },
+        "row_struct_name": { "type": "string" },
+        "row_count": { "type": "integer", "minimum": 0 },
+        "rows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/common_ui_input_action_row" }
+        }
+      }
+    }
+  }
+}

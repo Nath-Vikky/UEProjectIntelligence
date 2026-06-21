@@ -1,0 +1,43 @@
+{
+  "diagnostic_count": 0,
+  "entity_count": 137,
+  "entity_kinds": {
+    "asset": 1,
+    "asset_reference": 2,
+    "config_file": 4,
+    "ik_rig": 1,
+    "ik_rig_chain": 50,
+    "ik_rig_goal": 4,
+    "ik_rig_solver": 1,
+    "module": 3,
+    "module_reference": 26,
+    "plugin_descriptor": 2,
+    "plugin_reference": 1,
+    "project_descriptor": 1,
+    "skeletal_mesh": 1,
+    "source_file": 40
+  },
+  "ik_rig_chain_count": 50,
+  "ik_rig_goal_count": 4,
+  "ik_rig_snapshot_count": 1,
+  "ik_rig_solver_count": 1,
+  "project_name": "GasDemo",
+  "relation_count": 146,
+  "relation_types": {
+    "belongs_to_module": 38,
+    "config_references_asset": 2,
+    "configured_by": 4,
+    "contains_ik_chain": 50,
+    "contains_ik_goal": 4,
+    "contains_ik_rig": 1,
+    "contains_ik_solver": 1,
+    "contains_subobject": 2,
+    "declared_in": 5,
+    "declares_module": 3,
+    "implemented_in": 2,
+    "module_depends_on": 32,
+    "plugin_depends_on": 1,
+    "uses_skeletal_mesh": 1
+  },
+  "schema_version": "uepi.scan.v1"
+}

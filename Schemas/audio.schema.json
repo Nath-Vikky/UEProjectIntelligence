@@ -1,0 +1,348 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/audio.schema.json",
+  "title": "UEPI Audio Asset Snapshots",
+  "oneOf": [
+    { "$ref": "#/$defs/sound_cue" },
+    { "$ref": "#/$defs/sound_wave" },
+    { "$ref": "#/$defs/sound_submix" },
+    { "$ref": "#/$defs/sound_submix_effect_preset" }
+  ],
+  "$defs": {
+    "named_path": {
+      "type": "object",
+      "required": ["index", "path", "class_path"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "path": { "type": "string" },
+        "class_path": { "type": "string" }
+      }
+    },
+    "sound_cue_child": {
+      "type": "object",
+      "required": ["index", "id", "node_path", "node_class"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "id": { "type": "string" },
+        "node_path": { "type": "string" },
+        "node_class": { "type": "string" }
+      }
+    },
+    "sound_node": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "node_path",
+        "node_class",
+        "semantic_kind",
+        "child_count",
+        "max_child_count",
+        "min_child_count",
+        "duration",
+        "graph_pos_x",
+        "graph_pos_y",
+        "children"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "node_path": { "type": "string" },
+        "node_class": { "type": "string" },
+        "semantic_kind": { "type": "string" },
+        "child_count": { "type": "integer", "minimum": 0 },
+        "max_child_count": { "type": "integer", "minimum": 0 },
+        "min_child_count": { "type": "integer", "minimum": 0 },
+        "duration": { "type": "number" },
+        "graph_pos_x": { "type": "integer" },
+        "graph_pos_y": { "type": "integer" },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sound_cue_child" }
+        },
+        "sound_wave_id": { "type": "string" },
+        "sound_wave_path": { "type": "string" },
+        "looping": { "type": "boolean" },
+        "input_volumes": { "type": "array", "items": { "type": "number" } },
+        "weights": { "type": "array", "items": { "type": "number" } },
+        "preselect_at_level_load": { "type": "integer" },
+        "randomize_without_replacement": { "type": "boolean" },
+        "exclude_from_branch_culling": { "type": "boolean" },
+        "pitch_min": { "type": "number" },
+        "pitch_max": { "type": "number" },
+        "volume_min": { "type": "number" },
+        "volume_max": { "type": "number" },
+        "bool_parameter_name": { "type": "string" },
+        "int_parameter_name": { "type": "string" },
+        "attenuation_settings_path": { "type": "string" },
+        "override_attenuation": { "type": "boolean" },
+        "wave_parameter_name": { "type": "string" },
+        "sound_class_override_path": { "type": "string" }
+      }
+    },
+    "sound_cue": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "id",
+        "sound_cue_path",
+        "sound_cue_class",
+        "first_node_id",
+        "first_node_path",
+        "duration",
+        "volume_multiplier",
+        "pitch_multiplier",
+        "sound_class_path",
+        "attenuation_settings_path",
+        "sound_submix_path",
+        "source_effect_chain_path",
+        "override_attenuation",
+        "override_concurrency",
+        "prime_on_load",
+        "has_editor_graph",
+        "node_count",
+        "concurrency_count",
+        "nodes",
+        "concurrency"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.sound_cue.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "sound_cue_path": { "type": "string" },
+        "sound_cue_class": { "type": "string" },
+        "first_node_id": { "type": "string" },
+        "first_node_path": { "type": "string" },
+        "duration": { "type": "number" },
+        "volume_multiplier": { "type": "number" },
+        "pitch_multiplier": { "type": "number" },
+        "sound_class_path": { "type": "string" },
+        "attenuation_settings_path": { "type": "string" },
+        "sound_submix_path": { "type": "string" },
+        "source_effect_chain_path": { "type": "string" },
+        "override_attenuation": { "type": "boolean" },
+        "override_concurrency": { "type": "boolean" },
+        "prime_on_load": { "type": "boolean" },
+        "has_editor_graph": { "type": "boolean" },
+        "node_count": { "type": "integer", "minimum": 0 },
+        "concurrency_count": { "type": "integer", "minimum": 0 },
+        "nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sound_node" }
+        },
+        "concurrency": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/named_path" }
+        }
+      }
+    },
+    "sound_wave_cue_point": {
+      "type": "object",
+      "required": ["index", "cue_point_id", "label", "frame_position", "frame_length"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "cue_point_id": { "type": "integer" },
+        "label": { "type": "string" },
+        "frame_position": { "type": "integer", "minimum": 0 },
+        "frame_length": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "sound_wave_subtitle": {
+      "type": "object",
+      "required": ["index", "time", "text"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "time": { "type": "number" },
+        "text": { "type": "string" }
+      }
+    },
+    "sound_wave": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "id",
+        "sound_wave_path",
+        "sound_wave_class",
+        "duration",
+        "sample_rate",
+        "imported_sample_rate",
+        "num_channels",
+        "volume",
+        "pitch",
+        "compression_quality",
+        "compression_type",
+        "loading_behavior",
+        "streaming",
+        "looping",
+        "mature",
+        "manual_word_wrap",
+        "single_line",
+        "is_ambisonics",
+        "sound_class_path",
+        "attenuation_settings_path",
+        "sound_submix_path",
+        "source_effect_chain_path",
+        "cue_point_count",
+        "subtitle_count",
+        "concurrency_count",
+        "cue_points",
+        "subtitles",
+        "concurrency"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.sound_wave.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "sound_wave_path": { "type": "string" },
+        "sound_wave_class": { "type": "string" },
+        "duration": { "type": "number" },
+        "sample_rate": { "type": "integer", "minimum": 0 },
+        "imported_sample_rate": { "type": "integer", "minimum": 0 },
+        "num_channels": { "type": "integer", "minimum": 0 },
+        "volume": { "type": "number" },
+        "pitch": { "type": "number" },
+        "compression_quality": { "type": "integer" },
+        "compression_type": { "type": "string" },
+        "loading_behavior": { "type": "string" },
+        "streaming": { "type": "boolean" },
+        "looping": { "type": "boolean" },
+        "mature": { "type": "boolean" },
+        "manual_word_wrap": { "type": "boolean" },
+        "single_line": { "type": "boolean" },
+        "is_ambisonics": { "type": "boolean" },
+        "sound_class_path": { "type": "string" },
+        "attenuation_settings_path": { "type": "string" },
+        "sound_submix_path": { "type": "string" },
+        "source_effect_chain_path": { "type": "string" },
+        "cue_point_count": { "type": "integer", "minimum": 0 },
+        "subtitle_count": { "type": "integer", "minimum": 0 },
+        "concurrency_count": { "type": "integer", "minimum": 0 },
+        "cue_points": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sound_wave_cue_point" }
+        },
+        "subtitles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sound_wave_subtitle" }
+        },
+        "concurrency": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/named_path" }
+        }
+      }
+    },
+    "color": {
+      "type": "object",
+      "required": ["r", "g", "b", "a"],
+      "properties": {
+        "r": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "g": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "b": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "a": { "type": "integer", "minimum": 0, "maximum": 255 }
+      }
+    },
+    "setting_property": {
+      "type": "object",
+      "required": ["index", "name", "type", "value"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "value": { "type": "string" }
+      }
+    },
+    "sound_submix_reference": {
+      "type": "object",
+      "required": ["id", "index", "submix_path", "submix_class"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "submix_path": { "type": "string" },
+        "submix_class": { "type": "string" }
+      }
+    },
+    "sound_submix_effect": {
+      "type": "object",
+      "required": ["id", "index", "effect_path", "effect_class"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "effect_path": { "type": "string" },
+        "effect_class": { "type": "string" }
+      }
+    },
+    "sound_submix": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "sound_submix_path",
+        "sound_submix_class",
+        "parent_submix_id",
+        "parent_submix_path",
+        "ambisonics_plugin_settings_path",
+        "auto_disable",
+        "auto_disable_time",
+        "mute_when_backgrounded",
+        "envelope_follower_attack_time",
+        "envelope_follower_release_time",
+        "has_editor_graph",
+        "child_submix_count",
+        "effect_count",
+        "child_submixes",
+        "effects"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.sound_submix.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "sound_submix_path": { "type": "string" },
+        "sound_submix_class": { "type": "string" },
+        "parent_submix_id": { "type": "string" },
+        "parent_submix_path": { "type": "string" },
+        "ambisonics_plugin_settings_path": { "type": "string" },
+        "auto_disable": { "type": "boolean" },
+        "auto_disable_time": { "type": "number", "minimum": 0 },
+        "mute_when_backgrounded": { "type": "boolean" },
+        "envelope_follower_attack_time": { "type": "integer", "minimum": 0 },
+        "envelope_follower_release_time": { "type": "integer", "minimum": 0 },
+        "has_editor_graph": { "type": "boolean" },
+        "child_submix_count": { "type": "integer", "minimum": 0 },
+        "effect_count": { "type": "integer", "minimum": 0 },
+        "child_submixes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sound_submix_reference" }
+        },
+        "effects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sound_submix_effect" }
+        }
+      }
+    },
+    "sound_submix_effect_preset": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "effect_path",
+        "effect_class",
+        "preset_color",
+        "setting_property_count",
+        "setting_properties"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.sound_submix_effect_preset.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "effect_path": { "type": "string" },
+        "effect_class": { "type": "string" },
+        "preset_color": { "$ref": "#/$defs/color" },
+        "setting_property_count": { "type": "integer", "minimum": 0 },
+        "setting_properties": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/setting_property" }
+        }
+      }
+    }
+  }
+}

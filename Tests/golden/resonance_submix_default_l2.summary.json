@@ -1,0 +1,38 @@
+{
+  "diagnostic_count": 0,
+  "entity_count": 84,
+  "entity_kinds": {
+    "asset": 1,
+    "asset_reference": 2,
+    "config_file": 4,
+    "module": 3,
+    "module_reference": 26,
+    "plugin_descriptor": 2,
+    "plugin_reference": 1,
+    "project_descriptor": 1,
+    "sound_submix": 1,
+    "sound_submix_effect_preset": 1,
+    "source_file": 42
+  },
+  "project_name": "GasDemo",
+  "relation_count": 93,
+  "relation_types": {
+    "belongs_to_module": 40,
+    "config_references_asset": 2,
+    "configured_by": 4,
+    "contains_sound_submix": 1,
+    "contains_subobject": 2,
+    "declared_in": 5,
+    "declares_module": 3,
+    "implemented_in": 2,
+    "module_depends_on": 32,
+    "plugin_depends_on": 1,
+    "uses_sound_submix_effect": 1
+  },
+  "schema_version": "uepi.scan.v1",
+  "sound_submix_child_count": 0,
+  "sound_submix_effect_count": 1,
+  "sound_submix_snapshot_count": 1,
+  "sound_submix_with_ambisonics_settings_count": 0,
+  "sound_submix_with_parent_count": 0
+}

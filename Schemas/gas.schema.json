@@ -1,0 +1,308 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/gas.schema.json",
+  "title": "UEPI Gameplay Ability System Snapshots",
+  "oneOf": [
+    { "$ref": "#/$defs/gameplay_ability" },
+    { "$ref": "#/$defs/gameplay_effect" },
+    { "$ref": "#/$defs/gameplay_cue_notify" }
+  ],
+  "$defs": {
+    "string_array": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "scalable_float": {
+      "type": "object",
+      "required": ["value", "is_static", "curve_table_path", "curve_row_name"],
+      "properties": {
+        "value": { "type": "number" },
+        "is_static": { "type": "boolean" },
+        "curve_table_path": { "type": "string" },
+        "curve_row_name": { "type": "string" }
+      }
+    },
+    "magnitude": {
+      "type": "object",
+      "required": [
+        "calculation_type",
+        "has_static_level_1_value",
+        "static_level_1_value",
+        "set_by_caller_name",
+        "set_by_caller_tag",
+        "custom_calculation_class"
+      ],
+      "properties": {
+        "calculation_type": { "type": "string" },
+        "has_static_level_1_value": { "type": "boolean" },
+        "static_level_1_value": { "type": "number" },
+        "set_by_caller_name": { "type": "string" },
+        "set_by_caller_tag": { "type": "string" },
+        "custom_calculation_class": { "type": "string" }
+      }
+    },
+    "gameplay_ability_trigger": {
+      "type": "object",
+      "required": ["id", "index", "tag", "source"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "tag": { "type": "string" },
+        "source": { "type": "string" }
+      }
+    },
+    "gameplay_ability": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "id",
+        "asset_path",
+        "ability_object_path",
+        "ability_class_path",
+        "instancing_policy",
+        "replication_policy",
+        "net_execution_policy",
+        "net_security_policy",
+        "replicate_input_directly",
+        "ability_tags",
+        "cancel_abilities_with_tags",
+        "block_abilities_with_tags",
+        "activation_owned_tags",
+        "activation_required_tags",
+        "activation_blocked_tags",
+        "source_required_tags",
+        "source_blocked_tags",
+        "target_required_tags",
+        "target_blocked_tags",
+        "cost_gameplay_effect_class",
+        "cooldown_gameplay_effect_class",
+        "trigger_count",
+        "triggers"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.gameplay_ability.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "asset_path": { "type": "string" },
+        "ability_object_path": { "type": "string" },
+        "ability_class_path": { "type": "string" },
+        "instancing_policy": { "type": "string" },
+        "replication_policy": { "type": "string" },
+        "net_execution_policy": { "type": "string" },
+        "net_security_policy": { "type": "string" },
+        "replicate_input_directly": { "type": "boolean" },
+        "ability_tags": { "$ref": "#/$defs/string_array" },
+        "cancel_abilities_with_tags": { "$ref": "#/$defs/string_array" },
+        "block_abilities_with_tags": { "$ref": "#/$defs/string_array" },
+        "activation_owned_tags": { "$ref": "#/$defs/string_array" },
+        "activation_required_tags": { "$ref": "#/$defs/string_array" },
+        "activation_blocked_tags": { "$ref": "#/$defs/string_array" },
+        "source_required_tags": { "$ref": "#/$defs/string_array" },
+        "source_blocked_tags": { "$ref": "#/$defs/string_array" },
+        "target_required_tags": { "$ref": "#/$defs/string_array" },
+        "target_blocked_tags": { "$ref": "#/$defs/string_array" },
+        "cost_gameplay_effect_class": { "type": "string" },
+        "cooldown_gameplay_effect_class": { "type": "string" },
+        "trigger_count": { "type": "integer", "minimum": 0 },
+        "triggers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/gameplay_ability_trigger" }
+        }
+      }
+    },
+    "gameplay_effect_modifier": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "attribute",
+        "attribute_property_path",
+        "modifier_op",
+        "magnitude",
+        "source_required_tags",
+        "source_ignored_tags",
+        "target_required_tags",
+        "target_ignored_tags"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "attribute": { "type": "string" },
+        "attribute_property_path": { "type": "string" },
+        "modifier_op": { "type": "string" },
+        "magnitude": { "$ref": "#/$defs/magnitude" },
+        "source_required_tags": { "$ref": "#/$defs/string_array" },
+        "source_ignored_tags": { "$ref": "#/$defs/string_array" },
+        "target_required_tags": { "$ref": "#/$defs/string_array" },
+        "target_ignored_tags": { "$ref": "#/$defs/string_array" }
+      }
+    },
+    "gameplay_effect_execution": {
+      "type": "object",
+      "required": ["index", "calculation_class", "passed_in_tag_requirement_count", "calculation_modifier_count"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "calculation_class": { "type": "string" },
+        "passed_in_tag_requirement_count": { "type": "integer", "minimum": 0 },
+        "calculation_modifier_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "gameplay_effect_cue": {
+      "type": "object",
+      "required": ["index", "magnitude_attribute", "magnitude_attribute_property_path", "min_level", "max_level", "gameplay_cue_tags"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "magnitude_attribute": { "type": "string" },
+        "magnitude_attribute_property_path": { "type": "string" },
+        "min_level": { "type": "number" },
+        "max_level": { "type": "number" },
+        "gameplay_cue_tags": { "$ref": "#/$defs/string_array" }
+      }
+    },
+    "gameplay_effect_overflow": {
+      "type": "object",
+      "required": ["index", "effect_class"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "effect_class": { "type": "string" }
+      }
+    },
+    "gameplay_effect_granted_ability": {
+      "type": "object",
+      "required": ["index", "ability_class", "level", "input_id", "removal_policy"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "ability_class": { "type": "string" },
+        "level": { "$ref": "#/$defs/scalable_float" },
+        "input_id": { "type": "integer" },
+        "removal_policy": { "type": "string" }
+      }
+    },
+    "gameplay_effect": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "id",
+        "asset_path",
+        "effect_object_path",
+        "effect_class_path",
+        "duration_policy",
+        "duration_magnitude",
+        "period",
+        "execute_periodic_effect_on_application",
+        "periodic_inhibition_policy",
+        "deny_overflow_application",
+        "clear_stack_on_overflow",
+        "require_modifier_success_to_trigger_cues",
+        "suppress_stacking_cues",
+        "stacking_type",
+        "stack_limit_count",
+        "stack_duration_refresh_policy",
+        "stack_period_reset_policy",
+        "stack_expiration_policy",
+        "asset_tags",
+        "granted_tags",
+        "blocked_ability_tags",
+        "modifier_count",
+        "modifiers",
+        "execution_count",
+        "executions",
+        "gameplay_cue_count",
+        "gameplay_cues",
+        "overflow_effect_count",
+        "overflow_effects",
+        "granted_ability_count",
+        "granted_abilities"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.gameplay_effect.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "asset_path": { "type": "string" },
+        "effect_object_path": { "type": "string" },
+        "effect_class_path": { "type": "string" },
+        "duration_policy": { "type": "string" },
+        "duration_magnitude": { "$ref": "#/$defs/magnitude" },
+        "period": { "$ref": "#/$defs/scalable_float" },
+        "execute_periodic_effect_on_application": { "type": "boolean" },
+        "periodic_inhibition_policy": { "type": "string" },
+        "deny_overflow_application": { "type": "boolean" },
+        "clear_stack_on_overflow": { "type": "boolean" },
+        "require_modifier_success_to_trigger_cues": { "type": "boolean" },
+        "suppress_stacking_cues": { "type": "boolean" },
+        "stacking_type": { "type": "string" },
+        "stack_limit_count": { "type": "integer", "minimum": 0 },
+        "stack_duration_refresh_policy": { "type": "string" },
+        "stack_period_reset_policy": { "type": "string" },
+        "stack_expiration_policy": { "type": "string" },
+        "asset_tags": { "$ref": "#/$defs/string_array" },
+        "granted_tags": { "$ref": "#/$defs/string_array" },
+        "blocked_ability_tags": { "$ref": "#/$defs/string_array" },
+        "modifier_count": { "type": "integer", "minimum": 0 },
+        "modifiers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/gameplay_effect_modifier" }
+        },
+        "execution_count": { "type": "integer", "minimum": 0 },
+        "executions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/gameplay_effect_execution" }
+        },
+        "gameplay_cue_count": { "type": "integer", "minimum": 0 },
+        "gameplay_cues": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/gameplay_effect_cue" }
+        },
+        "overflow_effect_count": { "type": "integer", "minimum": 0 },
+        "overflow_effects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/gameplay_effect_overflow" }
+        },
+        "granted_ability_count": { "type": "integer", "minimum": 0 },
+        "granted_abilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/gameplay_effect_granted_ability" }
+        }
+      }
+    },
+    "gameplay_cue_notify": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "id",
+        "asset_path",
+        "cue_object_path",
+        "cue_class_path",
+        "cue_type",
+        "gameplay_cue_tag",
+        "gameplay_cue_name",
+        "is_override"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.gameplay_cue_notify.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "asset_path": { "type": "string" },
+        "cue_object_path": { "type": "string" },
+        "cue_class_path": { "type": "string" },
+        "cue_type": { "enum": ["static", "actor"] },
+        "gameplay_cue_tag": { "type": "string" },
+        "gameplay_cue_name": { "type": "string" },
+        "is_override": { "type": "boolean" },
+        "auto_destroy_on_remove": { "type": "boolean" },
+        "auto_destroy_delay": { "type": "number" },
+        "warn_if_timeline_is_still_running": { "type": "boolean" },
+        "warn_if_latent_action_is_still_running": { "type": "boolean" },
+        "auto_attach_to_owner": { "type": "boolean" },
+        "unique_instance_per_instigator": { "type": "boolean" },
+        "unique_instance_per_source_object": { "type": "boolean" },
+        "allow_multiple_on_active_events": { "type": "boolean" },
+        "allow_multiple_while_active_events": { "type": "boolean" },
+        "num_preallocated_instances": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "attributed_relation_count": 0,
+  "curve_atlas_curve_reference_count": 1,
+  "curve_atlas_entry_count": 1,
+  "curve_linear_color_atlas_snapshot_count": 1,
+  "diagnostic_count": 0,
+  "entity_count": 83,
+  "entity_kinds": {
+    "asset": 1,
+    "asset_reference": 2,
+    "config_file": 4,
+    "curve": 1,
+    "curve_atlas_entry": 1,
+    "curve_linear_color_atlas": 1,
+    "module": 3,
+    "module_reference": 26,
+    "plugin_descriptor": 2,
+    "plugin_reference": 1,
+    "project_descriptor": 1,
+    "source_file": 40
+  },
+  "project_name": "GasDemo",
+  "relation_count": 92,
+  "relation_types": {
+    "belongs_to_module": 38,
+    "config_references_asset": 2,
+    "configured_by": 4,
+    "contains_curve_atlas": 1,
+    "contains_curve_atlas_entry": 1,
+    "contains_subobject": 2,
+    "declared_in": 5,
+    "declares_module": 3,
+    "implemented_in": 2,
+    "module_depends_on": 32,
+    "plugin_depends_on": 1,
+    "uses_curve": 1
+  },
+  "schema_version": "uepi.scan.v1"
+}

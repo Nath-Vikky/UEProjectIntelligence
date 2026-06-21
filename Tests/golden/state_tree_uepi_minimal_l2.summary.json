@@ -1,0 +1,40 @@
+{
+  "attributed_relation_count": 0,
+  "diagnostic_count": 0,
+  "entity_count": 115,
+  "entity_kinds": {
+    "asset": 1,
+    "asset_reference": 4,
+    "config_file": 4,
+    "module": 3,
+    "module_reference": 42,
+    "plugin_descriptor": 2,
+    "plugin_reference": 1,
+    "project_descriptor": 1,
+    "source_file": 56,
+    "state_tree": 1
+  },
+  "project_name": "GasDemo",
+  "relation_count": 124,
+  "relation_types": {
+    "belongs_to_module": 54,
+    "config_references_asset": 2,
+    "configured_by": 4,
+    "contains_state_tree": 1,
+    "contains_subobject": 2,
+    "declared_in": 5,
+    "declares_module": 3,
+    "implemented_in": 2,
+    "module_depends_on": 48,
+    "plugin_depends_on": 1,
+    "possible_string_reference": 2
+  },
+  "schema_version": "uepi.scan.v1",
+  "state_tree_context_data_count": 0,
+  "state_tree_external_data_count": 0,
+  "state_tree_node_count": 0,
+  "state_tree_property_binding_count": 0,
+  "state_tree_snapshot_count": 1,
+  "state_tree_state_count": 0,
+  "state_tree_transition_count": 0
+}

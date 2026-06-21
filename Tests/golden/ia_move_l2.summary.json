@@ -1,0 +1,37 @@
+{
+  "diagnostic_count": 0,
+  "entity_count": 81,
+  "entity_kinds": {
+    "asset": 1,
+    "asset_reference": 2,
+    "config_file": 4,
+    "input_action": 1,
+    "module": 3,
+    "module_reference": 26,
+    "plugin_descriptor": 2,
+    "plugin_reference": 1,
+    "project_descriptor": 1,
+    "source_file": 40
+  },
+  "input_action_snapshot_count": 1,
+  "input_mapping_context_count": 0,
+  "input_mapping_count": 0,
+  "input_value_types": {
+    "axis2d": 1
+  },
+  "project_name": "GasDemo",
+  "relation_count": 90,
+  "relation_types": {
+    "belongs_to_module": 38,
+    "config_references_asset": 2,
+    "configured_by": 4,
+    "contains_input_action": 1,
+    "contains_subobject": 2,
+    "declared_in": 5,
+    "declares_module": 3,
+    "implemented_in": 2,
+    "module_depends_on": 32,
+    "plugin_depends_on": 1
+  },
+  "schema_version": "uepi.scan.v1"
+}

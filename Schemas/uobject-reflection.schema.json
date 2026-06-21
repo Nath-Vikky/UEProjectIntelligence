@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/uobject-reflection.schema.json",
+  "title": "UEPI UObject Reflection Snapshot",
+  "type": "object",
+  "required": ["schema_version", "source_layer", "object_path", "class_path", "property_count", "properties"],
+  "$defs": {
+    "collection_artifact_manifest": {
+      "type": "object",
+      "required": ["schema_version", "artifact_id", "artifact_uri", "storage", "path", "item_count", "byte_count", "encoding"],
+      "properties": {
+        "schema_version": { "const": "uepi.uobject_collection_artifact_manifest.v1" },
+        "artifact_id": { "type": "string" },
+        "artifact_uri": { "type": "string" },
+        "storage": { "type": "string" },
+        "path": { "type": "string" },
+        "item_count": { "type": "integer", "minimum": 0 },
+        "byte_count": { "type": "integer", "minimum": 0 },
+        "encoding": { "type": "string" },
+        "write_error": { "type": "string" }
+      }
+    },
+    "struct_value": {
+      "type": "object",
+      "required": ["schema_version", "struct_path", "struct_name", "serializer", "depth", "max_depth", "field_count", "inline_field_count", "truncated", "fields"],
+      "properties": {
+        "schema_version": { "const": "uepi.property_struct_value.v1" },
+        "struct_path": { "type": "string" },
+        "struct_name": { "type": "string" },
+        "serializer": { "type": "string" },
+        "depth": { "type": "integer", "minimum": 0 },
+        "max_depth": { "type": "integer", "minimum": 0 },
+        "field_count": { "type": "integer", "minimum": 0 },
+        "inline_field_count": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "normalized": { "type": "object" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/property_value" }
+        }
+      }
+    },
+    "property_value": {
+      "type": "object",
+      "required": ["name", "kind", "cpp_type", "source_layer", "value_text", "truncated"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "kind": { "type": "string" },
+        "cpp_type": { "type": "string" },
+        "source_layer": { "const": "uobject_reflection" },
+        "declaring_struct_path": { "type": "string" },
+        "value_text": { "type": "string" },
+        "object_path": { "type": "string" },
+        "object_class_path": { "type": "string" },
+        "is_subobject_reference": { "type": "boolean" },
+        "cycle_detected": { "type": "boolean" },
+        "reference_depth": { "type": "integer", "minimum": 0 },
+        "collection_count": { "type": "integer", "minimum": 0 },
+        "inline_limit": { "type": "integer", "minimum": 0 },
+        "artifact_required": { "type": "boolean" },
+        "collection_artifact": { "$ref": "#/$defs/collection_artifact_manifest" },
+        "cdo_value_text": { "type": "string" },
+        "differs_from_cdo": { "type": "boolean" },
+        "super_cdo_value_text": { "type": "string" },
+        "is_inherited": { "type": "boolean" },
+        "declaring_class_path": { "type": "string" },
+        "struct_depth_limited": { "type": "boolean" },
+        "struct_value": { "$ref": "#/$defs/struct_value" },
+        "truncated": { "type": "boolean" }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": { "const": "uepi.uobject_reflection.v1" },
+    "source_layer": { "const": "uobject_reflection" },
+    "object_path": { "type": "string" },
+    "class_path": { "type": "string" },
+    "outer_path": { "type": "string" },
+    "class_default_object_path": { "type": "string" },
+    "super_class_path": { "type": "string" },
+    "max_inline_collection_items": { "type": "integer", "minimum": 0 },
+    "max_reference_depth": { "type": "integer", "minimum": 0 },
+    "cycle_guard": { "type": "string" },
+    "property_count": { "type": "integer", "minimum": 0 },
+    "properties": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/property_value" }
+    }
+  }
+}

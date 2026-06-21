@@ -1,0 +1,398 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/cinematics.schema.json",
+  "title": "UEPI Cinematics Asset Snapshots",
+  "oneOf": [
+    { "$ref": "#/$defs/level_sequence" }
+  ],
+  "$defs": {
+    "frame_rate": {
+      "type": "object",
+      "required": ["numerator", "denominator", "text"],
+      "properties": {
+        "numerator": { "type": "integer" },
+        "denominator": { "type": "integer" },
+        "text": { "type": "string" }
+      }
+    },
+    "frame_range": {
+      "type": "object",
+      "required": ["empty", "lower_bound_type", "lower", "upper_bound_type", "upper", "text"],
+      "properties": {
+        "empty": { "type": "boolean" },
+        "lower_bound_type": { "type": "string" },
+        "lower": { "type": "integer" },
+        "upper_bound_type": { "type": "string" },
+        "upper": { "type": "integer" },
+        "text": { "type": "string" }
+      }
+    },
+    "key_artifact_manifest": {
+      "type": "object",
+      "required": ["schema_version", "artifact_id", "artifact_uri", "storage", "scope_kind", "scope_id", "item_count", "encoding"],
+      "properties": {
+        "schema_version": { "const": "uepi.cinematics_key_artifact_manifest.v1" },
+        "artifact_id": { "type": "string" },
+        "artifact_uri": { "type": "string" },
+        "storage": { "type": "string" },
+        "scope_kind": { "type": "string" },
+        "scope_id": { "type": "string" },
+        "item_count": { "type": "integer", "minimum": 0 },
+        "encoding": { "type": "string" },
+        "path": { "type": "string" },
+        "sha256": { "type": "string" },
+        "byte_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "channel_key": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "track_id",
+        "section_id",
+        "channel_id",
+        "channel_index",
+        "channel_name",
+        "display_name",
+        "frame_number",
+        "time_seconds"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "track_id": { "type": "string" },
+        "section_id": { "type": "string" },
+        "channel_id": { "type": "string" },
+        "channel_index": { "type": "integer", "minimum": 0 },
+        "channel_name": { "type": "string" },
+        "display_name": { "type": "string" },
+        "frame_number": { "type": "integer" },
+        "time_seconds": { "type": "number" }
+      }
+    },
+    "binding_reference": {
+      "type": "object",
+      "required": ["binding_id", "guid", "relative_sequence_id", "fixed_binding"],
+      "properties": {
+        "binding_id": { "type": "string" },
+        "guid": { "type": "string" },
+        "relative_sequence_id": { "type": "integer" },
+        "fixed_binding": { "type": "boolean" }
+      }
+    },
+    "spawnable": {
+      "type": "object",
+      "required": ["id", "index", "guid", "name", "template_path", "template_class_path", "child_possessable_count", "child_possessable_guids"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "guid": { "type": "string" },
+        "name": { "type": "string" },
+        "template_path": { "type": "string" },
+        "template_class_path": { "type": "string" },
+        "child_possessable_count": { "type": "integer", "minimum": 0 },
+        "child_possessable_guids": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "possessable": {
+      "type": "object",
+      "required": ["id", "index", "guid", "name", "possessed_object_class_path", "parent_guid", "spawnable_binding_id", "world_actor_resolution_state"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "guid": { "type": "string" },
+        "name": { "type": "string" },
+        "possessed_object_class_path": { "type": "string" },
+        "parent_guid": { "type": "string" },
+        "spawnable_binding_id": { "type": "string" },
+        "world_actor_resolution_state": { "type": "string" }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "required": ["id", "index", "guid", "name", "track_count", "world_actor_resolution_state"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "guid": { "type": "string" },
+        "name": { "type": "string" },
+        "track_count": { "type": "integer", "minimum": 0 },
+        "world_actor_resolution_state": { "type": "string" }
+      }
+    },
+    "track": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "track_path",
+        "track_class",
+        "track_name",
+        "display_name",
+        "semantic_kind",
+        "owner_id",
+        "owner_kind",
+        "supports_multiple_rows",
+        "is_empty",
+        "is_eval_disabled",
+        "section_count"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "track_path": { "type": "string" },
+        "track_class": { "type": "string" },
+        "track_name": { "type": "string" },
+        "display_name": { "type": "string" },
+        "semantic_kind": { "type": "string" },
+        "owner_id": { "type": "string" },
+        "owner_kind": { "type": "string" },
+        "supports_multiple_rows": { "type": "boolean" },
+        "is_empty": { "type": "boolean" },
+        "is_eval_disabled": { "type": "boolean" },
+        "section_count": { "type": "integer", "minimum": 0 },
+        "fire_events_when_forwards": { "type": "boolean" },
+        "fire_events_when_backwards": { "type": "boolean" },
+        "event_position": { "type": "string" }
+      }
+    },
+    "channel": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "channel_name",
+        "display_name",
+        "group",
+        "intent_name",
+        "enabled",
+        "can_collapse_to_track",
+        "sort_order",
+        "key_count",
+        "effective_range"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "channel_name": { "type": "string" },
+        "display_name": { "type": "string" },
+        "group": { "type": "string" },
+        "intent_name": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "can_collapse_to_track": { "type": "boolean" },
+        "sort_order": { "type": "number" },
+        "key_count": { "type": "integer", "minimum": 0 },
+        "key_time_count": { "type": "integer", "minimum": 0 },
+        "effective_range": { "$ref": "#/$defs/frame_range" },
+        "keys": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/channel_key" }
+        },
+        "key_artifact": { "$ref": "#/$defs/key_artifact_manifest" }
+      }
+    },
+    "section": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "track_id",
+        "track_path",
+        "section_path",
+        "section_class",
+        "semantic_kind",
+        "name",
+        "range",
+        "effective_range",
+        "row_index",
+        "active",
+        "locked",
+        "completion_mode",
+        "blend_type",
+        "pre_roll_frames",
+        "post_roll_frames",
+        "channel_count",
+        "key_count",
+        "key_storage",
+        "channels"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "track_id": { "type": "string" },
+        "track_path": { "type": "string" },
+        "section_path": { "type": "string" },
+        "section_class": { "type": "string" },
+        "semantic_kind": { "type": "string" },
+        "name": { "type": "string" },
+        "range": { "$ref": "#/$defs/frame_range" },
+        "effective_range": { "$ref": "#/$defs/frame_range" },
+        "row_index": { "type": "integer" },
+        "active": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "completion_mode": { "type": "string" },
+        "blend_type": { "type": "string" },
+        "pre_roll_frames": { "type": "integer" },
+        "post_roll_frames": { "type": "integer" },
+        "channel_count": { "type": "integer", "minimum": 0 },
+        "key_count": { "type": "integer", "minimum": 0 },
+        "key_storage": { "type": "string" },
+        "channels": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/channel" }
+        },
+        "key_artifact": { "$ref": "#/$defs/key_artifact_manifest" },
+        "camera_binding": { "$ref": "#/$defs/binding_reference" },
+        "camera_binding_guid": { "type": "string" },
+        "sub_sequence_path": { "type": "string" },
+        "sub_sequence_class": { "type": "string" },
+        "sub_sequence_playback_range": { "$ref": "#/$defs/frame_range" },
+        "sub_sequence_start_frame_offset": { "type": "integer" },
+        "sub_sequence_end_frame_offset": { "type": "integer" },
+        "sub_sequence_first_loop_start_frame_offset": { "type": "integer" },
+        "sub_sequence_time_scale": { "type": "number" },
+        "sub_sequence_hierarchical_bias": { "type": "integer" },
+        "sub_sequence_can_loop": { "type": "boolean" },
+        "sound_path": { "type": "string" },
+        "sound_class": { "type": "string" },
+        "attenuation_settings_path": { "type": "string" },
+        "audio_start_frame_offset": { "type": "integer" },
+        "animation_path": { "type": "string" },
+        "animation_class": { "type": "string" },
+        "animation_play_rate": { "type": "number" },
+        "animation_reverse": { "type": "boolean" },
+        "animation_slot_name": { "type": "string" },
+        "animation_first_loop_start_frame_offset": { "type": "integer" },
+        "animation_start_frame_offset": { "type": "integer" },
+        "animation_end_frame_offset": { "type": "integer" }
+      }
+    },
+    "binding_tag": {
+      "type": "object",
+      "required": ["index", "tag", "binding_count", "bindings"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "tag": { "type": "string" },
+        "binding_count": { "type": "integer", "minimum": 0 },
+        "bindings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/binding_reference" }
+        }
+      }
+    },
+    "marked_frame": {
+      "type": "object",
+      "required": ["index", "frame_number", "label"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "frame_number": { "type": "integer" },
+        "label": { "type": "string" }
+      }
+    },
+    "level_sequence": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "id",
+        "sequence_path",
+        "sequence_class",
+        "movie_scene_id",
+        "movie_scene_path",
+        "movie_scene_class",
+        "director_blueprint_path",
+        "director_blueprint_name",
+        "director_class_path",
+        "display_rate",
+        "tick_resolution",
+        "playback_range",
+        "selection_range",
+        "world_actor_resolution_state",
+        "key_storage",
+        "camera_cut_track_id",
+        "spawnable_count",
+        "possessable_count",
+        "binding_count",
+        "track_count",
+        "section_count",
+        "channel_count",
+        "key_count",
+        "binding_tag_count",
+        "marked_frame_count",
+        "root_folder_count",
+        "node_group_count",
+        "spawnables",
+        "possessables",
+        "bindings",
+        "tracks",
+        "sections",
+        "binding_tags",
+        "marked_frames"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.level_sequence.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "sequence_path": { "type": "string" },
+        "sequence_class": { "type": "string" },
+        "movie_scene_id": { "type": "string" },
+        "movie_scene_path": { "type": "string" },
+        "movie_scene_class": { "type": "string" },
+        "director_blueprint_path": { "type": "string" },
+        "director_blueprint_name": { "type": "string" },
+        "director_class_path": { "type": "string" },
+        "display_rate": { "$ref": "#/$defs/frame_rate" },
+        "tick_resolution": { "$ref": "#/$defs/frame_rate" },
+        "playback_range": { "$ref": "#/$defs/frame_range" },
+        "selection_range": { "$ref": "#/$defs/frame_range" },
+        "world_actor_resolution_state": { "type": "string" },
+        "key_storage": { "type": "string" },
+        "camera_cut_track_id": { "type": "string" },
+        "spawnable_count": { "type": "integer", "minimum": 0 },
+        "possessable_count": { "type": "integer", "minimum": 0 },
+        "binding_count": { "type": "integer", "minimum": 0 },
+        "track_count": { "type": "integer", "minimum": 0 },
+        "section_count": { "type": "integer", "minimum": 0 },
+        "channel_count": { "type": "integer", "minimum": 0 },
+        "key_count": { "type": "integer", "minimum": 0 },
+        "key_artifact": { "$ref": "#/$defs/key_artifact_manifest" },
+        "binding_tag_count": { "type": "integer", "minimum": 0 },
+        "marked_frame_count": { "type": "integer", "minimum": 0 },
+        "root_folder_count": { "type": "integer", "minimum": 0 },
+        "node_group_count": { "type": "integer", "minimum": 0 },
+        "spawnables": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/spawnable" }
+        },
+        "possessables": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/possessable" }
+        },
+        "bindings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/binding" }
+        },
+        "tracks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/track" }
+        },
+        "sections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/section" }
+        },
+        "binding_tags": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/binding_tag" }
+        },
+        "marked_frames": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/marked_frame" }
+        }
+      }
+    }
+  }
+}

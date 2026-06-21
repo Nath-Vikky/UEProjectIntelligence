@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/pcg.schema.json",
+  "title": "UEPI PCG Graph Snapshot",
+  "$ref": "#/$defs/pcg_graph",
+  "$defs": {
+    "universal_graph": {
+      "type": "object",
+      "required": ["domain", "graph", "nodes", "ports", "links", "domain_semantics"],
+      "properties": {
+        "domain": { "const": "pcg" },
+        "graph": {
+          "type": "object",
+          "required": ["id", "path", "class", "name"],
+          "properties": {
+            "id": { "type": "string" },
+            "path": { "type": "string" },
+            "class": { "type": "string" },
+            "name": { "type": "string" }
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "class", "semantic_kind", "x", "y"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "class": { "type": "string" },
+              "semantic_kind": { "type": "string" },
+              "x": { "type": "number" },
+              "y": { "type": "number" }
+            }
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "node_id", "name", "direction", "type", "domain_type"],
+            "properties": {
+              "id": { "type": "string" },
+              "node_id": { "type": "string" },
+              "name": { "type": "string" },
+              "direction": { "enum": ["input", "output"] },
+              "type": { "type": "string" },
+              "domain_type": { "type": "string" }
+            }
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "source_port_id", "target_port_id"],
+            "properties": {
+              "id": { "type": "string" },
+              "source_port_id": { "type": "string" },
+              "target_port_id": { "type": "string" }
+            }
+          }
+        },
+        "domain_semantics": { "type": "object" }
+      }
+    },
+    "pcg_property": {
+      "type": "object",
+      "required": ["index", "name", "type", "value", "overridable"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "value": { "type": "string" },
+        "overridable": { "type": "boolean" }
+      }
+    },
+    "pcg_settings": {
+      "type": "object",
+      "required": [
+        "id",
+        "node_id",
+        "settings_path",
+        "settings_class",
+        "settings_type",
+        "enabled",
+        "debug",
+        "uses_seed",
+        "seed",
+        "filter_on_tag_count",
+        "tags_applied_on_output_count",
+        "filter_on_tags",
+        "tags_applied_on_output",
+        "property_count",
+        "properties"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "node_id": { "type": "string" },
+        "settings_path": { "type": "string" },
+        "settings_class": { "type": "string" },
+        "settings_type": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "debug": { "type": "boolean" },
+        "uses_seed": { "type": "boolean" },
+        "seed": { "type": "integer" },
+        "filter_on_tag_count": { "type": "integer", "minimum": 0 },
+        "tags_applied_on_output_count": { "type": "integer", "minimum": 0 },
+        "filter_on_tags": { "type": "array", "items": { "type": "string" } },
+        "tags_applied_on_output": { "type": "array", "items": { "type": "string" } },
+        "property_count": { "type": "integer", "minimum": 0 },
+        "properties": { "type": "array", "items": { "$ref": "#/$defs/pcg_property" } }
+      }
+    },
+    "pcg_node": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "node_path",
+        "node_class",
+        "title",
+        "node_title",
+        "settings_id",
+        "settings_path",
+        "position_x",
+        "position_y",
+        "input_pin_count",
+        "output_pin_count",
+        "has_inbound_edges",
+        "inbound_edge_count",
+        "comment",
+        "comment_bubble_pinned",
+        "comment_bubble_visible"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "node_path": { "type": "string" },
+        "node_class": { "type": "string" },
+        "title": { "type": "string" },
+        "node_title": { "type": "string" },
+        "settings_id": { "type": "string" },
+        "settings_path": { "type": "string" },
+        "position_x": { "type": "integer" },
+        "position_y": { "type": "integer" },
+        "input_pin_count": { "type": "integer", "minimum": 0 },
+        "output_pin_count": { "type": "integer", "minimum": 0 },
+        "has_inbound_edges": { "type": "boolean" },
+        "inbound_edge_count": { "type": "integer", "minimum": 0 },
+        "comment": { "type": "string" },
+        "comment_bubble_pinned": { "type": "boolean" },
+        "comment_bubble_visible": { "type": "boolean" }
+      }
+    },
+    "pcg_pin": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "node_id",
+        "direction",
+        "label",
+        "allowed_types",
+        "current_types",
+        "allow_multiple_data",
+        "allow_multiple_connections",
+        "advanced_pin",
+        "edge_count",
+        "tooltip"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "node_id": { "type": "string" },
+        "direction": { "enum": ["input", "output"] },
+        "label": { "type": "string" },
+        "allowed_types": { "type": "string" },
+        "current_types": { "type": "string" },
+        "allow_multiple_data": { "type": "boolean" },
+        "allow_multiple_connections": { "type": "boolean" },
+        "advanced_pin": { "type": "boolean" },
+        "edge_count": { "type": "integer", "minimum": 0 },
+        "tooltip": { "type": "string" }
+      }
+    },
+    "pcg_edge": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "source_node_id",
+        "source_pin_id",
+        "source_pin_label",
+        "target_node_id",
+        "target_pin_id",
+        "target_pin_label"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "source_node_id": { "type": "string" },
+        "source_pin_id": { "type": "string" },
+        "source_pin_label": { "type": "string" },
+        "target_node_id": { "type": "string" },
+        "target_pin_id": { "type": "string" },
+        "target_pin_label": { "type": "string" }
+      }
+    },
+    "pcg_subgraph": {
+      "type": "object",
+      "required": ["id", "index", "node_id", "subgraph_path", "subgraph_class", "subgraph_name"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "node_id": { "type": "string" },
+        "subgraph_path": { "type": "string" },
+        "subgraph_class": { "type": "string" },
+        "subgraph_name": { "type": "string" }
+      }
+    },
+    "pcg_graph": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "graph_path",
+        "graph_class",
+        "world_actor_resolution_state",
+        "hierarchical_generation",
+        "landscape_uses_metadata",
+        "default_grid",
+        "default_grid_size",
+        "node_count",
+        "pin_count",
+        "edge_count",
+        "settings_count",
+        "subgraph_reference_count",
+        "user_parameter_state",
+        "nodes",
+        "pins",
+        "edges",
+        "settings",
+        "subgraphs",
+        "universal_graph"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.pcg_graph.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "graph_path": { "type": "string" },
+        "graph_class": { "type": "string" },
+        "world_actor_resolution_state": { "type": "string" },
+        "hierarchical_generation": { "type": "boolean" },
+        "landscape_uses_metadata": { "type": "boolean" },
+        "default_grid": { "type": "string" },
+        "default_grid_size": { "type": "number", "minimum": 0 },
+        "node_count": { "type": "integer", "minimum": 0 },
+        "pin_count": { "type": "integer", "minimum": 0 },
+        "edge_count": { "type": "integer", "minimum": 0 },
+        "settings_count": { "type": "integer", "minimum": 0 },
+        "subgraph_reference_count": { "type": "integer", "minimum": 0 },
+        "user_parameter_state": { "type": "string" },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/pcg_node" } },
+        "pins": { "type": "array", "items": { "$ref": "#/$defs/pcg_pin" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/pcg_edge" } },
+        "settings": { "type": "array", "items": { "$ref": "#/$defs/pcg_settings" } },
+        "subgraphs": { "type": "array", "items": { "$ref": "#/$defs/pcg_subgraph" } },
+        "universal_graph": { "$ref": "#/$defs/universal_graph" }
+      }
+    }
+  }
+}

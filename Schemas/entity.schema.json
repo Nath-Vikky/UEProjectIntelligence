@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/entity.schema.json",
+  "title": "UEPI Entity",
+  "type": "object",
+  "required": ["id", "kind", "canonical_key", "source_layer", "attributes", "completeness", "evidence"],
+  "properties": {
+    "id": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "kind": { "type": "string" },
+    "canonical_key": { "type": "string" },
+    "display_name": { "type": "string" },
+    "source_layer": { "$ref": "diagnostic.schema.json#/$defs/source_layer" },
+    "attributes": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "completeness": { "$ref": "diagnostic.schema.json#/$defs/completeness" },
+    "diagnostics": {
+      "type": "array",
+      "items": { "$ref": "diagnostic.schema.json#/$defs/diagnostic" }
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "$ref": "diagnostic.schema.json#/$defs/evidence" }
+    },
+    "snapshot": {
+      "type": "object"
+    }
+  }
+}

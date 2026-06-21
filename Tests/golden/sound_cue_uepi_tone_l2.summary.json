@@ -1,0 +1,42 @@
+{
+  "attributed_relation_count": 0,
+  "diagnostic_count": 0,
+  "entity_count": 118,
+  "entity_kinds": {
+    "asset": 1,
+    "asset_reference": 4,
+    "config_file": 4,
+    "module": 3,
+    "module_reference": 42,
+    "plugin_descriptor": 2,
+    "plugin_reference": 1,
+    "project_descriptor": 1,
+    "sound_cue": 1,
+    "sound_node": 2,
+    "sound_wave": 1,
+    "source_file": 56
+  },
+  "project_name": "GasDemo",
+  "relation_count": 128,
+  "relation_types": {
+    "belongs_to_module": 54,
+    "config_references_asset": 2,
+    "configured_by": 4,
+    "contains_sound_cue": 1,
+    "contains_sound_node": 2,
+    "contains_subobject": 2,
+    "declared_in": 5,
+    "declares_module": 3,
+    "implemented_in": 2,
+    "module_depends_on": 48,
+    "plugin_depends_on": 1,
+    "possible_string_reference": 2,
+    "sound_node_child": 1,
+    "sound_node_uses_sound_wave": 1
+  },
+  "schema_version": "uepi.scan.v1",
+  "sound_cue_child_edge_count": 1,
+  "sound_cue_node_count": 2,
+  "sound_cue_snapshot_count": 1,
+  "sound_cue_wave_player_count": 1
+}

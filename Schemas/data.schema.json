@@ -1,0 +1,500 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/data.schema.json",
+  "title": "UEPI Data Asset Snapshots",
+  "oneOf": [
+    { "$ref": "#/$defs/data_asset" },
+    { "$ref": "#/$defs/user_defined_struct" },
+    { "$ref": "#/$defs/user_defined_enum" },
+    { "$ref": "#/$defs/curve" },
+    { "$ref": "#/$defs/curve_table" },
+    { "$ref": "#/$defs/curve_linear_color_atlas" },
+    { "$ref": "#/$defs/string_table" },
+    { "$ref": "#/$defs/data_table" }
+  ],
+  "$defs": {
+    "asset_bundle": {
+      "type": "object",
+      "required": ["name", "asset_count", "asset_paths"],
+      "properties": {
+        "name": { "type": "string" },
+        "asset_count": { "type": "integer", "minimum": 0 },
+        "asset_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "data_asset_rules": {
+      "type": "object",
+      "required": ["priority", "chunk_id", "cook_rule"],
+      "properties": {
+        "priority": { "type": "integer" },
+        "chunk_id": { "type": "integer" },
+        "cook_rule": { "type": "string" }
+      }
+    },
+    "data_asset": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "id",
+        "data_asset_path",
+        "data_asset_class",
+        "is_primary_data_asset",
+        "primary_asset_id",
+        "primary_asset_type",
+        "primary_asset_name"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.data_asset.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "id": { "type": "string" },
+        "data_asset_path": { "type": "string" },
+        "data_asset_class": { "type": "string" },
+        "is_primary_data_asset": { "type": "boolean" },
+        "primary_asset_id": { "type": "string" },
+        "primary_asset_type": { "type": "string" },
+        "primary_asset_name": { "type": "string" },
+        "asset_manager_rules": { "$ref": "#/$defs/data_asset_rules" },
+        "bundle_count": { "type": "integer", "minimum": 0 },
+        "bundled_asset_count": { "type": "integer", "minimum": 0 },
+        "bundles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/asset_bundle" }
+        }
+      }
+    },
+    "string_table_metadata": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "string_table_entry": {
+      "type": "object",
+      "required": ["id", "index", "key", "source_string", "metadata_count", "metadata"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "key": { "type": "string" },
+        "source_string": { "type": "string" },
+        "metadata_count": { "type": "integer", "minimum": 0 },
+        "metadata": { "$ref": "#/$defs/string_table_metadata" }
+      }
+    },
+    "string_table": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "string_table_path",
+        "string_table_class",
+        "table_id",
+        "namespace",
+        "is_loaded",
+        "entry_count",
+        "metadata_count",
+        "entries"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.string_table.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "string_table_path": { "type": "string" },
+        "string_table_class": { "type": "string" },
+        "table_id": { "type": "string" },
+        "namespace": { "type": "string" },
+        "is_loaded": { "type": "boolean" },
+        "entry_count": { "type": "integer", "minimum": 0 },
+        "metadata_count": { "type": "integer", "minimum": 0 },
+        "entries": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/string_table_entry" }
+        }
+      }
+    },
+    "user_defined_struct_field": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "name",
+        "display_name",
+        "cpp_type",
+        "property_class",
+        "array_dim",
+        "property_flags",
+        "offset_internal",
+        "size",
+        "min_alignment"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "display_name": { "type": "string" },
+        "cpp_type": { "type": "string" },
+        "property_class": { "type": "string" },
+        "array_dim": { "type": "integer", "minimum": 1 },
+        "property_flags": { "type": "string" },
+        "offset_internal": { "type": "integer", "minimum": 0 },
+        "size": { "type": "integer", "minimum": 0 },
+        "min_alignment": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "user_defined_struct": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "struct_path",
+        "struct_class",
+        "guid",
+        "status",
+        "struct_size",
+        "min_alignment",
+        "field_count",
+        "fields"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.user_defined_struct.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "struct_path": { "type": "string" },
+        "struct_class": { "type": "string" },
+        "guid": { "type": "string" },
+        "status": { "type": "string" },
+        "struct_size": { "type": "integer", "minimum": 0 },
+        "min_alignment": { "type": "integer", "minimum": 0 },
+        "field_count": { "type": "integer", "minimum": 0 },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/user_defined_struct_field" }
+        }
+      }
+    },
+    "user_defined_enum_entry": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "name",
+        "authored_name",
+        "display_name",
+        "tooltip",
+        "value",
+        "is_hidden",
+        "is_max"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "authored_name": { "type": "string" },
+        "display_name": { "type": "string" },
+        "tooltip": { "type": "string" },
+        "value": { "type": "integer" },
+        "is_hidden": { "type": "boolean" },
+        "is_max": { "type": "boolean" }
+      }
+    },
+    "user_defined_enum": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "enum_path",
+        "enum_class",
+        "cpp_form",
+        "description",
+        "entry_count",
+        "entries"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.user_defined_enum.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "enum_path": { "type": "string" },
+        "enum_class": { "type": "string" },
+        "cpp_form": { "type": "string" },
+        "description": { "type": "string" },
+        "entry_count": { "type": "integer", "minimum": 0 },
+        "entries": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/user_defined_enum_entry" }
+        }
+      }
+    },
+    "data_table_column": {
+      "type": "object",
+      "required": ["id", "index", "name", "display_name", "cpp_type", "property_class", "array_dim"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "display_name": { "type": "string" },
+        "cpp_type": { "type": "string" },
+        "property_class": { "type": "string" },
+        "array_dim": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "data_table_field": {
+      "type": "object",
+      "required": ["column_name", "value"],
+      "properties": {
+        "column_name": { "type": "string" },
+        "value": { "type": "string" }
+      }
+    },
+    "data_table_row": {
+      "type": "object",
+      "required": ["id", "index", "name", "field_count", "fields"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "field_count": { "type": "integer", "minimum": 0 },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/data_table_field" }
+        }
+      }
+    },
+    "data_table": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "table_path",
+        "table_class",
+        "row_struct_path",
+        "row_struct_name",
+        "row_count",
+        "column_count",
+        "strip_from_client_builds",
+        "ignore_extra_fields",
+        "ignore_missing_fields",
+        "import_key_field",
+        "columns",
+        "rows"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.data_table.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "table_path": { "type": "string" },
+        "table_class": { "type": "string" },
+        "row_struct_path": { "type": "string" },
+        "row_struct_name": { "type": "string" },
+        "row_count": { "type": "integer", "minimum": 0 },
+        "column_count": { "type": "integer", "minimum": 0 },
+        "strip_from_client_builds": { "type": "boolean" },
+        "ignore_extra_fields": { "type": "boolean" },
+        "ignore_missing_fields": { "type": "boolean" },
+        "import_key_field": { "type": "string" },
+        "columns": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/data_table_column" }
+        },
+        "rows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/data_table_row" }
+        },
+        "parent_table_count": { "type": "integer", "minimum": 0 },
+        "parent_tables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "index", "table_path", "row_struct_path", "row_count"],
+            "properties": {
+              "id": { "type": "string" },
+              "index": { "type": "integer", "minimum": 0 },
+              "table_path": { "type": "string" },
+              "row_struct_path": { "type": "string" },
+              "row_count": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "curve_table_row": {
+      "type": "object",
+      "required": ["id", "index", "name", "key_count", "min_time", "max_time", "min_value", "max_value"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "key_count": { "type": "integer", "minimum": 0 },
+        "min_time": { "type": "number" },
+        "max_time": { "type": "number" },
+        "min_value": { "type": "number" },
+        "max_value": { "type": "number" }
+      }
+    },
+    "curve_table": {
+      "type": "object",
+      "required": ["schema_version", "source_layer", "curve_table_path", "curve_table_class", "row_count", "rows"],
+      "properties": {
+        "schema_version": { "const": "uepi.curve_table.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "curve_table_path": { "type": "string" },
+        "curve_table_class": { "type": "string" },
+        "row_count": { "type": "integer", "minimum": 0 },
+        "rows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/curve_table_row" }
+        }
+      }
+    },
+    "curve_key": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "time",
+        "value",
+        "interp_mode",
+        "tangent_mode",
+        "tangent_weight_mode",
+        "arrive_tangent",
+        "arrive_tangent_weight",
+        "leave_tangent",
+        "leave_tangent_weight"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "time": { "type": "number" },
+        "value": { "type": "number" },
+        "interp_mode": { "type": "string" },
+        "tangent_mode": { "type": "string" },
+        "tangent_weight_mode": { "type": "string" },
+        "arrive_tangent": { "type": "number" },
+        "arrive_tangent_weight": { "type": "number" },
+        "leave_tangent": { "type": "number" },
+        "leave_tangent_weight": { "type": "number" }
+      }
+    },
+    "curve_channel": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "name",
+        "key_count",
+        "has_default_value",
+        "default_value",
+        "pre_infinity_extrap",
+        "post_infinity_extrap",
+        "min_time",
+        "max_time",
+        "min_value",
+        "max_value",
+        "keys"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "key_count": { "type": "integer", "minimum": 0 },
+        "has_default_value": { "type": "boolean" },
+        "default_value": { "type": "number" },
+        "pre_infinity_extrap": { "type": "string" },
+        "post_infinity_extrap": { "type": "string" },
+        "min_time": { "type": "number" },
+        "max_time": { "type": "number" },
+        "min_value": { "type": "number" },
+        "max_value": { "type": "number" },
+        "keys": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/curve_key" }
+        }
+      }
+    },
+    "curve": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "curve_path",
+        "curve_class",
+        "curve_kind",
+        "channel_count",
+        "key_count",
+        "min_time",
+        "max_time",
+        "min_value",
+        "max_value",
+        "channels"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.curve.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "curve_path": { "type": "string" },
+        "curve_class": { "type": "string" },
+        "curve_kind": { "enum": ["float", "vector", "linear_color", "curve"] },
+        "channel_count": { "type": "integer", "minimum": 0 },
+        "key_count": { "type": "integer", "minimum": 0 },
+        "min_time": { "type": "number" },
+        "max_time": { "type": "number" },
+        "min_value": { "type": "number" },
+        "max_value": { "type": "number" },
+        "channels": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/curve_channel" }
+        }
+      }
+    },
+    "curve_atlas_entry": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "normalized_position",
+        "is_null",
+        "curve_path",
+        "curve_class",
+        "curve_name"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "normalized_position": { "type": "number" },
+        "is_null": { "type": "boolean" },
+        "curve_path": { "type": "string" },
+        "curve_class": { "type": "string" },
+        "curve_name": { "type": "string" }
+      }
+    },
+    "curve_linear_color_atlas": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "atlas_path",
+        "atlas_class",
+        "texture_size",
+        "texture_height",
+        "square_resolution",
+        "disable_all_adjustments",
+        "dirty",
+        "has_dirty_textures",
+        "gradient_curve_count",
+        "gradient_curves"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.curve_linear_color_atlas.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "atlas_path": { "type": "string" },
+        "atlas_class": { "type": "string" },
+        "texture_size": { "type": "integer", "minimum": 0 },
+        "texture_height": { "type": "integer", "minimum": 0 },
+        "square_resolution": { "type": "boolean" },
+        "disable_all_adjustments": { "type": "boolean" },
+        "dirty": { "type": "boolean" },
+        "has_dirty_textures": { "type": "boolean" },
+        "gradient_curve_count": { "type": "integer", "minimum": 0 },
+        "gradient_curves": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/curve_atlas_entry" }
+        }
+      }
+    }
+  }
+}

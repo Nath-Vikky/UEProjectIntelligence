@@ -1,0 +1,394 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/world.schema.json",
+  "title": "UEPI World Snapshots",
+  "oneOf": [
+    { "$ref": "#/$defs/world" },
+    { "$ref": "#/$defs/world_data_layers" },
+    { "$ref": "#/$defs/world_partition" },
+    { "$ref": "#/$defs/world_partition_actor_desc" }
+  ],
+  "$defs": {
+    "hex_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "guid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "vector": {
+      "type": "object",
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" }
+      }
+    },
+    "rotator": {
+      "type": "object",
+      "required": ["pitch", "yaw", "roll"],
+      "properties": {
+        "pitch": { "type": "number" },
+        "yaw": { "type": "number" },
+        "roll": { "type": "number" }
+      }
+    },
+    "transform": {
+      "type": "object",
+      "required": ["location", "rotation", "scale"],
+      "properties": {
+        "location": { "$ref": "#/$defs/vector" },
+        "rotation": { "$ref": "#/$defs/rotator" },
+        "scale": { "$ref": "#/$defs/vector" }
+      }
+    },
+    "box": {
+      "type": "object",
+      "required": ["is_valid", "min", "max"],
+      "properties": {
+        "is_valid": { "type": "boolean" },
+        "min": { "$ref": "#/$defs/vector" },
+        "max": { "$ref": "#/$defs/vector" }
+      }
+    },
+    "color": {
+      "type": "object",
+      "required": ["r", "g", "b", "a"],
+      "properties": {
+        "r": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "g": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "b": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "a": { "type": "integer", "minimum": 0, "maximum": 255 }
+      }
+    },
+    "world": {
+      "type": "object",
+      "required": ["schema_version", "source_layer", "world_path", "world_type", "level_count", "streaming_level_count", "actor_count", "component_count", "levels", "streaming_levels"],
+      "properties": {
+        "schema_version": { "const": "uepi.world.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "world_path": { "type": "string" },
+        "world_type": { "type": "string" },
+        "level_count": { "type": "integer", "minimum": 0 },
+        "streaming_level_count": { "type": "integer", "minimum": 0 },
+        "actor_count": { "type": "integer", "minimum": 0 },
+        "component_count": { "type": "integer", "minimum": 0 },
+        "levels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "path", "index", "level_script_actor_id", "level_script_actor_path", "level_script_actor_class", "actor_count", "actors"],
+            "properties": {
+              "id": { "$ref": "#/$defs/hex_id" },
+              "path": { "type": "string" },
+              "index": { "type": "integer", "minimum": 0 },
+              "level_script_actor_id": { "type": "string" },
+              "level_script_actor_path": { "type": "string" },
+              "level_script_actor_class": { "type": "string" },
+              "actor_count": { "type": "integer", "minimum": 0 },
+              "actors": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "path",
+                    "name",
+                    "label",
+                    "class",
+                    "actor_guid",
+                    "actor_instance_guid",
+                    "content_bundle_guid",
+                    "folder_path",
+                    "owner_id",
+                    "owner_path",
+                    "attach_parent_id",
+                    "attach_parent_path",
+                    "attach_parent_socket",
+                    "tags",
+                    "is_level_script_actor",
+                    "is_level_instance",
+                    "level_instance_guid",
+                    "level_instance_world_asset",
+                    "level_instance_world_package",
+                    "level_instance_runtime_behavior",
+                    "component_count",
+                    "components"
+                  ],
+                  "properties": {
+                    "id": { "$ref": "#/$defs/hex_id" },
+                    "path": { "type": "string" },
+                    "name": { "type": "string" },
+                    "label": { "type": "string" },
+                    "class": { "type": "string" },
+                    "actor_guid": { "type": "string" },
+                    "actor_instance_guid": { "type": "string" },
+                    "content_bundle_guid": { "type": "string" },
+                    "folder_path": { "type": "string" },
+                    "owner_id": { "type": "string" },
+                    "owner_path": { "type": "string" },
+                    "attach_parent_id": { "type": "string" },
+                    "attach_parent_path": { "type": "string" },
+                    "attach_parent_socket": { "type": "string" },
+                    "tags": { "type": "array", "items": { "type": "string" } },
+                    "is_level_script_actor": { "type": "boolean" },
+                    "is_level_instance": { "type": "boolean" },
+                    "level_instance_guid": { "type": "string" },
+                    "level_instance_world_asset": { "type": "string" },
+                    "level_instance_world_package": { "type": "string" },
+                    "level_instance_runtime_behavior": { "type": "string" },
+                    "component_count": { "type": "integer", "minimum": 0 },
+                    "components": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["id", "path", "name", "class"],
+                        "properties": {
+                          "id": { "$ref": "#/$defs/hex_id" },
+                          "path": { "type": "string" },
+                          "name": { "type": "string" },
+                          "class": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "streaming_levels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "path",
+              "name",
+              "class",
+              "index",
+              "world_asset",
+              "world_asset_package",
+              "loaded_level_path",
+              "folder_path",
+              "should_be_loaded",
+              "should_be_visible",
+              "should_be_visible_flag",
+              "should_be_visible_in_editor",
+              "should_block_on_load",
+              "should_block_on_unload",
+              "should_be_always_loaded",
+              "is_level_loaded",
+              "is_level_visible",
+              "is_static",
+              "locked",
+              "level_lod_index",
+              "state",
+              "transform"
+            ],
+            "properties": {
+              "id": { "$ref": "#/$defs/hex_id" },
+              "path": { "type": "string" },
+              "name": { "type": "string" },
+              "class": { "type": "string" },
+              "index": { "type": "integer", "minimum": 0 },
+              "world_asset": { "type": "string" },
+              "world_asset_package": { "type": "string" },
+              "loaded_level_path": { "type": "string" },
+              "folder_path": { "type": "string" },
+              "should_be_loaded": { "type": "boolean" },
+              "should_be_visible": { "type": "boolean" },
+              "should_be_visible_flag": { "type": "boolean" },
+              "should_be_visible_in_editor": { "type": "boolean" },
+              "should_block_on_load": { "type": "boolean" },
+              "should_block_on_unload": { "type": "boolean" },
+              "should_be_always_loaded": { "type": "boolean" },
+              "is_level_loaded": { "type": "boolean" },
+              "is_level_visible": { "type": "boolean" },
+              "is_static": { "type": "boolean" },
+              "locked": { "type": "boolean" },
+              "level_lod_index": { "type": "integer" },
+              "state": { "type": "string" },
+              "transform": { "$ref": "#/$defs/transform" }
+            }
+          }
+        }
+      }
+    },
+    "world_data_layers": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "world_data_layers_path",
+        "world_data_layers_class",
+        "world_path",
+        "level_path",
+        "data_layer_count",
+        "data_layers"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.world_data_layers.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "world_data_layers_path": { "type": "string" },
+        "world_data_layers_class": { "type": "string" },
+        "world_path": { "type": "string" },
+        "level_path": { "type": "string" },
+        "data_layer_count": { "type": "integer", "minimum": 0 },
+        "data_layers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "path",
+              "name",
+              "short_name",
+              "full_name",
+              "class",
+              "type",
+              "is_runtime",
+              "initial_runtime_state",
+              "runtime_state",
+              "effective_runtime_state",
+              "initially_visible",
+              "initially_loaded_in_editor",
+              "parent_id",
+              "parent_path",
+              "asset_path",
+              "debug_color",
+              "child_count",
+              "children"
+            ],
+            "properties": {
+              "id": { "$ref": "#/$defs/hex_id" },
+              "path": { "type": "string" },
+              "name": { "type": "string" },
+              "short_name": { "type": "string" },
+              "full_name": { "type": "string" },
+              "class": { "type": "string" },
+              "type": { "enum": ["runtime", "editor", "unknown"] },
+              "is_runtime": { "type": "boolean" },
+              "initial_runtime_state": { "enum": ["Unloaded", "Loaded", "Activated", "Invalid"] },
+              "runtime_state": { "enum": ["Unloaded", "Loaded", "Activated", "Invalid"] },
+              "effective_runtime_state": { "enum": ["Unloaded", "Loaded", "Activated", "Invalid"] },
+              "initially_visible": { "type": "boolean" },
+              "initially_loaded_in_editor": { "type": "boolean" },
+              "parent_id": { "type": "string" },
+              "parent_path": { "type": "string" },
+              "asset_path": { "type": "string" },
+              "debug_color": { "$ref": "#/$defs/color" },
+              "child_count": { "type": "integer", "minimum": 0 },
+              "children": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "path"],
+                  "properties": {
+                    "id": { "$ref": "#/$defs/hex_id" },
+                    "path": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "world_partition_actor_desc": {
+      "type": "object",
+      "required": [
+        "id",
+        "guid",
+        "actor_name",
+        "actor_label",
+        "actor_label_or_name",
+        "actor_path",
+        "actor_package",
+        "native_class",
+        "base_class",
+        "display_class_name",
+        "runtime_grid",
+        "is_spatially_loaded",
+        "is_spatially_loaded_raw",
+        "actor_is_editor_only",
+        "actor_is_runtime_only",
+        "actor_is_hlod_relevant",
+        "is_default_actor_desc",
+        "is_container_instance",
+        "hlod_layer",
+        "folder_path",
+        "folder_guid",
+        "parent_actor_guid",
+        "content_bundle_guid",
+        "editor_bounds",
+        "runtime_bounds",
+        "data_layers",
+        "data_layer_instance_names",
+        "tags",
+        "references",
+        "reference_count"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/hex_id" },
+        "guid": { "$ref": "#/$defs/guid" },
+        "actor_name": { "type": "string" },
+        "actor_label": { "type": "string" },
+        "actor_label_or_name": { "type": "string" },
+        "actor_path": { "type": "string" },
+        "actor_package": { "type": "string" },
+        "native_class": { "type": "string" },
+        "base_class": { "type": "string" },
+        "display_class_name": { "type": "string" },
+        "runtime_grid": { "type": "string" },
+        "is_spatially_loaded": { "type": "boolean" },
+        "is_spatially_loaded_raw": { "type": "boolean" },
+        "actor_is_editor_only": { "type": "boolean" },
+        "actor_is_runtime_only": { "type": "boolean" },
+        "actor_is_hlod_relevant": { "type": "boolean" },
+        "is_default_actor_desc": { "type": "boolean" },
+        "is_container_instance": { "type": "boolean" },
+        "hlod_layer": { "type": "string" },
+        "folder_path": { "type": "string" },
+        "folder_guid": { "$ref": "#/$defs/guid" },
+        "parent_actor_guid": { "$ref": "#/$defs/guid" },
+        "content_bundle_guid": { "$ref": "#/$defs/guid" },
+        "editor_bounds": { "$ref": "#/$defs/box" },
+        "runtime_bounds": { "$ref": "#/$defs/box" },
+        "data_layers": { "type": "array", "items": { "type": "string" } },
+        "data_layer_instance_names": { "type": "array", "items": { "type": "string" } },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "references": { "type": "array", "items": { "$ref": "#/$defs/guid" } },
+        "reference_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "world_partition": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "world_path",
+        "world_partition_path",
+        "world_partition_class",
+        "actor_desc_container_count",
+        "actor_desc_count",
+        "actor_descs"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.world_partition.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "world_path": { "type": "string" },
+        "world_partition_path": { "type": "string" },
+        "world_partition_class": { "type": "string" },
+        "actor_desc_container_count": { "type": "integer", "minimum": 0 },
+        "actor_desc_count": { "type": "integer", "minimum": 0 },
+        "actor_descs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/world_partition_actor_desc" }
+        }
+      }
+    }
+  }
+}

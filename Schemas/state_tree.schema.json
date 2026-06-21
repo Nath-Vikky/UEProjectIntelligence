@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/state_tree.schema.json",
+  "title": "UEPI StateTree Snapshot",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_layer",
+    "id",
+    "tree_path",
+    "schema_class_path",
+    "ready_to_run",
+    "num_data_views",
+    "runtime_state_count",
+    "runtime_transition_count",
+    "runtime_node_count",
+    "last_compiled_editor_data_hash",
+    "property_binding_count",
+    "property_bindings",
+    "global_evaluator_count",
+    "global_task_count",
+    "editor_state_count",
+    "states",
+    "editor_node_count",
+    "nodes",
+    "editor_transition_count",
+    "transitions",
+    "external_data_count",
+    "external_data",
+    "context_data_count",
+    "context_data"
+  ],
+  "properties": {
+    "schema_version": { "const": "uepi.state_tree.v1" },
+    "source_layer": { "const": "uobject_reflection" },
+    "id": { "type": "string" },
+    "tree_path": { "type": "string" },
+    "schema_class_path": { "type": "string" },
+    "ready_to_run": { "type": "boolean" },
+    "num_data_views": { "type": "integer", "minimum": 0 },
+    "runtime_state_count": { "type": "integer", "minimum": 0 },
+    "runtime_transition_count": { "type": "integer", "minimum": 0 },
+    "runtime_node_count": { "type": "integer", "minimum": 0 },
+    "last_compiled_editor_data_hash": { "type": "number" },
+    "property_binding_count": { "type": "integer", "minimum": 0 },
+    "property_bindings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/property_binding" }
+    },
+    "global_evaluator_count": { "type": "integer", "minimum": 0 },
+    "global_task_count": { "type": "integer", "minimum": 0 },
+    "editor_state_count": { "type": "integer", "minimum": 0 },
+    "states": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/state" }
+    },
+    "editor_node_count": { "type": "integer", "minimum": 0 },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "editor_transition_count": { "type": "integer", "minimum": 0 },
+    "transitions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/transition" }
+    },
+    "external_data_count": { "type": "integer", "minimum": 0 },
+    "external_data": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/external_data" }
+    },
+    "context_data_count": { "type": "integer", "minimum": 0 },
+    "context_data": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/external_data" }
+    }
+  },
+  "$defs": {
+    "state": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "depth",
+        "state_path",
+        "name",
+        "guid",
+        "parent_id",
+        "parent_guid",
+        "type",
+        "selection_behavior",
+        "linked_subtree_name",
+        "linked_subtree_guid",
+        "linked_subtree_type",
+        "enabled",
+        "child_count",
+        "enter_condition_count",
+        "task_count",
+        "transition_count"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "depth": { "type": "integer", "minimum": 0 },
+        "state_path": { "type": "string" },
+        "name": { "type": "string" },
+        "guid": { "type": "string" },
+        "parent_id": { "type": "string" },
+        "parent_guid": { "type": "string" },
+        "type": { "type": "string" },
+        "selection_behavior": { "type": "string" },
+        "linked_subtree_name": { "type": "string" },
+        "linked_subtree_guid": { "type": "string" },
+        "linked_subtree_type": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "child_count": { "type": "integer", "minimum": 0 },
+        "enter_condition_count": { "type": "integer", "minimum": 0 },
+        "task_count": { "type": "integer", "minimum": 0 },
+        "transition_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "guid",
+        "owner_id",
+        "node_kind",
+        "name",
+        "node_struct_path",
+        "instance_struct_path",
+        "instance_object_class_path",
+        "condition_indent",
+        "condition_operand"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "guid": { "type": "string" },
+        "owner_id": { "type": "string" },
+        "node_kind": { "type": "string" },
+        "name": { "type": "string" },
+        "node_struct_path": { "type": "string" },
+        "instance_struct_path": { "type": "string" },
+        "instance_object_class_path": { "type": "string" },
+        "condition_indent": { "type": "integer", "minimum": 0 },
+        "condition_operand": { "type": "string" }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "guid",
+        "state_id",
+        "trigger",
+        "event_tag",
+        "target_state_name",
+        "target_state_guid",
+        "target_state_id",
+        "target_link_type",
+        "priority",
+        "delay_transition",
+        "delay_duration",
+        "delay_random_variance",
+        "condition_count",
+        "enabled"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "guid": { "type": "string" },
+        "state_id": { "type": "string" },
+        "trigger": { "type": "string" },
+        "event_tag": { "type": "string" },
+        "target_state_name": { "type": "string" },
+        "target_state_guid": { "type": "string" },
+        "target_state_id": { "type": "string" },
+        "target_link_type": { "type": "string" },
+        "priority": { "type": "string" },
+        "delay_transition": { "type": "boolean" },
+        "delay_duration": { "type": "number" },
+        "delay_random_variance": { "type": "number" },
+        "condition_count": { "type": "integer", "minimum": 0 },
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "external_data": {
+      "type": "object",
+      "required": ["id", "scope", "index", "name", "struct_path", "requirement", "data_view_index", "guid"],
+      "properties": {
+        "id": { "type": "string" },
+        "scope": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "struct_path": { "type": "string" },
+        "requirement": { "type": "string" },
+        "data_view_index": { "type": "integer" },
+        "guid": { "type": "string" }
+      }
+    },
+    "property_binding": {
+      "type": "object",
+      "required": ["index", "source_path", "target_path"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "source_path": { "type": "string" },
+        "target_path": { "type": "string" }
+      }
+    }
+  }
+}

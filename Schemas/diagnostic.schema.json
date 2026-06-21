@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/diagnostic.schema.json",
+  "title": "UEPI Diagnostics",
+  "$defs": {
+    "source_layer": {
+      "type": "string",
+      "enum": [
+        "filesystem",
+        "asset_registry",
+        "uobject_reflection",
+        "editor_source_graph",
+        "compiled_blueprint",
+        "animation_data_model",
+        "runtime_evaluation",
+        "runtime_observed",
+        "heuristic"
+      ]
+    },
+    "completeness_state": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "metadata_only",
+        "failed",
+        "unsupported",
+        "stale",
+        "runtime_context_required"
+      ]
+    },
+    "completeness": {
+      "type": "object",
+      "required": ["state", "covered", "omitted", "warnings"],
+      "properties": {
+        "state": { "$ref": "#/$defs/completeness_state" },
+        "covered": { "type": "array", "items": { "type": "string" } },
+        "omitted": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": ["code", "severity", "message", "context"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^UEPI_[A-Z0-9_]+$" },
+        "severity": { "type": "string", "enum": ["info", "warning", "error"] },
+        "message": { "type": "string" },
+        "context": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["source_layer", "path", "detail"],
+      "properties": {
+        "source_layer": { "$ref": "#/$defs/source_layer" },
+        "path": { "type": "string" },
+        "detail": { "type": "string" }
+      }
+    }
+  }
+}

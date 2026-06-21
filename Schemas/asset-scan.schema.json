@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/asset-scan.schema.json",
+  "title": "UEPI Asset Registry Scan",
+  "allOf": [{ "$ref": "envelope.schema.json" }],
+  "type": "object",
+  "required": ["entities", "relations"],
+  "properties": {
+    "entities": {
+      "type": "array",
+      "items": { "$ref": "entity.schema.json" }
+    },
+    "relations": {
+      "type": "array",
+      "items": { "$ref": "relation.schema.json" }
+    }
+  }
+}

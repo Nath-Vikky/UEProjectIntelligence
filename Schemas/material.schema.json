@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/material.schema.json",
+  "title": "UEPI Material Snapshots",
+  "oneOf": [
+    { "$ref": "#/$defs/material_parameter_collection" },
+    { "$ref": "#/$defs/material" },
+    { "$ref": "#/$defs/material_instance" },
+    { "$ref": "#/$defs/material_function" }
+  ],
+  "$defs": {
+    "linear_color": {
+      "type": "object",
+      "required": ["r", "g", "b", "a"],
+      "properties": {
+        "r": { "type": "number" },
+        "g": { "type": "number" },
+        "b": { "type": "number" },
+        "a": { "type": "number" }
+      }
+    },
+    "material_collection_parameter": {
+      "type": "object",
+      "required": ["id", "index", "name", "type", "guid", "default_scalar", "default_vector"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "type": { "enum": ["scalar", "vector"] },
+        "guid": { "type": "string" },
+        "default_scalar": { "type": "number" },
+        "default_vector": { "$ref": "#/$defs/linear_color" }
+      }
+    },
+    "material_parameter_collection": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "collection_path",
+        "collection_class",
+        "state_id",
+        "scalar_parameter_count",
+        "vector_parameter_count",
+        "parameter_count",
+        "parameters"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.material_parameter_collection.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "collection_path": { "type": "string" },
+        "collection_class": { "type": "string" },
+        "state_id": { "type": "string" },
+        "scalar_parameter_count": { "type": "integer", "minimum": 0 },
+        "vector_parameter_count": { "type": "integer", "minimum": 0 },
+        "parameter_count": { "type": "integer", "minimum": 0 },
+        "parameters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/material_collection_parameter" }
+        }
+      }
+    },
+    "material_port": {
+      "type": "object",
+      "required": ["index", "name", "mask", "mask_r", "mask_g", "mask_b", "mask_a"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "mask": { "type": "integer" },
+        "mask_r": { "type": "integer" },
+        "mask_g": { "type": "integer" },
+        "mask_b": { "type": "integer" },
+        "mask_a": { "type": "integer" }
+      }
+    },
+    "material_input": {
+      "allOf": [
+        { "$ref": "#/$defs/material_port" },
+        {
+          "type": "object",
+          "required": ["connected_expression_id", "connected_output_index"],
+          "properties": {
+            "connected_expression_id": { "type": "string" },
+            "connected_output_index": { "type": "integer" }
+          }
+        }
+      ]
+    },
+    "material_expression": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "name",
+        "class",
+        "guid",
+        "caption",
+        "description",
+        "editor_x",
+        "editor_y",
+        "parameter_name",
+        "referenced_texture_path",
+        "material_function_path",
+        "input_count",
+        "output_count",
+        "inputs",
+        "outputs"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "class": { "type": "string" },
+        "guid": { "type": "string" },
+        "caption": { "type": "string" },
+        "description": { "type": "string" },
+        "editor_x": { "type": "integer" },
+        "editor_y": { "type": "integer" },
+        "parameter_name": { "type": "string" },
+        "referenced_texture_path": { "type": "string" },
+        "material_function_path": { "type": "string" },
+        "input_count": { "type": "integer", "minimum": 0 },
+        "output_count": { "type": "integer", "minimum": 0 },
+        "inputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/material_input" }
+        },
+        "outputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/material_port" }
+        }
+      }
+    },
+    "parameter_info": {
+      "type": "object",
+      "required": ["name", "association", "index"],
+      "properties": {
+        "name": { "type": "string" },
+        "association": { "type": "integer" },
+        "index": { "type": "integer" }
+      }
+    },
+    "material_parameter": {
+      "type": "object",
+      "required": ["type", "parameter_info", "name", "expression_guid"],
+      "properties": {
+        "type": { "type": "string" },
+        "parameter_info": { "$ref": "#/$defs/parameter_info" },
+        "name": { "type": "string" },
+        "expression_guid": { "type": "string" }
+      }
+    },
+    "material": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "material_path",
+        "material_class",
+        "material_domain",
+        "blend_mode",
+        "shading_model_field",
+        "two_sided",
+        "expression_count",
+        "comment_count",
+        "expressions"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.material.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "material_path": { "type": "string" },
+        "material_class": { "type": "string" },
+        "material_domain": { "type": "string" },
+        "blend_mode": { "type": "string" },
+        "shading_model_field": { "type": "string" },
+        "two_sided": { "type": "boolean" },
+        "expression_count": { "type": "integer", "minimum": 0 },
+        "comment_count": { "type": "integer", "minimum": 0 },
+        "expressions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/material_expression" }
+        }
+      }
+    },
+    "material_function": {
+      "type": "object",
+      "required": ["schema_version", "source_layer", "function_path", "function_class", "usage", "expression_count", "expressions"],
+      "properties": {
+        "schema_version": { "const": "uepi.material_function.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "function_path": { "type": "string" },
+        "function_class": { "type": "string" },
+        "usage": { "type": "string" },
+        "expression_count": { "type": "integer", "minimum": 0 },
+        "expressions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/material_expression" }
+        }
+      }
+    },
+    "material_instance": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "instance_path",
+        "instance_class",
+        "parent_path",
+        "blend_mode",
+        "shading_model_field",
+        "two_sided",
+        "parameter_override_count",
+        "parameters"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.material_instance.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "instance_path": { "type": "string" },
+        "instance_class": { "type": "string" },
+        "parent_path": { "type": "string" },
+        "blend_mode": { "type": "string" },
+        "shading_model_field": { "type": "string" },
+        "two_sided": { "type": "boolean" },
+        "parameter_override_count": { "type": "integer", "minimum": 0 },
+        "parameters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/material_parameter" }
+        }
+      }
+    }
+  }
+}

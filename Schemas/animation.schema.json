@@ -1,0 +1,1178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/animation.schema.json",
+  "title": "UEPI Animation Snapshots",
+  "oneOf": [
+    { "$ref": "#/$defs/skeleton" },
+    { "$ref": "#/$defs/skeletal_mesh" },
+    { "$ref": "#/$defs/animation_sequence" },
+    { "$ref": "#/$defs/anim_montage" },
+    { "$ref": "#/$defs/anim_composite" },
+    { "$ref": "#/$defs/blend_space" },
+    { "$ref": "#/$defs/pose_asset" },
+    { "$ref": "#/$defs/physics_asset" },
+    { "$ref": "#/$defs/anim_blueprint" },
+    { "$ref": "#/$defs/control_rig_blueprint" },
+    { "$ref": "#/$defs/ik_rig" },
+    { "$ref": "#/$defs/ik_retargeter" }
+  ],
+  "$defs": {
+    "vector": {
+      "type": "object",
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" }
+      }
+    },
+    "quat": {
+      "type": "object",
+      "required": ["x", "y", "z", "w"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" },
+        "w": { "type": "number" }
+      }
+    },
+    "rotator": {
+      "type": "object",
+      "required": ["pitch", "yaw", "roll"],
+      "properties": {
+        "pitch": { "type": "number" },
+        "yaw": { "type": "number" },
+        "roll": { "type": "number" }
+      }
+    },
+    "transform": {
+      "type": "object",
+      "required": ["translation", "rotation", "scale3d"],
+      "properties": {
+        "translation": { "$ref": "#/$defs/vector" },
+        "rotation": { "$ref": "#/$defs/quat" },
+        "scale3d": { "$ref": "#/$defs/vector" }
+      }
+    },
+    "bounds": {
+      "type": "object",
+      "required": ["origin", "box_extent", "sphere_radius"],
+      "properties": {
+        "origin": { "$ref": "#/$defs/vector" },
+        "box_extent": { "$ref": "#/$defs/vector" },
+        "sphere_radius": { "type": "number" }
+      }
+    },
+    "bone": {
+      "type": "object",
+      "required": ["id", "index", "name", "parent_index", "parent_name"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "parent_index": { "type": "integer", "minimum": -1 },
+        "parent_name": { "type": "string" },
+        "ref_local": { "$ref": "#/$defs/transform" },
+        "ref_component": { "$ref": "#/$defs/transform" }
+      }
+    },
+    "virtual_bone": {
+      "type": "object",
+      "required": ["id", "index", "name", "source_bone", "target_bone"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "source_bone": { "type": "string" },
+        "target_bone": { "type": "string" }
+      }
+    },
+    "skeletal_socket": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "name",
+        "bone_name",
+        "source",
+        "relative_location",
+        "relative_rotation",
+        "relative_scale",
+        "force_always_animated"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "bone_name": { "type": "string" },
+        "source": { "type": "string" },
+        "relative_location": { "$ref": "#/$defs/vector" },
+        "relative_rotation": { "$ref": "#/$defs/rotator" },
+        "relative_scale": { "$ref": "#/$defs/vector" },
+        "force_always_animated": { "type": "boolean" },
+        "local_transform": { "$ref": "#/$defs/transform" }
+      }
+    },
+    "skeleton": {
+      "type": "object",
+      "required": ["schema_version", "source_layer", "skeleton_path", "bone_count", "raw_bone_count", "bones"],
+      "properties": {
+        "schema_version": { "const": "uepi.skeleton.v1" },
+        "source_layer": { "const": "animation_data_model" },
+        "skeleton_path": { "type": "string" },
+        "bone_count": { "type": "integer", "minimum": 0 },
+        "raw_bone_count": { "type": "integer", "minimum": 0 },
+        "virtual_bone_count": { "type": "integer", "minimum": 0 },
+        "socket_count": { "type": "integer", "minimum": 0 },
+        "bones": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/bone" }
+        },
+        "virtual_bones": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/virtual_bone" }
+        },
+        "sockets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/skeletal_socket" }
+        }
+      }
+    },
+    "skeletal_mesh": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "mesh_path",
+        "skeleton_path",
+        "bone_count",
+        "lod_count",
+        "material_count",
+        "morph_target_count",
+        "imported_bounds"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.skeletal_mesh.v1" },
+        "source_layer": { "const": "animation_data_model" },
+        "mesh_path": { "type": "string" },
+        "skeleton_path": { "type": "string" },
+        "bone_count": { "type": "integer", "minimum": 0 },
+        "lod_count": { "type": "integer", "minimum": 0 },
+        "material_count": { "type": "integer", "minimum": 0 },
+        "morph_target_count": { "type": "integer", "minimum": 0 },
+        "socket_count": { "type": "integer", "minimum": 0 },
+        "mesh_socket_count": { "type": "integer", "minimum": 0 },
+        "active_socket_count": { "type": "integer", "minimum": 0 },
+        "imported_bounds": { "$ref": "#/$defs/bounds" },
+        "mesh_sockets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/skeletal_socket" }
+        },
+        "active_sockets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/skeletal_socket" }
+        }
+      }
+    },
+    "animation_track": {
+      "type": "object",
+      "required": ["id", "index", "bone_name"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "bone_name": { "type": "string" },
+        "raw_local_key_count": { "type": "integer", "minimum": 0 },
+        "raw_local_first": { "$ref": "#/$defs/transform" },
+        "raw_local_last": { "$ref": "#/$defs/transform" },
+        "raw_local_samples": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/animation_frame_transform_sample" }
+        }
+      }
+    },
+    "animation_transform_entry": {
+      "type": "object",
+      "required": ["index", "bone_name", "transform"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "bone_name": { "type": "string" },
+        "transform": { "$ref": "#/$defs/transform" }
+      }
+    },
+    "animation_frame_transform_sample": {
+      "type": "object",
+      "required": ["frame_number", "time_seconds", "transform"],
+      "properties": {
+        "frame_number": { "type": "integer", "minimum": 0 },
+        "time_seconds": { "type": "number", "minimum": 0 },
+        "transform": { "$ref": "#/$defs/transform" }
+      }
+    },
+    "animation_pose_sample": {
+      "type": "object",
+      "required": [
+        "frame_number",
+        "time_seconds",
+        "local_track_count",
+        "component_bone_count",
+        "local_tracks",
+        "component_bones"
+      ],
+      "properties": {
+        "frame_number": { "type": "integer", "minimum": 0 },
+        "time_seconds": { "type": "number", "minimum": 0 },
+        "local_track_count": { "type": "integer", "minimum": 0 },
+        "component_bone_count": { "type": "integer", "minimum": 0 },
+        "local_tracks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/animation_transform_entry" }
+        },
+        "component_bones": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/animation_transform_entry" }
+        }
+      }
+    },
+    "anim_notify": {
+      "type": "object",
+      "required": ["id", "index", "name", "time", "trigger_time", "duration", "track_index", "notify_class", "notify_state_class"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "time": { "type": "number" },
+        "trigger_time": { "type": "number" },
+        "duration": { "type": "number" },
+        "track_index": { "type": "integer", "minimum": 0 },
+        "notify_class": { "type": "string" },
+        "notify_state_class": { "type": "string" }
+      }
+    },
+    "animation_segment": {
+      "type": "object",
+      "required": [
+        "index",
+        "animation_path",
+        "animation_class",
+        "track_start_time",
+        "track_end_time",
+        "length",
+        "source_start_time",
+        "source_end_time",
+        "play_rate",
+        "valid_play_rate",
+        "looping_count",
+        "valid"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "animation_path": { "type": "string" },
+        "animation_class": { "type": "string" },
+        "track_start_time": { "type": "number" },
+        "track_end_time": { "type": "number" },
+        "length": { "type": "number" },
+        "source_start_time": { "type": "number" },
+        "source_end_time": { "type": "number" },
+        "play_rate": { "type": "number" },
+        "valid_play_rate": { "type": "number" },
+        "looping_count": { "type": "integer", "minimum": 0 },
+        "valid": { "type": "boolean" }
+      }
+    },
+    "montage_section": {
+      "type": "object",
+      "required": ["index", "name", "start_time", "next_section", "slot_index", "segment_index", "link_method", "metadata_count"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "start_time": { "type": "number" },
+        "next_section": { "type": "string" },
+        "slot_index": { "type": "integer", "minimum": 0 },
+        "segment_index": { "type": "integer", "minimum": -1 },
+        "link_method": { "type": "string" },
+        "metadata_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "montage_slot": {
+      "type": "object",
+      "required": ["index", "slot_name", "segment_count", "segments"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "slot_name": { "type": "string" },
+        "segment_count": { "type": "integer", "minimum": 0 },
+        "segments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/animation_segment" }
+        }
+      }
+    },
+    "animation_sequence": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "sequence_path",
+        "skeleton_path",
+        "play_length_seconds",
+        "sample_key_count",
+        "sampling_frame_rate",
+        "rate_scale",
+        "loop",
+        "bone_track_count",
+        "float_curve_count",
+        "transform_curve_count",
+        "attribute_count",
+        "notify_count",
+        "tracks",
+        "notifies"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.anim_sequence.v1" },
+        "source_layer": { "const": "animation_data_model" },
+        "sequence_path": { "type": "string" },
+        "skeleton_path": { "type": "string" },
+        "play_length_seconds": { "type": "number", "minimum": 0 },
+        "sample_key_count": { "type": "integer", "minimum": 0 },
+        "sampling_frame_rate": { "type": "string" },
+        "frame_count": { "type": "integer", "minimum": 0 },
+        "data_model_key_count": { "type": "integer", "minimum": 0 },
+        "rate_scale": { "type": "number" },
+        "loop": { "type": "boolean" },
+        "additive_anim_type": { "type": "string" },
+        "additive_base_pose_type": { "type": "string" },
+        "additive_ref_frame_index": { "type": "integer", "minimum": 0 },
+        "additive_ref_pose_sequence_path": { "type": "string" },
+        "valid_additive": { "type": "boolean" },
+        "root_motion_enabled": { "type": "boolean" },
+        "root_motion_root_lock": { "type": "string" },
+        "force_root_lock": { "type": "boolean" },
+        "use_normalized_root_motion_scale": { "type": "boolean" },
+        "root_motion_settings_copied_from_montage": { "type": "boolean" },
+        "root_motion_full_range": { "$ref": "#/$defs/transform" },
+        "bone_track_count": { "type": "integer", "minimum": 0 },
+        "float_curve_count": { "type": "integer", "minimum": 0 },
+        "transform_curve_count": { "type": "integer", "minimum": 0 },
+        "attribute_count": { "type": "integer", "minimum": 0 },
+        "notify_count": { "type": "integer", "minimum": 0 },
+        "sampled_pose_count": { "type": "integer", "minimum": 0 },
+        "tracks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/animation_track" }
+        },
+        "notifies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/anim_notify" }
+        },
+        "pose_samples": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/animation_pose_sample" }
+        }
+      }
+    },
+    "anim_montage": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "montage_path",
+        "skeleton_path",
+        "play_length_seconds",
+        "sampling_frame_rate",
+        "rate_scale",
+        "blend_in_time",
+        "blend_out_time",
+        "blend_out_trigger_time",
+        "sync_group",
+        "sync_slot_index",
+        "auto_blend_out",
+        "root_motion_root_lock",
+        "section_count",
+        "slot_count",
+        "segment_count",
+        "sections",
+        "slots"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.anim_montage.v1" },
+        "source_layer": { "const": "animation_data_model" },
+        "montage_path": { "type": "string" },
+        "skeleton_path": { "type": "string" },
+        "play_length_seconds": { "type": "number", "minimum": 0 },
+        "sampling_frame_rate": { "type": "string" },
+        "rate_scale": { "type": "number" },
+        "blend_in_time": { "type": "number", "minimum": 0 },
+        "blend_out_time": { "type": "number", "minimum": 0 },
+        "blend_out_trigger_time": { "type": "number" },
+        "sync_group": { "type": "string" },
+        "sync_slot_index": { "type": "integer", "minimum": 0 },
+        "auto_blend_out": { "type": "boolean" },
+        "root_motion_root_lock": { "type": "string" },
+        "section_count": { "type": "integer", "minimum": 0 },
+        "slot_count": { "type": "integer", "minimum": 0 },
+        "segment_count": { "type": "integer", "minimum": 0 },
+        "sections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/montage_section" }
+        },
+        "slots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/montage_slot" }
+        }
+      }
+    },
+    "anim_composite": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "composite_path",
+        "skeleton_path",
+        "play_length_seconds",
+        "sampling_frame_rate",
+        "rate_scale",
+        "additive_anim_type",
+        "valid_additive",
+        "root_motion",
+        "segment_count",
+        "segments"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.anim_composite.v1" },
+        "source_layer": { "const": "animation_data_model" },
+        "composite_path": { "type": "string" },
+        "skeleton_path": { "type": "string" },
+        "play_length_seconds": { "type": "number", "minimum": 0 },
+        "sampling_frame_rate": { "type": "string" },
+        "rate_scale": { "type": "number" },
+        "additive_anim_type": { "type": "string" },
+        "valid_additive": { "type": "boolean" },
+        "root_motion": { "type": "boolean" },
+        "segment_count": { "type": "integer", "minimum": 0 },
+        "segments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/animation_segment" }
+        }
+      }
+    },
+    "blend_space_axis": {
+      "type": "object",
+      "required": ["index", "name", "min", "max", "grid_num", "snap_to_grid", "wrap_input"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "grid_num": { "type": "integer", "minimum": 1 },
+        "snap_to_grid": { "type": "boolean" },
+        "wrap_input": { "type": "boolean" }
+      }
+    },
+    "blend_space_sample": {
+      "type": "object",
+      "required": ["id", "index", "animation_path", "sample_value", "rate_scale", "sample_valid"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "animation_path": { "type": "string" },
+        "sample_value": { "$ref": "#/$defs/vector" },
+        "rate_scale": { "type": "number" },
+        "sample_valid": { "type": "boolean" }
+      }
+    },
+    "blend_space": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "blend_space_path",
+        "blend_space_class",
+        "skeleton_path",
+        "dimension_count",
+        "axis_count",
+        "sample_count",
+        "loop",
+        "interpolate_using_grid",
+        "target_weight_interpolation_speed",
+        "target_weight_interpolation_ease_in_out",
+        "allow_mesh_space_blending",
+        "notify_trigger_mode",
+        "preferred_triangulation_direction",
+        "preview_base_pose_path",
+        "anim_length",
+        "axes",
+        "samples"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.blend_space.v1" },
+        "source_layer": { "const": "animation_data_model" },
+        "blend_space_path": { "type": "string" },
+        "blend_space_class": { "type": "string" },
+        "skeleton_path": { "type": "string" },
+        "dimension_count": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "axis_count": { "type": "integer", "minimum": 0 },
+        "sample_count": { "type": "integer", "minimum": 0 },
+        "loop": { "type": "boolean" },
+        "interpolate_using_grid": { "type": "boolean" },
+        "target_weight_interpolation_speed": { "type": "number", "minimum": 0 },
+        "target_weight_interpolation_ease_in_out": { "type": "boolean" },
+        "allow_mesh_space_blending": { "type": "boolean" },
+        "notify_trigger_mode": { "type": "string" },
+        "preferred_triangulation_direction": { "type": "string" },
+        "preview_base_pose_path": { "type": "string" },
+        "anim_length": { "type": "number", "minimum": 0 },
+        "axes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/blend_space_axis" }
+        },
+        "samples": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/blend_space_sample" }
+        }
+      }
+    },
+    "pose_curve_value": {
+      "type": "object",
+      "required": ["index", "curve_name", "value"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "curve_name": { "type": "string" },
+        "value": { "type": "number" }
+      }
+    },
+    "pose_asset_pose": {
+      "type": "object",
+      "required": ["id", "index", "name", "curve_value_count", "curve_values"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "curve_value_count": { "type": "integer", "minimum": 0 },
+        "curve_values": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/pose_curve_value" }
+        }
+      }
+    },
+    "pose_asset_curve": {
+      "type": "object",
+      "required": ["id", "index", "name"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" }
+      }
+    },
+    "pose_asset_track": {
+      "type": "object",
+      "required": ["index", "bone_name"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "bone_name": { "type": "string" }
+      }
+    },
+    "pose_asset": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "pose_asset_path",
+        "pose_asset_class",
+        "skeleton_path",
+        "additive",
+        "base_pose_index",
+        "base_pose_name",
+        "retarget_source",
+        "source_animation_path",
+        "source_animation_raw_data_guid",
+        "pose_count",
+        "curve_count",
+        "track_count",
+        "poses",
+        "curves",
+        "tracks"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.pose_asset.v1" },
+        "source_layer": { "const": "animation_data_model" },
+        "pose_asset_path": { "type": "string" },
+        "pose_asset_class": { "type": "string" },
+        "skeleton_path": { "type": "string" },
+        "additive": { "type": "boolean" },
+        "base_pose_index": { "type": "integer", "minimum": -1 },
+        "base_pose_name": { "type": "string" },
+        "retarget_source": { "type": "string" },
+        "source_animation_path": { "type": "string" },
+        "source_animation_raw_data_guid": { "type": "string" },
+        "pose_count": { "type": "integer", "minimum": 0 },
+        "curve_count": { "type": "integer", "minimum": 0 },
+        "track_count": { "type": "integer", "minimum": 0 },
+        "poses": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/pose_asset_pose" }
+        },
+        "curves": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/pose_asset_curve" }
+        },
+        "tracks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/pose_asset_track" }
+        }
+      }
+    },
+    "physics_shape": {
+      "type": "object",
+      "required": ["id", "index", "type"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "type": { "type": "string" },
+        "center": { "$ref": "#/$defs/vector" },
+        "rotation": { "$ref": "#/$defs/rotator" },
+        "radius": { "type": "number" },
+        "radius0": { "type": "number" },
+        "radius1": { "type": "number" },
+        "length": { "type": "number" },
+        "extent": { "$ref": "#/$defs/vector" },
+        "vertex_count": { "type": "integer", "minimum": 0 },
+        "index_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "physics_body": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "bone_name",
+        "physics_type",
+        "collision_trace_flag",
+        "collision_response",
+        "consider_for_bounds",
+        "skip_scale_from_animation",
+        "physical_animation_profile_count",
+        "shape_count",
+        "shapes"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "bone_name": { "type": "string" },
+        "physics_type": { "type": "string" },
+        "collision_trace_flag": { "type": "string" },
+        "collision_response": { "type": "string" },
+        "consider_for_bounds": { "type": "boolean" },
+        "skip_scale_from_animation": { "type": "boolean" },
+        "physical_animation_profile_count": { "type": "integer", "minimum": 0 },
+        "shape_count": { "type": "integer", "minimum": 0 },
+        "shapes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/physics_shape" }
+        }
+      }
+    },
+    "physics_constraint": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "joint_name",
+        "child_bone_name",
+        "parent_bone_name",
+        "disable_collision",
+        "parent_dominates",
+        "linear_x_motion",
+        "linear_y_motion",
+        "linear_z_motion",
+        "linear_limit",
+        "swing1_motion",
+        "swing2_motion",
+        "twist_motion",
+        "swing1_limit_degrees",
+        "swing2_limit_degrees",
+        "twist_limit_degrees",
+        "constraint_profile_count"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "joint_name": { "type": "string" },
+        "child_bone_name": { "type": "string" },
+        "parent_bone_name": { "type": "string" },
+        "disable_collision": { "type": "boolean" },
+        "parent_dominates": { "type": "boolean" },
+        "linear_x_motion": { "type": "string" },
+        "linear_y_motion": { "type": "string" },
+        "linear_z_motion": { "type": "string" },
+        "linear_limit": { "type": "number" },
+        "swing1_motion": { "type": "string" },
+        "swing2_motion": { "type": "string" },
+        "twist_motion": { "type": "string" },
+        "swing1_limit_degrees": { "type": "number" },
+        "swing2_limit_degrees": { "type": "number" },
+        "twist_limit_degrees": { "type": "number" },
+        "constraint_profile_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "physics_solver_settings": {
+      "type": "object",
+      "required": [
+        "solver_type",
+        "position_iterations",
+        "velocity_iterations",
+        "projection_iterations",
+        "cull_distance",
+        "max_depenetration_velocity",
+        "fixed_time_step",
+        "use_linear_joint_solver"
+      ],
+      "properties": {
+        "solver_type": { "type": "string" },
+        "position_iterations": { "type": "integer", "minimum": 0 },
+        "velocity_iterations": { "type": "integer", "minimum": 0 },
+        "projection_iterations": { "type": "integer", "minimum": 0 },
+        "cull_distance": { "type": "number" },
+        "max_depenetration_velocity": { "type": "number" },
+        "fixed_time_step": { "type": "number" },
+        "use_linear_joint_solver": { "type": "boolean" }
+      }
+    },
+    "physics_asset": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "physics_asset_path",
+        "physics_asset_class",
+        "preview_skeletal_mesh_path",
+        "body_count",
+        "constraint_count",
+        "shape_count",
+        "bounds_body_count",
+        "physical_animation_profile_count",
+        "constraint_profile_count",
+        "not_for_dedicated_server",
+        "solver_settings",
+        "bodies",
+        "constraints"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.physics_asset.v1" },
+        "source_layer": { "const": "animation_data_model" },
+        "physics_asset_path": { "type": "string" },
+        "physics_asset_class": { "type": "string" },
+        "preview_skeletal_mesh_path": { "type": "string" },
+        "body_count": { "type": "integer", "minimum": 0 },
+        "constraint_count": { "type": "integer", "minimum": 0 },
+        "shape_count": { "type": "integer", "minimum": 0 },
+        "bounds_body_count": { "type": "integer", "minimum": 0 },
+        "physical_animation_profile_count": { "type": "integer", "minimum": 0 },
+        "constraint_profile_count": { "type": "integer", "minimum": 0 },
+        "not_for_dedicated_server": { "type": "boolean" },
+        "solver_settings": { "$ref": "#/$defs/physics_solver_settings" },
+        "bodies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/physics_body" }
+        },
+        "constraints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/physics_constraint" }
+        }
+      }
+    },
+    "ik_rig_chain": {
+      "type": "object",
+      "required": ["id", "index", "name", "start_bone", "end_bone", "ik_goal_name"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "start_bone": { "type": "string" },
+        "end_bone": { "type": "string" },
+        "ik_goal_name": { "type": "string" }
+      }
+    },
+    "ik_rig_goal": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "name",
+        "bone_name",
+        "position_alpha",
+        "rotation_alpha",
+        "current_position",
+        "initial_position"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "bone_name": { "type": "string" },
+        "position_alpha": { "type": "number" },
+        "rotation_alpha": { "type": "number" },
+        "current_position": { "$ref": "#/$defs/vector" },
+        "initial_position": { "$ref": "#/$defs/vector" }
+      }
+    },
+    "ik_rig_solver": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "class",
+        "enabled",
+        "root_bone",
+        "end_bone",
+        "requires_root_bone",
+        "requires_end_bone",
+        "uses_bone_settings",
+        "bone_setting_count"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "class": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "root_bone": { "type": "string" },
+        "end_bone": { "type": "string" },
+        "requires_root_bone": { "type": "boolean" },
+        "requires_end_bone": { "type": "boolean" },
+        "uses_bone_settings": { "type": "boolean" },
+        "bone_setting_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ik_rig": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "ik_rig_path",
+        "preview_skeletal_mesh_path",
+        "retarget_root",
+        "bone_count",
+        "excluded_bone_count",
+        "goal_count",
+        "solver_count",
+        "chain_count",
+        "excluded_bones",
+        "goals",
+        "solvers",
+        "chains"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.ik_rig.v1" },
+        "source_layer": { "const": "animation_data_model" },
+        "ik_rig_path": { "type": "string" },
+        "preview_skeletal_mesh_path": { "type": "string" },
+        "retarget_root": { "type": "string" },
+        "bone_count": { "type": "integer", "minimum": 0 },
+        "excluded_bone_count": { "type": "integer", "minimum": 0 },
+        "goal_count": { "type": "integer", "minimum": 0 },
+        "solver_count": { "type": "integer", "minimum": 0 },
+        "chain_count": { "type": "integer", "minimum": 0 },
+        "excluded_bones": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "goals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ik_rig_goal" }
+        },
+        "solvers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ik_rig_solver" }
+        },
+        "chains": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ik_rig_chain" }
+        }
+      }
+    },
+    "ik_retarget_pose_offset": {
+      "type": "object",
+      "required": ["bone_name", "rotation_offset"],
+      "properties": {
+        "bone_name": { "type": "string" },
+        "rotation_offset": { "$ref": "#/$defs/quat" }
+      }
+    },
+    "ik_retarget_pose": {
+      "type": "object",
+      "required": ["name", "root_translation_offset", "bone_rotation_offset_count", "bone_rotation_offsets"],
+      "properties": {
+        "name": { "type": "string" },
+        "root_translation_offset": { "$ref": "#/$defs/vector" },
+        "bone_rotation_offset_count": { "type": "integer", "minimum": 0 },
+        "bone_rotation_offsets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ik_retarget_pose_offset" }
+        }
+      }
+    },
+    "ik_retarget_root_settings": {
+      "type": "object",
+      "required": [
+        "rotation_alpha",
+        "translation_alpha",
+        "blend_to_source",
+        "blend_to_source_weights",
+        "scale_horizontal",
+        "scale_vertical",
+        "translation_offset",
+        "affect_ik_horizontal",
+        "affect_ik_vertical"
+      ],
+      "properties": {
+        "rotation_alpha": { "type": "number" },
+        "translation_alpha": { "type": "number" },
+        "blend_to_source": { "type": "number" },
+        "blend_to_source_weights": { "$ref": "#/$defs/vector" },
+        "scale_horizontal": { "type": "number" },
+        "scale_vertical": { "type": "number" },
+        "translation_offset": { "$ref": "#/$defs/vector" },
+        "affect_ik_horizontal": { "type": "number" },
+        "affect_ik_vertical": { "type": "number" }
+      }
+    },
+    "ik_retarget_global_settings": {
+      "type": "object",
+      "required": [
+        "enable_root",
+        "enable_fk",
+        "enable_ik",
+        "enable_warping",
+        "direction_source",
+        "forward_direction",
+        "direction_chain",
+        "warp_forwards",
+        "sideways_offset",
+        "warp_splay"
+      ],
+      "properties": {
+        "enable_root": { "type": "boolean" },
+        "enable_fk": { "type": "boolean" },
+        "enable_ik": { "type": "boolean" },
+        "enable_warping": { "type": "boolean" },
+        "direction_source": { "type": "string" },
+        "forward_direction": { "type": "string" },
+        "direction_chain": { "type": "string" },
+        "warp_forwards": { "type": "number" },
+        "sideways_offset": { "type": "number" },
+        "warp_splay": { "type": "number" }
+      }
+    },
+    "ik_retarget_chain_map": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "source_chain",
+        "target_chain",
+        "fk_enabled",
+        "fk_rotation_mode",
+        "fk_rotation_alpha",
+        "fk_translation_mode",
+        "fk_translation_alpha",
+        "ik_enabled",
+        "ik_blend_to_source",
+        "ik_blend_to_source_weights",
+        "ik_extension",
+        "ik_affected_by_warping",
+        "speed_planting_enabled",
+        "speed_curve_name",
+        "speed_threshold"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "source_chain": { "type": "string" },
+        "target_chain": { "type": "string" },
+        "fk_enabled": { "type": "boolean" },
+        "fk_rotation_mode": { "type": "string" },
+        "fk_rotation_alpha": { "type": "number" },
+        "fk_translation_mode": { "type": "string" },
+        "fk_translation_alpha": { "type": "number" },
+        "ik_enabled": { "type": "boolean" },
+        "ik_blend_to_source": { "type": "number" },
+        "ik_blend_to_source_weights": { "$ref": "#/$defs/vector" },
+        "ik_extension": { "type": "number" },
+        "ik_affected_by_warping": { "type": "boolean" },
+        "speed_planting_enabled": { "type": "boolean" },
+        "speed_curve_name": { "type": "string" },
+        "speed_threshold": { "type": "number" }
+      }
+    },
+    "ik_retargeter": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "ik_retargeter_path",
+        "source_ik_rig_path",
+        "target_ik_rig_path",
+        "chain_map_count",
+        "source_current_pose_name",
+        "target_current_pose_name",
+        "source_current_pose",
+        "target_current_pose",
+        "root_settings",
+        "global_settings",
+        "chain_maps"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.ik_retargeter.v1" },
+        "source_layer": { "const": "animation_data_model" },
+        "ik_retargeter_path": { "type": "string" },
+        "source_ik_rig_path": { "type": "string" },
+        "target_ik_rig_path": { "type": "string" },
+        "chain_map_count": { "type": "integer", "minimum": 0 },
+        "source_current_pose_name": { "type": "string" },
+        "target_current_pose_name": { "type": "string" },
+        "source_current_pose": { "$ref": "#/$defs/ik_retarget_pose" },
+        "target_current_pose": { "$ref": "#/$defs/ik_retarget_pose" },
+        "root_settings": { "$ref": "#/$defs/ik_retarget_root_settings" },
+        "global_settings": { "$ref": "#/$defs/ik_retarget_global_settings" },
+        "chain_maps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ik_retarget_chain_map" }
+        }
+      }
+    },
+    "anim_blueprint_static_item": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" }
+      },
+      "additionalProperties": {
+        "type": ["string", "number", "boolean", "null"]
+      }
+    },
+    "anim_blueprint": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "anim_blueprint_path",
+        "state_machine_count",
+        "state_count",
+        "transition_count",
+        "asset_player_count",
+        "cached_pose_count",
+        "slot_count",
+        "control_rig_node_count",
+        "state_machines",
+        "states",
+        "transitions",
+        "asset_players",
+        "cached_poses",
+        "slots",
+        "control_rig_nodes"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.anim_blueprint.v1" },
+        "source_layer": { "const": "editor_source_graph" },
+        "anim_blueprint_path": { "type": "string" },
+        "target_skeleton_path": { "type": "string" },
+        "is_template": { "type": "boolean" },
+        "use_multi_threaded_animation_update": { "type": "boolean" },
+        "warn_about_blueprint_usage": { "type": "boolean" },
+        "sync_group_count": { "type": "integer", "minimum": 0 },
+        "state_machine_count": { "type": "integer", "minimum": 0 },
+        "state_count": { "type": "integer", "minimum": 0 },
+        "transition_count": { "type": "integer", "minimum": 0 },
+        "asset_player_count": { "type": "integer", "minimum": 0 },
+        "cached_pose_count": { "type": "integer", "minimum": 0 },
+        "slot_count": { "type": "integer", "minimum": 0 },
+        "control_rig_node_count": { "type": "integer", "minimum": 0 },
+        "state_machines": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/anim_blueprint_static_item" }
+        },
+        "states": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/anim_blueprint_static_item" }
+        },
+        "transitions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/anim_blueprint_static_item" }
+        },
+        "asset_players": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/anim_blueprint_static_item" }
+        },
+        "cached_poses": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/anim_blueprint_static_item" }
+        },
+        "slots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/anim_blueprint_static_item" }
+        },
+        "control_rig_nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/anim_blueprint_static_item" }
+        }
+      }
+    },
+    "control_rig_static_item": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" }
+      },
+      "additionalProperties": {
+        "type": ["string", "number", "boolean", "null"]
+      }
+    },
+    "control_rig_blueprint": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "control_rig_blueprint_path",
+        "rigvm_graph_count",
+        "rigvm_node_count",
+        "rigvm_pin_count",
+        "rigvm_link_count",
+        "hierarchy_element_count",
+        "rigvm_graphs",
+        "rigvm_nodes",
+        "rigvm_pins",
+        "rigvm_links",
+        "hierarchy_elements"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.control_rig_blueprint.v1" },
+        "source_layer": { "const": "editor_source_graph" },
+        "control_rig_blueprint_path": { "type": "string" },
+        "preview_skeletal_mesh_path": { "type": "string" },
+        "rigvm_graph_count": { "type": "integer", "minimum": 0 },
+        "rigvm_node_count": { "type": "integer", "minimum": 0 },
+        "rigvm_pin_count": { "type": "integer", "minimum": 0 },
+        "rigvm_link_count": { "type": "integer", "minimum": 0 },
+        "hierarchy_element_count": { "type": "integer", "minimum": 0 },
+        "rigvm_graphs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/control_rig_static_item" }
+        },
+        "rigvm_nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/control_rig_static_item" }
+        },
+        "rigvm_pins": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/control_rig_static_item" }
+        },
+        "rigvm_links": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/control_rig_static_item" }
+        },
+        "hierarchy_elements": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/control_rig_static_item" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/input.schema.json",
+  "title": "UEPI Enhanced Input Snapshots",
+  "oneOf": [
+    { "$ref": "#/$defs/input_action" },
+    { "$ref": "#/$defs/input_mapping_context" }
+  ],
+  "$defs": {
+    "class_reference": {
+      "type": "object",
+      "required": ["class", "path"],
+      "properties": {
+        "class": { "type": "string" },
+        "path": { "type": "string" }
+      }
+    },
+    "input_action": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "action_path",
+        "description",
+        "value_type",
+        "trigger_when_paused",
+        "consume_input",
+        "reserve_all_mappings",
+        "trigger_count",
+        "modifier_count",
+        "triggers",
+        "modifiers"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.input_action.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "action_path": { "type": "string" },
+        "description": { "type": "string" },
+        "value_type": { "enum": ["boolean", "axis1d", "axis2d", "axis3d", "unknown"] },
+        "trigger_when_paused": { "type": "boolean" },
+        "consume_input": { "type": "boolean" },
+        "reserve_all_mappings": { "type": "boolean" },
+        "trigger_count": { "type": "integer", "minimum": 0 },
+        "modifier_count": { "type": "integer", "minimum": 0 },
+        "triggers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/class_reference" }
+        },
+        "modifiers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/class_reference" }
+        }
+      }
+    },
+    "input_mapping": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "key",
+        "action_path",
+        "action_name",
+        "player_mappable",
+        "trigger_count",
+        "modifier_count"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "key": { "type": "string" },
+        "action_path": { "type": "string" },
+        "action_name": { "type": "string" },
+        "player_mappable": { "type": "boolean" },
+        "trigger_count": { "type": "integer", "minimum": 0 },
+        "modifier_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "input_mapping_context": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "context_path",
+        "description",
+        "mapping_count",
+        "mappings"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.input_mapping_context.v1" },
+        "source_layer": { "const": "uobject_reflection" },
+        "context_path": { "type": "string" },
+        "description": { "type": "string" },
+        "mapping_count": { "type": "integer", "minimum": 0 },
+        "mappings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/input_mapping" }
+        }
+      }
+    }
+  }
+}

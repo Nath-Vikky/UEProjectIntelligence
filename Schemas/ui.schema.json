@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/ui.schema.json",
+  "title": "UEPI UI Asset Snapshots",
+  "oneOf": [
+    { "$ref": "#/$defs/widget_blueprint" }
+  ],
+  "$defs": {
+    "widget": {
+      "type": "object",
+      "required": ["id", "index", "name", "path", "class", "parent_id", "parent_name", "is_root", "is_variable", "child_count", "visibility"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "class": { "type": "string" },
+        "parent_id": { "type": "string" },
+        "parent_name": { "type": "string" },
+        "is_root": { "type": "boolean" },
+        "is_variable": { "type": "boolean" },
+        "child_count": { "type": "integer", "minimum": 0 },
+        "visibility": { "type": "string" }
+      }
+    },
+    "widget_animation": {
+      "type": "object",
+      "required": ["id", "index", "name", "path", "start_time", "end_time", "binding_count"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "start_time": { "type": "number" },
+        "end_time": { "type": "number" },
+        "binding_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "widget_binding": {
+      "type": "object",
+      "required": ["id", "index", "object_name", "property_name", "function_name", "source_property", "binding_kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
+        "object_name": { "type": "string" },
+        "property_name": { "type": "string" },
+        "function_name": { "type": "string" },
+        "source_property": { "type": "string" },
+        "binding_kind": { "enum": ["function", "property", "unknown"] }
+      }
+    },
+    "named_slot": {
+      "type": "object",
+      "required": ["name", "content_widget_name"],
+      "properties": {
+        "name": { "type": "string" },
+        "content_widget_name": { "type": "string" }
+      }
+    },
+    "widget_blueprint": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "source_layer",
+        "widget_blueprint_path",
+        "generated_class_path",
+        "parent_class_path",
+        "root_widget_id",
+        "root_widget_name",
+        "widget_count",
+        "animation_count",
+        "binding_count",
+        "named_slot_count",
+        "widgets",
+        "animations",
+        "bindings",
+        "named_slots"
+      ],
+      "properties": {
+        "schema_version": { "const": "uepi.widget_blueprint.v1" },
+        "source_layer": { "const": "editor_source_graph" },
+        "widget_blueprint_path": { "type": "string" },
+        "generated_class_path": { "type": "string" },
+        "parent_class_path": { "type": "string" },
+        "root_widget_id": { "type": "string" },
+        "root_widget_name": { "type": "string" },
+        "widget_count": { "type": "integer", "minimum": 0 },
+        "animation_count": { "type": "integer", "minimum": 0 },
+        "binding_count": { "type": "integer", "minimum": 0 },
+        "named_slot_count": { "type": "integer", "minimum": 0 },
+        "widgets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/widget" }
+        },
+        "animations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/widget_animation" }
+        },
+        "bindings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/widget_binding" }
+        },
+        "named_slots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/named_slot" }
+        }
+      }
+    }
+  }
+}

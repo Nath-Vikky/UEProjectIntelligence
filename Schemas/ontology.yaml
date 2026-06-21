@@ -1,0 +1,575 @@
+relation_types:
+  contains_asset:
+    category: containment
+  contains_graph:
+    category: containment
+  contains_basic_block:
+    category: containment
+  contains_node:
+    category: containment
+  has_pin:
+    category: containment
+  contains_subobject:
+    category: containment
+  declares_variable:
+    category: containment
+  declares_function:
+    category: containment
+  declares_delegate:
+    category: containment
+  declares_component:
+    category: containment
+  contains_component_template:
+    category: blueprint
+  has_child:
+    category: containment
+  attached_to:
+    category: containment
+  owned_by:
+    category: containment
+  derives_from:
+    category: type
+  implements_interface:
+    category: type
+  typed_as:
+    category: type
+  returns_type:
+    category: type
+  accepts_type:
+    category: type
+  generated_class_of:
+    category: type
+  skeleton_class_of:
+    category: type
+  overrides_function:
+    category: type
+  overrides_event:
+    category: type
+  hard_references:
+    category: reference
+  soft_references:
+    category: reference
+  class_references:
+    category: reference
+  default_references:
+    category: reference
+  manages_asset:
+    category: reference
+  redirects_to:
+    category: reference
+  possible_string_reference:
+    category: reference
+  loads_asset:
+    category: reference
+  spawns_class:
+    category: reference
+  creates_object:
+    category: reference
+  creates_widget:
+    category: reference
+  uses_data_table:
+    category: reference
+  uses_curve:
+    category: reference
+  uses_material:
+    category: reference
+  uses_material_function:
+    category: reference
+  uses_texture:
+    category: reference
+  uses_animation:
+    category: reference
+  uses_skeleton:
+    category: reference
+  uses_skeletal_mesh:
+    category: reference
+  uses_source_ik_rig:
+    category: reference
+  uses_target_ik_rig:
+    category: reference
+  connects_to:
+    category: program_graph
+  exec_flows_to:
+    category: program_graph
+  data_flows_to:
+    category: program_graph
+  delegate_flows_to:
+    category: program_graph
+  calls_function:
+    category: program_graph
+  calls_macro:
+    category: program_graph
+  calls_composite:
+    category: program_graph
+  reads_variable:
+    category: program_graph
+  writes_variable:
+    category: program_graph
+  defines_value:
+    category: program_graph
+  uses_value:
+    category: program_graph
+  casts_to:
+    category: program_graph
+  sends_interface_message:
+    category: program_graph
+  binds_delegate:
+    category: program_graph
+  unbinds_delegate:
+    category: program_graph
+  broadcasts_delegate:
+    category: program_graph
+  starts_async_action:
+    category: program_graph
+  starts_latent_operation:
+    category: program_graph
+  continues_at:
+    category: program_graph
+  contains_bone:
+    category: animation
+  contains_virtual_bone:
+    category: animation
+  contains_socket:
+    category: animation
+  contains_skeleton:
+    category: animation
+  contains_skeletal_mesh:
+    category: animation
+  contains_animation_sequence:
+    category: animation
+  contains_montage:
+    category: animation
+  contains_composite:
+    category: animation
+  contains_pose_asset:
+    category: animation
+  contains_pose:
+    category: animation
+  contains_blend_space:
+    category: animation
+  contains_blend_sample:
+    category: animation
+  contains_ik_rig:
+    category: animation
+  contains_ik_chain:
+    category: animation
+  contains_ik_goal:
+    category: animation
+  contains_ik_solver:
+    category: animation
+  contains_ik_retargeter:
+    category: animation
+  contains_ik_retarget_chain_map:
+    category: animation
+  contains_physics_asset:
+    category: animation
+  contains_physics_body:
+    category: animation
+  contains_physics_shape:
+    category: animation
+  contains_physics_constraint:
+    category: animation
+  contains_anim_blueprint:
+    category: animation
+  contains_anim_state_machine:
+    category: animation
+  contains_anim_state:
+    category: animation
+  contains_anim_transition:
+    category: animation
+  contains_anim_asset_player:
+    category: animation
+  contains_anim_cached_pose:
+    category: animation
+  contains_anim_slot:
+    category: animation
+  contains_anim_control_rig_node:
+    category: animation
+  contains_control_rig_blueprint:
+    category: animation
+  contains_rigvm_graph:
+    category: animation
+  contains_rigvm_node:
+    category: animation
+  contains_rigvm_pin:
+    category: animation
+  contains_rigvm_link:
+    category: animation
+  contains_rig_hierarchy_element:
+    category: animation
+  rigvm_connects_to:
+    category: program_graph
+  rig_hierarchy_parent:
+    category: animation
+  uses_cached_pose:
+    category: animation
+  binds_bone:
+    category: animation
+  virtual_bone_source:
+    category: animation
+  virtual_bone_target:
+    category: animation
+  constrains_body:
+    category: animation
+  parent_bone:
+    category: animation
+  contains_track:
+    category: animation
+  animates_bone:
+    category: animation
+  contains_notify:
+    category: animation
+  contains_curve:
+    category: animation
+  contains_curve_atlas:
+    category: data
+  contains_curve_atlas_entry:
+    category: data
+  contains_curve_channel:
+    category: data
+  contains_curve_key:
+    category: data
+  contains_curve_table:
+    category: data
+  contains_curve_table_row:
+    category: data
+  contains_data_asset:
+    category: data
+  contains_string_table:
+    category: data
+  contains_string_table_entry:
+    category: data
+  contains_data_table:
+    category: data
+  contains_data_table_column:
+    category: data
+  contains_data_table_row:
+    category: data
+  composite_parent_table:
+    category: data
+  contains_user_defined_struct:
+    category: data
+  contains_struct_field:
+    category: data
+  contains_user_defined_enum:
+    category: data
+  contains_enum_entry:
+    category: data
+  contains_section:
+    category: animation
+  contains_segment:
+    category: animation
+  samples_animation:
+    category: animation
+  state_transitions_to:
+    category: animation
+  uses_pose:
+    category: animation
+  uses_blendspace:
+    category: animation
+  uses_montage:
+    category: animation
+  post_processes_with_anim_bp:
+    category: animation
+  contains_level:
+    category: world_ui
+  has_level_script_actor:
+    category: world_ui
+  contains_streaming_level:
+    category: world_ui
+  streaming_level_loads_level:
+    category: world_ui
+  contains_actor:
+    category: world_ui
+  contains_component:
+    category: world_ui
+  contains_world_data_layers:
+    category: world_ui
+  contains_data_layer:
+    category: world_ui
+  contains_world_partition:
+    category: world_ui
+  contains_actor_desc:
+    category: world_ui
+  asset_describes_actor_desc:
+    category: world_ui
+  describes_actor:
+    category: world_ui
+  describes_actor_class:
+    category: world_ui
+  actor_desc_references:
+    category: world_ui
+  contains_input_action:
+    category: world_ui
+  contains_input_mapping:
+    category: world_ui
+  contains_common_ui_input_data:
+    category: world_ui
+  contains_common_ui_hold_data:
+    category: world_ui
+  contains_common_ui_input_action_table:
+    category: world_ui
+  contains_common_ui_input_action_row:
+    category: world_ui
+  uses_common_ui_action_row:
+    category: world_ui
+  uses_common_ui_hold_data:
+    category: world_ui
+  uses_common_ui_input_action:
+    category: world_ui
+  contains_blackboard:
+    category: ai
+  contains_blackboard_key:
+    category: ai
+  blackboard_parent:
+    category: ai
+  contains_behavior_tree:
+    category: ai
+  uses_blackboard:
+    category: ai
+  contains_behavior_tree_node:
+    category: ai
+  behavior_tree_child:
+    category: ai
+  behavior_tree_decorator:
+    category: ai
+  behavior_tree_root_decorator:
+    category: ai
+  behavior_tree_service:
+    category: ai
+  contains_env_query:
+    category: ai
+  contains_env_query_option:
+    category: ai
+  uses_env_query_generator:
+    category: ai
+  contains_env_query_test:
+    category: ai
+  contains_state_tree:
+    category: ai
+  uses_state_tree_schema:
+    category: ai
+  contains_state_tree_state:
+    category: ai
+  state_tree_state_child:
+    category: ai
+  contains_state_tree_node:
+    category: ai
+  state_tree_state_enter_condition:
+    category: ai
+  state_tree_state_task:
+    category: ai
+  state_tree_transition_condition:
+    category: ai
+  state_tree_global_evaluator:
+    category: ai
+  state_tree_global_task:
+    category: ai
+  contains_state_tree_transition:
+    category: ai
+  state_tree_transition_target:
+    category: ai
+  uses_state_tree_external_data:
+    category: ai
+  contains_gameplay_ability:
+    category: gameplay
+  contains_gameplay_ability_trigger:
+    category: gameplay
+  gameplay_ability_cost_effect:
+    category: gameplay
+  gameplay_ability_cooldown_effect:
+    category: gameplay
+  contains_gameplay_effect:
+    category: gameplay
+  contains_gameplay_effect_modifier:
+    category: gameplay
+  grants_gameplay_ability:
+    category: gameplay
+  triggers_gameplay_cue:
+    category: gameplay
+  overflows_to_gameplay_effect:
+    category: gameplay
+  contains_gameplay_cue_notify:
+    category: gameplay
+  contains_static_mesh:
+    category: render
+  contains_lod:
+    category: render
+  contains_texture:
+    category: render
+  contains_material:
+    category: render
+  contains_material_instance:
+    category: render
+  contains_material_function:
+    category: render
+  contains_material_expression:
+    category: render
+  contains_material_parameter_collection:
+    category: render
+  contains_material_collection_parameter:
+    category: render
+  material_expression_depends_on:
+    category: render
+  instance_of:
+    category: world_ui
+  placed_in_level:
+    category: world_ui
+  belongs_to_data_layer:
+    category: world_ui
+  data_layer_parent:
+    category: world_ui
+  uses_data_layer_asset:
+    category: world_ui
+  streams_level:
+    category: world_ui
+  binds_widget_property:
+    category: world_ui
+  binds_widget_event:
+    category: world_ui
+  plays_widget_animation:
+    category: world_ui
+  contains_widget_blueprint:
+    category: world_ui
+  contains_widget:
+    category: world_ui
+  widget_parent:
+    category: world_ui
+  contains_widget_animation:
+    category: world_ui
+  contains_widget_binding:
+    category: world_ui
+  contains_niagara_system:
+    category: vfx
+  contains_niagara_emitter:
+    category: vfx
+  contains_niagara_script:
+    category: vfx
+  contains_niagara_parameter_definitions:
+    category: vfx
+  contains_niagara_parameter_definition:
+    category: vfx
+  contains_vector_field:
+    category: vfx
+  contains_niagara_parameter:
+    category: vfx
+  contains_niagara_renderer:
+    category: vfx
+  contains_niagara_event_handler:
+    category: vfx
+  contains_niagara_simulation_stage:
+    category: vfx
+  contains_pcg_graph:
+    category: pcg
+  contains_pcg_node:
+    category: pcg
+  contains_pcg_pin:
+    category: pcg
+  pcg_node_uses_settings:
+    category: pcg
+  pcg_node_uses_subgraph:
+    category: pcg
+  pcg_edge:
+    category: pcg
+  contains_metasound_document:
+    category: audio
+  contains_metasound_graph:
+    category: audio
+  contains_metasound_node:
+    category: audio
+  contains_metasound_vertex:
+    category: audio
+  contains_metasound_literal:
+    category: audio
+  metasound_node_uses_dependency:
+    category: audio
+  metasound_preset_parent:
+    category: audio
+  metasound_edge:
+    category: audio
+  contains_sound_cue:
+    category: audio
+  contains_sound_node:
+    category: audio
+  sound_node_child:
+    category: audio
+  sound_node_uses_sound_wave:
+    category: audio
+  contains_sound_wave:
+    category: audio
+  contains_sound_submix:
+    category: audio
+  contains_child_submix:
+    category: audio
+  contains_sound_submix_effect:
+    category: audio
+  parent_submix:
+    category: audio
+  uses_sound_submix_effect:
+    category: audio
+  contains_level_sequence:
+    category: cinematics
+  contains_movie_scene:
+    category: cinematics
+  contains_movie_scene_spawnable:
+    category: cinematics
+  contains_movie_scene_possessable:
+    category: cinematics
+  contains_movie_scene_binding:
+    category: cinematics
+  contains_movie_scene_track:
+    category: cinematics
+  movie_scene_binding_owns_track:
+    category: cinematics
+  movie_scene_track_owns_section:
+    category: cinematics
+  movie_scene_camera_cut_track:
+    category: cinematics
+  movie_scene_camera_cut_targets_binding:
+    category: cinematics
+  movie_scene_section_uses_subsequence:
+    category: cinematics
+  movie_scene_section_uses_sound:
+    category: cinematics
+  movie_scene_section_uses_animation:
+    category: cinematics
+  movie_scene_binding_tag:
+    category: cinematics
+  movie_scene_spawnable_child_possessable:
+    category: cinematics
+  movie_scene_possessable_parent:
+    category: cinematics
+  maps_input_action:
+    category: world_ui
+  declared_in:
+    category: code_config
+  declares_module:
+    category: code_config
+  implemented_in:
+    category: code_config
+  belongs_to_module:
+    category: code_config
+  module_depends_on:
+    category: code_config
+  plugin_depends_on:
+    category: code_config
+  calls_cpp_function:
+    category: code_config
+  reads_cpp_property:
+    category: code_config
+  writes_cpp_property:
+    category: code_config
+  configured_by:
+    category: code_config
+  config_references_asset:
+    category: code_config
+  superseded_by:
+    category: history
+  renamed_to:
+    category: history
+  revision_of:
+    category: history
+  changed_from:
+    category: history
+  observed_during:
+    category: history

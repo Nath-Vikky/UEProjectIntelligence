@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/envelope.schema.json",
+  "title": "UEPI Envelope",
+  "type": "object",
+  "required": ["schema_version", "project_id", "completeness", "diagnostics"],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "project_id": { "type": "string" },
+    "project_name": { "type": "string" },
+    "project_file": { "type": "string" },
+    "engine_version": { "type": "string" },
+    "started_at_utc": { "type": "string" },
+    "finished_at_utc": { "type": "string" },
+    "completeness": { "$ref": "diagnostic.schema.json#/$defs/completeness" },
+    "diagnostics": {
+      "type": "array",
+      "items": { "$ref": "diagnostic.schema.json#/$defs/diagnostic" }
+    }
+  }
+}

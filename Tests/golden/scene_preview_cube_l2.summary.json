@@ -1,0 +1,36 @@
+{
+  "diagnostic_count": 0,
+  "entity_count": 81,
+  "entity_kinds": {
+    "asset": 1,
+    "asset_reference": 2,
+    "config_file": 4,
+    "module": 3,
+    "module_reference": 26,
+    "plugin_descriptor": 2,
+    "plugin_reference": 1,
+    "project_descriptor": 1,
+    "source_file": 40,
+    "texture": 1
+  },
+  "project_name": "GasDemo",
+  "relation_count": 90,
+  "relation_types": {
+    "belongs_to_module": 38,
+    "config_references_asset": 2,
+    "configured_by": 4,
+    "contains_subobject": 2,
+    "contains_texture": 1,
+    "declared_in": 5,
+    "declares_module": 3,
+    "implemented_in": 2,
+    "module_depends_on": 32,
+    "plugin_depends_on": 1
+  },
+  "schema_version": "uepi.scan.v1",
+  "texture_cube_face_count": 6,
+  "texture_cube_snapshot_count": 1,
+  "texture_mip_count": 1,
+  "texture_snapshot_count": 1,
+  "texture_total_pixel_count": 393216
+}

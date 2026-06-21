@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/blueprint-graph.schema.json",
+  "title": "UEPI Blueprint Graph Snapshot",
+  "type": "object",
+  "required": ["schema_version", "source_layer", "blueprint_path", "graph_count", "graphs"],
+  "properties": {
+    "schema_version": { "const": "uepi.blueprint_graph.v1" },
+    "source_layer": { "const": "editor_source_graph" },
+    "blueprint_path": { "type": "string" },
+    "graph_count": { "type": "integer", "minimum": 0 },
+    "graphs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "guid", "path", "nodes"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "guid": { "type": "string" },
+          "path": { "type": "string" },
+          "cfg_basic_block_count": { "type": "integer", "minimum": 0 },
+          "cfg_basic_blocks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "index", "node_ids", "outgoing_block_ids"],
+              "properties": {
+                "id": { "type": "string" },
+                "index": { "type": "integer", "minimum": 0 },
+                "node_ids": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "outgoing_block_ids": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            }
+          },
+          "dfg_value_count": { "type": "integer", "minimum": 0 },
+          "dfg_values": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "source_node_id", "target_node_id", "source_pin_id", "target_pin_id", "pin_category"],
+              "properties": {
+                "id": { "type": "string" },
+                "source_node_id": { "type": "string" },
+                "target_node_id": { "type": "string" },
+                "source_pin_id": { "type": "string" },
+                "target_pin_id": { "type": "string" },
+                "source_pin_name": { "type": "string" },
+                "target_pin_name": { "type": "string" },
+                "pin_category": { "type": "string" }
+              }
+            }
+          },
+          "dfg_variable_access_count": { "type": "integer", "minimum": 0 },
+          "dfg_variable_accesses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["node_id", "variable_id", "variable_name", "access", "blueprint_path"],
+              "properties": {
+                "node_id": { "type": "string" },
+                "variable_id": { "type": "string" },
+                "variable_name": { "type": "string" },
+                "access": { "enum": ["read", "write"] },
+                "blueprint_path": { "type": "string" }
+              }
+            }
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "name", "guid", "class", "title", "pins"],
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "guid": { "type": "string" },
+                "class": { "type": "string" },
+                "title": { "type": "string" },
+                "node_pos_x": { "type": "number" },
+                "node_pos_y": { "type": "number" },
+                "semantic": { "type": "object" },
+                "pins": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "pin_id", "name", "direction", "type", "linked_to"],
+                    "properties": {
+                      "id": { "type": "string" },
+                      "pin_id": { "type": "string" },
+                      "name": { "type": "string" },
+                      "direction": { "enum": ["input", "output", "unknown"] },
+                      "type": { "type": "object" },
+                      "default_value": { "type": "string" },
+                      "default_object": { "type": "string" },
+                      "linked_to": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

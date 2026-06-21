@@ -1,0 +1,41 @@
+{
+  "attributed_relation_count": 0,
+  "behavior_tree_node_count": 0,
+  "behavior_tree_root_decorator_count": 0,
+  "behavior_tree_snapshot_count": 1,
+  "blackboard_key_count": 0,
+  "blackboard_snapshot_count": 0,
+  "diagnostic_count": 0,
+  "entity_count": 115,
+  "entity_kinds": {
+    "asset": 1,
+    "asset_reference": 4,
+    "behavior_tree": 1,
+    "config_file": 4,
+    "module": 3,
+    "module_reference": 42,
+    "plugin_descriptor": 2,
+    "plugin_reference": 1,
+    "project_descriptor": 1,
+    "source_file": 56
+  },
+  "env_query_option_count": 0,
+  "env_query_snapshot_count": 0,
+  "env_query_test_count": 0,
+  "project_name": "GasDemo",
+  "relation_count": 124,
+  "relation_types": {
+    "belongs_to_module": 54,
+    "config_references_asset": 2,
+    "configured_by": 4,
+    "contains_behavior_tree": 1,
+    "contains_subobject": 2,
+    "declared_in": 5,
+    "declares_module": 3,
+    "implemented_in": 2,
+    "module_depends_on": 48,
+    "plugin_depends_on": 1,
+    "possible_string_reference": 2
+  },
+  "schema_version": "uepi.scan.v1"
+}
