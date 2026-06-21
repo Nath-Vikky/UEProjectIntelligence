@@ -19,13 +19,21 @@ def send_message(process: subprocess.Popen[bytes], message: dict[str, Any], fram
     process.stdin.flush()
 
 
-def read_message(process: subprocess.Popen[bytes]) -> dict[str, Any]:
+def read_message(process: subprocess.Popen[bytes], expected_framing: str | None = None) -> dict[str, Any]:
     assert process.stdout is not None
     line = process.stdout.readline()
     while line in (b"\r\n", b"\n"):
         line = process.stdout.readline()
     if not line:
         raise RuntimeError("MCP server closed stdout.")
+
+    stripped = line.strip()
+    if stripped.startswith((b"{", b"[")):
+        if expected_framing and expected_framing != "json-line":
+            raise RuntimeError("MCP response used JSON-line framing unexpectedly.")
+        return json.loads(stripped.decode("utf-8"))
+    if expected_framing and expected_framing != "content-length":
+        raise RuntimeError("MCP response used Content-Length framing unexpectedly.")
 
     headers: dict[str, str] = {}
     while line not in (b"\r\n", b"\n", b""):
@@ -61,7 +69,7 @@ def request(
         },
         framing,
     )
-    response = read_message(process)
+    response = read_message(process, expected_framing=framing)
     if "error" in response:
         raise RuntimeError(json.dumps(response["error"], indent=2))
     return response["result"]

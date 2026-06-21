@@ -1722,7 +1722,7 @@ def tool_error(exc: Exception) -> dict[str, Any]:
     }
 
 
-def read_message(stdin: Any) -> dict[str, Any] | None:
+def read_message(stdin: Any) -> tuple[dict[str, Any], str] | None:
     line = stdin.readline()
     while line in (b"\r\n", b"\n"):
         line = stdin.readline()
@@ -1731,7 +1731,7 @@ def read_message(stdin: Any) -> dict[str, Any] | None:
 
     stripped = line.strip()
     if stripped.startswith((b"{", b"[")):
-        return json.loads(stripped.decode("utf-8"))
+        return json.loads(stripped.decode("utf-8")), "json-line"
 
     headers: dict[str, str] = {}
     while line not in (b"\r\n", b"\n", b""):
@@ -1745,11 +1745,15 @@ def read_message(stdin: Any) -> dict[str, Any] | None:
     if length <= 0:
         return None
     body = stdin.read(length)
-    return json.loads(body.decode("utf-8"))
+    return json.loads(body.decode("utf-8")), "content-length"
 
 
-def write_message(stdout: Any, payload: Any) -> None:
+def write_message(stdout: Any, payload: Any, framing: str = "content-length") -> None:
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if framing == "json-line":
+        stdout.write(data + b"\n")
+        stdout.flush()
+        return
     stdout.write(
         (
             f"Content-Length: {len(data)}\r\n"
@@ -2108,25 +2112,27 @@ def run_stdio(
     stdout = sys.stdout.buffer
     while True:
         try:
-            request = read_message(stdin)
+            request_message = read_message(stdin)
         except Exception as exc:
             trace_event(trace_file, "read_error", error=type(exc).__name__, message=str(exc))
             raise
-        if request is None:
+        if request_message is None:
             trace_event(trace_file, "stdin_closed")
             return 0
+        request, framing = request_message
         response = server.handle(request)
         if response is not None:
             method = request.get("method") if isinstance(request, dict) else None
             response_trace: dict[str, Any] = {
                 "method": method,
+                "framing": framing,
                 "has_error": isinstance(response, dict) and "error" in response,
                 "response_id": response.get("id") if isinstance(response, dict) else None,
             }
             if method == "initialize":
                 response_trace["payload"] = response
             trace_event(trace_file, "response", **response_trace)
-            write_message(stdout, response)
+            write_message(stdout, response, framing)
 
 
 def main(argv: list[str] | None = None) -> int:
