@@ -793,18 +793,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
 ]
 
 TOOL_BY_NAME = {tool["name"]: tool for tool in TOOL_SPECS}
-CODEX_TOOL_PROFILE = {
-    "uepi_health",
-    "uepi_project_status",
-    "uepi_project_refresh",
-    "uepi_read_asset_context",
-    "uepi_read_blueprint",
-    "uepi_read_animation",
-    "uepi_summary",
-    "uepi_search",
-    "uepi_graph_query",
-    "uepi_security_audit",
-}
+CODEX_TOOL_PROFILE = set(TOOL_BY_NAME)
 JOB_ALLOWED_OPERATIONS = set(TOOL_BY_NAME) - {"uepi_job_start", "uepi_job_get"}
 INDEX_WRITE_TOOLS = [
     "uepi_ingest",

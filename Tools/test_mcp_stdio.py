@@ -216,24 +216,64 @@ def assert_codex_tool_profile(args: argparse.Namespace) -> None:
         notification(process, "notifications/initialized")
         tools = request(process, 2, "tools/list")["tools"]
         tool_names = {tool["name"] for tool in tools}
-        assert tool_names == {
+        required_tools = {
             "uepi_health",
             "uepi_project_status",
             "uepi_project_refresh",
             "uepi_read_asset_context",
             "uepi_read_blueprint",
             "uepi_read_animation",
+            "uepi_ingest",
             "uepi_summary",
+            "uepi_scans",
+            "uepi_entities",
+            "uepi_relations",
             "uepi_search",
+            "uepi_related",
+            "uepi_subgraph",
+            "uepi_graph_page",
             "uepi_graph_query",
+            "uepi_export_graph",
+            "uepi_artifact_range",
+            "uepi_report",
+            "uepi_diff",
+            "uepi_stale",
+            "uepi_history",
+            "uepi_animation_query",
+            "uepi_data_query",
+            "uepi_data_page",
+            "uepi_cinematics_key_page",
             "uepi_security_audit",
+            "uepi_integrity",
+            "uepi_recover",
+            "uepi_agent_protocol",
+            "uepi_source_index",
+            "uepi_source_symbols",
+            "uepi_source_references",
+            "uepi_source_search",
+            "uepi_blueprint_cpp_links",
+            "uepi_config_values",
+            "uepi_worker_register",
+            "uepi_worker_heartbeat",
+            "uepi_workers",
+            "uepi_queue_submit",
+            "uepi_queue_poll",
+            "uepi_queue_update",
+            "uepi_queue_chunk",
+            "uepi_queue_jobs",
+            "uepi_queue_get",
+            "uepi_queue_cancel",
+            "uepi_queue_recover",
+            "uepi_job_start",
+            "uepi_job_get",
         }
+        assert tool_names == required_tools
         assert all("inputSchema" in tool and "outputSchema" not in tool for tool in tools)
         assert_no_empty_required(tools)
         assert_no_codex_schema_extras(tools)
         trace_text = trace_file.read_text(encoding="utf-8")
         assert '"event":"tools_list"' in trace_text
-        assert '"tool_count":10' in trace_text
+        assert f'"tool_count":{len(required_tools)}' in trace_text
     finally:
         if process.stdin:
             process.stdin.close()
