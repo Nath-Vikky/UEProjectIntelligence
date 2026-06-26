@@ -1,0 +1,26 @@
+# UEPI Snapshot MCP
+
+This package is the v2 read-only path for UE Project Intelligence.
+
+It reads `Saved/UEProjectIntelligence/store/manifests/saved.json` and immutable Snapshot objects directly. It does not start a daemon, expose HTTP, register workers, or mutate Unreal assets.
+
+## Codex Example
+
+Command:
+
+```text
+C:/Users/renne/AppData/Local/Programs/Python/Python313/python.exe
+```
+
+Arguments:
+
+```text
+-B
+F:/Epic Games/UE5project/GasDemo/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py
+--project
+F:/Epic Games/UE5project/GasDemo/GasDemo.uproject
+--tool-profile
+codex
+```
+
+The UE editor is only needed to create or refresh snapshots. Once `saved.json` exists, the MCP server can answer from the latest saved snapshot while the editor is closed.

@@ -1,0 +1,14 @@
+[project]
+name = "uepi"
+version = "2.0.0.dev0"
+description = "Read-only Snapshot-backed MCP server for UE Project Intelligence."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+uepi = "uepi.__main__:main"
+uepi-mcp = "uepi.mcp_server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
