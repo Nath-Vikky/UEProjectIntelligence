@@ -1,4 +1,0 @@
-# Optional official Model Context Protocol Python SDK.
-# The stdio compatibility server in this directory runs without this package,
-# but this pins the intended SDK dependency for environments that want it.
-mcp>=1.0

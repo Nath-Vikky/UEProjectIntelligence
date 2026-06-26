@@ -1,98 +1,35 @@
-# UEPI User Installation
+# Installation
 
 ## Requirements
 
-- Unreal Engine 5.3.x on Win64.
-- Project plugin location: `Plugins/UEProjectIntelligence`.
-- Python 3.11+ for daemon, CLI, MCP, Web UI serving, validation, and packaging tools.
+- Unreal Engine 5.3.2 editor or commandlet.
+- Python 3.10+ for the stdio MCP server.
 
-## Install From Source
+No daemon, HTTP server, Web UI, worker, or database service is required.
 
-1. Copy `UEProjectIntelligence` into the project `Plugins` directory.
-2. Regenerate project files if your workflow requires it.
-3. Build `GasDemoEditor Win64 Development`.
-4. Enable the plugin in the editor if it is not already enabled.
-5. Open `Tools > UE Project Intelligence`.
+## Unreal Plugin
 
-## First Scan
+Place `UEProjectIntelligence` under the project's `Plugins` directory and enable it in the editor. Build the project:
 
 ```powershell
-& "F:\Epic Games\don\UE_5.3\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
-  "F:\Epic Games\UE5project\GasDemo\GasDemo.uproject" `
-  -run=UEPIIndex -unattended -nop4 -nosplash -NullRHI `
-  -UEPILevel=L2 `
-  -UEPIOutput="F:\Epic Games\UE5project\GasDemo\Saved\UEProjectIntelligence\last_scan.json"
+& "F:\Epic Games\don\UE_5.3\Engine\Build\BatchFiles\Build.bat" GasDemoEditor Win64 Development `
+  "-Project=F:\Epic Games\UE5project\GasDemo\GasDemo.uproject" -WaitMutex -NoHotReload
 ```
 
-## Local Daemon And Web UI
+## Create A Snapshot
 
-```powershell
-python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py `
-  --db Saved\UEProjectIntelligence\index.sqlite3 `
-  ingest --scan Saved\UEProjectIntelligence\last_scan.json
+Use the editor dashboard button `Run Snapshot Scan`, or run the `UEPIIndex` commandlet. The source of truth is written under:
 
-python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py `
-  --db Saved\UEProjectIntelligence\index.sqlite3 `
-  serve --host 127.0.0.1 --port 8765
+```text
+Saved/UEProjectIntelligence/store/
 ```
 
-Open `http://127.0.0.1:8765/v1/ui`.
+## Codex MCP
 
-## MCP And Live Editor Worker
+Configure Codex to launch:
 
-Start the daemon first:
-
-```powershell
-python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py `
-  --db Saved\UEProjectIntelligence\index.sqlite3 `
-  serve --host 127.0.0.1 --port 8765
+```text
+python -B Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py --project <YourProject.uproject> --tool-profile codex
 ```
 
-Open the project in Unreal Editor, then open `Tools > UE Project Intelligence`. The plugin auto-connects to `http://127.0.0.1:8765/v1` by default; click `Start Live Worker` if the dashboard does not show an active worker session.
-
-Add this MCP server to Codex or another stdio MCP client:
-
-```json
-{
-  "mcpServers": {
-    "ue-project-intelligence": {
-      "command": "python",
-      "args": [
-        "F:/Epic Games/UE5project/GasDemo/Plugins/UEProjectIntelligence/Services/uepi_daemon/uepi_mcp_server.py",
-        "--db",
-        "F:/Epic Games/UE5project/GasDemo/Saved/UEProjectIntelligence/index.sqlite3"
-      ]
-    }
-  }
-}
-```
-
-Useful LLM-facing tools:
-
-- `uepi_project_status`: check the index, worker, queue, and freshness state.
-- `uepi_project_refresh`: submit a read-only scan job and optionally ingest the result.
-- `uepi_read_blueprint`: read Blueprint asset context, graph relations, snapshots, and C++ links when available.
-- `uepi_read_animation`: read animation-domain context and manifest rows.
-- `uepi_read_asset_context`: read generic asset relations, subgraph, snapshot, freshness, and candidates.
-
-Example Blueprint read request:
-
-```json
-{
-  "asset": "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter",
-  "refresh": true,
-  "wait_seconds": 120,
-  "graph_depth": 2,
-  "graph_limit": 400
-}
-```
-
-## Optional Token
-
-```powershell
-python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py `
-  --db Saved\UEProjectIntelligence\index.sqlite3 `
-  serve --host 127.0.0.1 --port 8765 --token auto
-```
-
-`--token auto` writes `uepi_http_token.txt` next to the database. Use that value in the Web UI token field or as `Authorization: Bearer <token>`.
+Run `uepi_status` first after connecting.

@@ -37,7 +37,6 @@ public class UEProjectIntelligence : ModuleRules
 				"GameplayAbilities",
 				"GameplayTags",
 				"GameplayTasks",
-				"HTTP",
 				"IKRig",
 				"InputCore",
 				"LevelEditor",

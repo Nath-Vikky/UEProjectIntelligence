@@ -1,33 +1,23 @@
-# UEPI Troubleshooting
+# Troubleshooting
 
-## Daemon Says Scan Is Outside Sandbox
+## Codex Does Not Show UEPI Tools
 
-Run the daemon from the project root or place scan artifacts under `Saved/UEProjectIntelligence`. The sandbox allows the workspace, plugin root, and UEPI data directory.
+- Confirm the MCP command points to `Services/uepi/src/uepi/mcp_server.py`.
+- Use `--project <path-to-uproject>` or `--store <Saved/UEProjectIntelligence>`.
+- Restart the Codex conversation after changing MCP configuration.
 
-## Web UI Cannot Connect
+## `uepi_status` Reports Missing Snapshot
 
-- Confirm the daemon is running.
-- Check the API base field, usually `http://127.0.0.1:8765/v1`.
-- If token auth is enabled, paste the token into the Web UI token field.
+Generate a saved snapshot first from the UE dashboard or the `UEPIIndex` commandlet. The required file is:
 
-## Integrity Fails
-
-Run:
-
-```powershell
-python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py `
-  --db Saved\UEProjectIntelligence\index.sqlite3 recover
+```text
+Saved/UEProjectIntelligence/store/manifests/saved.json
 ```
 
-If integrity still fails, keep the database for inspection and re-ingest the latest scan into a fresh database.
+## Blueprint Or Animation Details Are Missing
 
-## Dirty Package Diagnostic Appears
+The current Snapshot may be L0 metadata only. Regenerate with a targeted L2 commandlet scan for the asset you need, then call `uepi_blueprint` or `uepi_animation` again.
 
-Stop using the generated scan as a golden reference until the dirty source is understood. Run `dirty_package_regression.py` against stored scans and compare the scan target with recent editor operations.
+## Editor Is Closed
 
-## Optional Dependencies Missing
-
-The daemon runs without third-party packages. Optional features:
-
-- `pyarrow` for real Parquet export.
-- `mcp` from `requirements-mcp.txt` for official MCP SDK host experiments.
+This is supported. The MCP server reads the last saved Snapshot and reports `editor_connected: false`.

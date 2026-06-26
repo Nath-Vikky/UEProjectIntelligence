@@ -1,31 +1,38 @@
-# UEPI Sample Queries
+# Sample Queries
 
-## CLI
-
-```powershell
-python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py `
-  --db Saved\UEProjectIntelligence\index.sqlite3 entities --kind asset --limit 25
-
-python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py `
-  --db Saved\UEProjectIntelligence\index.sqlite3 search blueprint --limit 20
-
-python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py `
-  --db Saved\UEProjectIntelligence\index.sqlite3 graph-query "from /Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter depth 2 relation contains_graph,contains_node"
-
-python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py `
-  --db Saved\UEProjectIntelligence\index.sqlite3 export-graph "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter" --format graphml --output Saved\UEProjectIntelligence\bp.graphml
-```
-
-## HTTP
+After MCP connects, start with:
 
 ```text
-GET /v1/entities?kind=asset&limit=50
-GET /v1/search?q=AnimBlueprint&limit=20
-GET /v1/subgraph?entity=<id-or-key>&depth=2&relation_type=asset_reference
-GET /v1/stale?limit=50
-POST /v1/recover
+uepi_status
+uepi_overview
 ```
 
-## MCP
+Find assets:
 
-Use `uepi_summary`, `uepi_entities`, `uepi_related`, `uepi_subgraph`, `uepi_graph_query`, `uepi_report`, `uepi_integrity`, and `uepi_security_audit` for read-oriented workflows. Use `uepi_job_start` for large operations that should keep a retained result.
+```text
+uepi_search {"query": "BP_ThirdPersonCharacter", "limit": 10}
+```
+
+Read an asset:
+
+```text
+uepi_asset {"asset": "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter"}
+```
+
+Read Blueprint structure:
+
+```text
+uepi_blueprint {"asset": "BP_ThirdPersonCharacter", "limit": 300}
+```
+
+Read animation context:
+
+```text
+uepi_animation {"asset": "MM_Run_Fwd", "include": ["summary", "tracks", "notifies", "curves", "pose_samples"]}
+```
+
+Build a context bundle:
+
+```text
+uepi_context {"question": "BP_ThirdPersonCharacter 的 BeginPlay 连接了哪些节点？", "scope": ["blueprint"], "max_items": 80}
+```

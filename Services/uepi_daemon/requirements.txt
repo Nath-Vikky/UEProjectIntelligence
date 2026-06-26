@@ -1,6 +1,0 @@
-# UEPI daemon required dependencies.
-#
-# The core daemon intentionally uses only the Python standard library.
-# Optional packages:
-# - requirements-mcp.txt: official MCP SDK host experiments
-# - pyarrow: Parquet export

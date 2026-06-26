@@ -50,15 +50,6 @@ void UEPIApplyLevelToOptions(UE::ProjectIntelligence::FScanOptions& Options, con
 	Options.bReadUObjectReflection = Options.bReadUObjectReflection || bReflectionLevel;
 }
 
-bool UEPICommandletWorkerFlagsWereSupplied()
-{
-	FString ValueProbe;
-	return FParse::Param(FCommandLine::Get(), TEXT("UEPIWorker"))
-		|| FParse::Value(FCommandLine::Get(), TEXT("UEPIWorkerUrl="), ValueProbe)
-		|| FParse::Value(FCommandLine::Get(), TEXT("UEPIDaemonUrl="), ValueProbe)
-		|| FParse::Value(FCommandLine::Get(), TEXT("UEPIWorkerId="), ValueProbe);
-}
-
 FString UEPIDefaultScanArtifactPath()
 {
 	return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("last_scan.json"));
@@ -76,15 +67,6 @@ UUEPIIndexCommandlet::UUEPIIndexCommandlet()
 
 int32 UUEPIIndexCommandlet::Main(const FString& Params)
 {
-	if (UEPICommandletWorkerFlagsWereSupplied())
-	{
-		UE_LOG(
-			LogUEPIIndexCommandlet,
-			Error,
-			TEXT("UEPI commandlet worker mode has been removed in 2.0-dev. Run UEPIIndex as a one-shot Snapshot writer without UEPIWorker/UEPIDaemon arguments."));
-		return 1;
-	}
-
 	FString OutputPath;
 	FParse::Value(*Params, TEXT("Output="), OutputPath);
 	if (OutputPath.IsEmpty())

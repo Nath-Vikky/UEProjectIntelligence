@@ -15,7 +15,8 @@ UE Project Intelligence is currently converging toward the `2.0-dev` architectur
 Before submitting changes, run the narrowest useful checks for the affected layer:
 
 ```powershell
-python Plugins\UEProjectIntelligence\Tools\test_mcp_stdio.py
+python -m compileall Plugins\UEProjectIntelligence\Services\uepi\src
+python Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py
 ```
 
 For C++ changes, close Unreal Editor and build the editor target:
@@ -39,4 +40,3 @@ Use small staged commits that match the migration phases:
 - Python query core;
 - MCP tool surface;
 - cleanup and release.
-

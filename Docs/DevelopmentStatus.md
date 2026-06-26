@@ -1,114 +1,31 @@
 # UE Project Intelligence Development Status
 
-This plugin now implements the first read-only foundation described in `DOCX/Development.md`.
+`main` is now the `2.0-dev` Snapshot-first line.
 
 ## Implemented
 
-- Editor-only plugin module for UE 5.3 editor workflows.
-- Project settings mirroring the documented UEPI configuration defaults.
-- Stable entity and relation DTOs with completeness, diagnostics, and evidence.
-- SHA-256 based stable IDs using project, kind, and canonical key inputs.
-- Asset Registry L0 scanner for `/Game`, project plugin content, and optional `/Engine` content.
-- Asset-to-asset package dependency relations with Asset Registry evidence.
-- Asset Registry redirector metadata with `asset_redirector` entities, destination tag capture, and `redirects_to` relations when destination tags are available.
-- Filesystem project graph for `.uproject`, project `.uplugin`, `Config/*.ini`, source files, local modules, plugin references, and Build.cs module dependencies.
-- Config-file Unreal path references as `asset_reference` entities and `config_references_asset` relations.
-- Indexed config rows plus effective config value queries that preserve Unreal `+`, `-`, `.`, and `!` array operators.
-- Dirty package guard that reports `UEPI_DIRTY_PACKAGE_DETECTED` if a scan changes dirty state.
-- `UEPIIndex` commandlet entry point.
-- `UUEPIEditorSubsystem::RunMetadataScan` editor entry point.
-- JSON schema files for envelopes, entities, relations, diagnostics, and asset scans.
-- Ontology registry seeded from the development plan relation list.
-- Local SQLite ingest/query skeleton in `Services/uepi_daemon`.
-- Query commands for summary, search, and direct relation lookup.
-- Targeted L1 UObject reflection snapshots via `-UEPILevel=L1 -UEPIAsset=<ObjectPath>`, including structured struct serialization with normalized common UE structs, large collection sidecar artifacts, CDO/Super default comparison, direct subobject-reference marking, direct reference-cycle guards, and collection capacity metadata.
-- Targeted L2 Blueprint source graph extraction via `-UEPILevel=L2 -UEPIAsset=<ObjectPath>`.
-- Blueprint Graph/Node/Pin entities, including Pin type/default/link, split/sub-pin parent metadata, and SimpleConstructionScript component templates, plus `contains_graph`, `contains_node`, `has_pin`, `contains_component_template`, and `connects_to` relations.
-- Blueprint graph snapshots now include compact `graph_summaries` and `event_graph_nodes` so LLM clients can inspect Event Graph node lists without expanding the full Pin payload first.
-- Targeted L2 World source structure extraction for UWorld persistent levels, actors, components, static transforms, Actor GUIDs, folders, tags, owner/attachment links, LevelScriptActor links, ULevelStreaming descriptors, Level Instance world references, AWorldDataLayers/Data Layer container metadata, World Partition actor descriptor metadata from targeted map external actor/object packages, and `instance_of`/descriptor class relations.
-- World/Data Layer `world_data_layers` entities plus `contains_world_data_layers`, `contains_data_layer`, `data_layer_parent`, and `uses_data_layer_asset` relations.
-- Targeted L2 Enhanced Input extraction for UInputAction metadata and UInputMappingContext action-key mappings.
-- Enhanced Input `input_action` and `input_mapping` entities plus `contains_input_action`, `contains_input_mapping`, and `maps_input_action` relations.
-- Targeted L2 CommonUI extraction for CommonUI input data assets or Blueprint generated-class default objects, default click/back row handles, optional hold-data class references, optional Enhanced Input action references, and CommonUI generic input action data table rows.
-- CommonUI `common_ui_input_data`, `common_ui_hold_data`, `common_ui_hold_data_class`, `common_ui_input_action_table`, and `common_ui_input_action_row` entities plus `contains_common_ui_input_data`, `contains_common_ui_hold_data`, `contains_common_ui_input_action_table`, `contains_common_ui_input_action_row`, `uses_common_ui_action_row`, `uses_common_ui_hold_data`, and `uses_common_ui_input_action` relations.
-- Static AI extraction for UBlackboardData key/type metadata and parent links, UBehaviorTree blackboard references plus composite/task/decorator/service node structure, and UEnvQuery option/generator/test metadata.
-- AI `blackboard`, `blackboard_key`, `behavior_tree`, `behavior_tree_node`, `env_query`, `env_query_option`, and `env_query_test` entities plus `contains_blackboard`, `contains_blackboard_key`, `blackboard_parent`, `contains_behavior_tree`, `uses_blackboard`, `contains_behavior_tree_node`, `behavior_tree_child`, `behavior_tree_decorator`, `behavior_tree_root_decorator`, `behavior_tree_service`, `contains_env_query`, `contains_env_query_option`, `uses_env_query_generator`, and `contains_env_query_test` relations.
-- Static StateTree extraction for UStateTree editor state hierarchy, state enter conditions, state tasks, single-task state data, transition targets/conditions, global evaluators/tasks, property bindings, external/context data descriptors, and compiled summary counts.
-- StateTree `state_tree`, `state_tree_schema`, `state_tree_state`, `state_tree_node`, `state_tree_transition`, and `state_tree_external_data` entities plus `contains_state_tree`, `uses_state_tree_schema`, `contains_state_tree_state`, `state_tree_state_child`, `contains_state_tree_node`, `state_tree_state_enter_condition`, `state_tree_state_task`, `state_tree_transition_condition`, `state_tree_global_evaluator`, `state_tree_global_task`, `contains_state_tree_transition`, `state_tree_transition_target`, and `uses_state_tree_external_data` relations.
-- Static Gameplay Ability System extraction for GameplayAbility assets or Blueprint generated-class default objects, GameplayEffect assets, and GameplayCueNotify Static/Actor assets or Blueprint generated-class default objects.
-- Gameplay `gameplay_ability`, `gameplay_ability_trigger`, `gameplay_effect`, `gameplay_effect_modifier`, `gameplay_cue_tag`, and `gameplay_cue_notify` entities plus `contains_gameplay_ability`, `contains_gameplay_ability_trigger`, `gameplay_ability_cost_effect`, `gameplay_ability_cooldown_effect`, `contains_gameplay_effect`, `contains_gameplay_effect_modifier`, `grants_gameplay_ability`, `triggers_gameplay_cue`, `overflows_to_gameplay_effect`, and `contains_gameplay_cue_notify` relations.
-- Targeted L2 Animation extraction for USkeleton bone hierarchy, local/component reference poses, virtual bones, skeleton sockets, USkeletalMesh skeleton/LOD/material/morph metadata plus mesh/active sockets, UAnimSequence track/notify/curve metadata with first/mid/last frame-time raw-local and component-space samples plus root-motion/additive settings and full-range root motion transform, UAnimMontage section/slot/segment timeline metadata, UAnimComposite segment timeline metadata, UBlendSpace axis/sample metadata, UPoseAsset pose/curve/track metadata, UIKRigDefinition chain/goal/solver metadata, UIKRetargeter source/target rig, chain-map, and current pose metadata, UPhysicsAsset body/shape/constraint/bone-binding metadata, UAnimBlueprint static state-machine/state/transition/asset-player/cached-pose/slot metadata, and UControlRigBlueprint static RigVM graph/node/pin/link plus hierarchy metadata.
-- UAnimSequence track extraction now records compact all-key motion metrics per animated bone and an `animation_motion_summary` listing which bones change and whether translation, rotation, or scale changes.
-- Animation `skeleton`, `bone`, `virtual_bone`, `skeletal_socket`, `skeletal_mesh`, `animation_sequence`, `animation_track`, `anim_notify`, `animation_montage`, `animation_composite`, `blend_space`, `blend_space_sample`, `pose_asset`, `pose_asset_pose`, `pose_asset_curve`, `ik_rig`, `ik_rig_chain`, `ik_rig_goal`, `ik_rig_solver`, `ik_retargeter`, `ik_retarget_chain_map`, `physics_asset`, `physics_body`, `physics_shape`, `physics_constraint`, `anim_blueprint`, `anim_state_machine`, `anim_state`, `anim_transition`, `anim_asset_player`, `anim_cached_pose`, `anim_slot`, `anim_control_rig_node`, `control_rig_blueprint`, `control_rig_vm_graph`, `control_rig_vm_node`, `control_rig_vm_pin`, `control_rig_vm_link`, and `control_rig_hierarchy_element` entities plus `contains_bone`, `contains_virtual_bone`, `contains_socket`, `parent_bone`, `virtual_bone_source`, `virtual_bone_target`, `uses_skeleton`, `contains_track`, `animates_bone`, `contains_montage`, `contains_composite`, `contains_blend_space`, `contains_blend_sample`, `samples_animation`, `contains_pose_asset`, `contains_pose`, `contains_curve`, `uses_animation`, `contains_ik_rig`, `contains_ik_chain`, `contains_ik_goal`, `contains_ik_solver`, `contains_ik_retargeter`, `contains_ik_retarget_chain_map`, `uses_skeletal_mesh`, `uses_source_ik_rig`, `uses_target_ik_rig`, `contains_physics_asset`, `contains_physics_body`, `contains_physics_shape`, `contains_physics_constraint`, `binds_bone`, `constrains_body`, `contains_anim_blueprint`, `contains_anim_state_machine`, `contains_anim_state`, `contains_anim_transition`, `contains_anim_asset_player`, `contains_anim_cached_pose`, `contains_anim_slot`, `contains_anim_control_rig_node`, `contains_control_rig_blueprint`, `contains_rigvm_graph`, `contains_rigvm_node`, `contains_rigvm_pin`, `contains_rigvm_link`, `contains_rig_hierarchy_element`, `rigvm_connects_to`, `rig_hierarchy_parent`, `state_transitions_to`, `uses_blendspace`, and `uses_cached_pose` relations.
-- Targeted L2 Data extraction for UDataAsset/UPrimaryDataAsset class metadata, PrimaryAssetId, AssetManager rules and bundle members, UStringTable entries/source strings/metadata, UUserDefinedStruct field type/layout metadata, UUserDefinedEnum entry/display-name metadata, UDataTable row/schema metadata, UCompositeDataTable parent dependencies, UCurveTable row/key-count metadata, UCurveFloat, UCurveVector, and UCurveLinearColor channel/key/tangent metadata, and UCurveLinearColorAtlas dimensions, slot metadata, and curve references.
-- Data `data_asset`, `user_defined_struct`, `user_defined_struct_field`, `user_defined_enum`, `user_defined_enum_entry`, `data_table`, `data_table_column`, `data_table_row`, `curve_table`, `curve_table_row`, `curve`, `curve_channel`, `curve_key`, `curve_linear_color_atlas`, and `curve_atlas_entry` entities plus `contains_data_asset`, `contains_user_defined_struct`, `contains_struct_field`, `contains_user_defined_enum`, `contains_enum_entry`, `contains_data_table`, `contains_data_table_column`, `contains_data_table_row`, `composite_parent_table`, `contains_curve_table`, `contains_curve_table_row`, `contains_curve`, `contains_curve_channel`, `contains_curve_key`, `contains_curve_atlas`, `contains_curve_atlas_entry`, and `uses_curve` relations.
-- Targeted L2 UI extraction for UWidgetBlueprint static WidgetTree template hierarchy, named slots, animation names, binding metadata, and Blueprint graph structure.
-- UI `widget_blueprint`, `widget`, `widget_animation`, and `widget_binding` entities plus `contains_widget_blueprint`, `contains_widget`, `widget_parent`, `contains_widget_animation`, and `contains_widget_binding` relations.
-- Targeted L2 Niagara/VFX extraction for UNiagaraSystem static system/emitter/script references, UNiagaraEmitter renderer/event-handler/simulation-stage metadata, UNiagaraScript static usage/rapid-iteration metadata, UNiagaraParameterDefinitions serialized script-variable metadata, exposed parameter metadata, and UVectorFieldStatic dimensions/bounds/source bulk-data and CPU-data summaries without runtime simulation or package saves.
-- Niagara/VFX `niagara_system`, `niagara_emitter`, `niagara_script`, `niagara_parameter`, `niagara_parameter_definitions`, `niagara_parameter_definition`, `niagara_renderer`, `niagara_event_handler`, `niagara_simulation_stage`, and `vector_field_static` entities plus `contains_niagara_system`, `contains_niagara_emitter`, `contains_niagara_script`, `contains_niagara_parameter`, `contains_niagara_parameter_definitions`, `contains_niagara_parameter_definition`, `contains_niagara_renderer`, `contains_niagara_event_handler`, `contains_niagara_simulation_stage`, and `contains_vector_field` relations.
-- Targeted L2 PCG extraction for UPCGGraph static graph structure, node title/type/settings metadata, node-local input/output pins, edge endpoints, editable setting summaries, optional subgraph references, and a domain-tagged UniversalGraphIR projection without runtime generated results or world actor/volume resolution.
-- PCG `pcg_graph`, `pcg_node`, `pcg_pin`, `pcg_settings`, and `pcg_subgraph_reference` entities plus `contains_pcg_graph`, `contains_pcg_node`, `contains_pcg_pin`, `pcg_node_uses_settings`, `pcg_node_uses_subgraph`, and `pcg_edge` relations.
-- Targeted L2 MetaSound extraction for UMetaSoundSource/UMetaSoundPatch Frontend Document metadata, root/subgraph classes, nodes, input/output vertices, edges, declared interfaces, input literals, dependency classes, preset parent references, and a domain-tagged UniversalGraphIR projection without runtime operator execution or audio rendering.
-- MetaSound `metasound_document`, `metasound_graph`, `metasound_node`, `metasound_vertex`, `metasound_literal`, and `metasound_dependency_class` entities plus `contains_metasound_document`, `contains_metasound_graph`, `contains_metasound_node`, `contains_metasound_vertex`, `contains_metasound_literal`, `metasound_node_uses_dependency`, `metasound_preset_parent`, and `metasound_edge` relations.
-- Targeted L2 Audio extraction for USoundCue node graph structure, common SoundNode semantics, USoundWave duration/sample-rate/channel/compression/loading/cue-point/subtitle metadata, USoundSubmix hierarchy, parent/child references, effect-chain references, auto-disable/background-mute flags, envelope follower timing, and USoundEffectSubmixPreset class/color plus top-level editable setting summaries.
-- Audio `sound_cue`, `sound_node`, `sound_wave`, `sound_submix`, and `sound_submix_effect_preset` entities plus `contains_sound_cue`, `contains_sound_node`, `sound_node_child`, `sound_node_uses_sound_wave`, `contains_sound_wave`, `contains_sound_submix`, `contains_child_submix`, `contains_sound_submix_effect`, `parent_submix`, and `uses_sound_submix_effect` relations.
-- Targeted L2 Cinematics extraction for ULevelSequence and UMovieScene timing, playback ranges, spawnables, possessables, object bindings, root/binding-owned tracks, sections, channels, key counts, key time rows, key artifact manifests, camera cuts, subsequence references, audio section sound references, skeletal animation section animation references, binding tags, marked frames, and editor folder/group counts.
-- Cinematics `level_sequence`, `movie_scene`, `movie_scene_spawnable`, `movie_scene_possessable`, `movie_scene_binding`, `movie_scene_track`, and `movie_scene_section` entities plus `contains_level_sequence`, `contains_movie_scene`, `contains_movie_scene_spawnable`, `contains_movie_scene_possessable`, `contains_movie_scene_binding`, `contains_movie_scene_track`, `movie_scene_binding_owns_track`, `movie_scene_track_owns_section`, `movie_scene_camera_cut_track`, `movie_scene_camera_cut_targets_binding`, `movie_scene_section_uses_subsequence`, `movie_scene_section_uses_sound`, `movie_scene_section_uses_animation`, `movie_scene_binding_tag`, `movie_scene_spawnable_child_possessable`, and `movie_scene_possessable_parent` relations.
-- Targeted L2 Render extraction for UStaticMesh LOD/material-slot metadata, UTexture2D dimensions/mip/settings metadata, UTextureCube dimensions/face/source summary metadata, and generic UTexture class/surface/source summary metadata.
-- Render `static_mesh`, `static_mesh_lod`, `material`, and `texture` entities plus `contains_static_mesh`, `contains_lod`, `uses_material`, and `contains_texture` relations.
-- Targeted L2 Material extraction for UMaterial expression graphs, UMaterialInstance parameter overrides, UMaterialFunction expression graphs, and UMaterialParameterCollection scalar/vector default parameters.
-- Material `material`, `material_instance`, `material_function`, `material_expression`, `material_parameter_collection`, `material_collection_parameter`, and `texture` entities plus `contains_material`, `contains_material_instance`, `contains_material_function`, `contains_material_expression`, `contains_material_parameter_collection`, `contains_material_collection_parameter`, `material_expression_depends_on`, `uses_material`, `uses_material_function`, and `uses_texture` relations.
-- First-pass Blueprint semantic annotations for call function, event, variable get/set, dynamic cast, SpawnActor, and LoadAsset nodes, including `calls_function`, `reads_variable`, `writes_variable`, `casts_to`, `spawns_class`, and `loads_asset` relations.
-- Blueprint call and variable semantic parsing now emits owner `u_class` entities plus `declares_function`, `declares_variable`, and `class_references` relations for class/function traversal.
-- Extended Blueprint semantic annotations for Branch, Switch, Sequence, Macro Instance, collapsed Composite graphs, standard loop macros, async task, latent function, and interface call nodes.
-- Derived node-level `exec_flows_to`, `data_flows_to`, and `delegate_flows_to` projection from canonical Pin links.
-- Relation attributes for Pin provenance, branch labels, projection kind, and DFG value kind.
-- Derived `cfg_basic_block` entities and block-level `exec_flows_to` edges.
-- Derived `dfg_value` entities plus `defines_value` and `uses_value` relations from data Pin links and variable accesses.
-- SQLite `subgraph`, `graph-query`, `export-dot`, and `export-graph` commands for bounded graph inspection.
-- Cursor-paginated scan, entity, and relation list commands plus matching HTTP endpoints for large indexes.
-- Local HTTP query API with health, summary, search, related, subgraph, graph DSL, DOT/GraphML/Cytoscape/optional-Parquet export, artifact range, Markdown report, API document, and scan-artifact ingest endpoints.
-- Local MCP stdio adapter with LLM-facing project status, refresh, Blueprint read, animation read, and generic asset context tools, plus resources, resource templates, prompts, output schemas, structured content, token-budgeted result artifacts, synchronous job envelopes, optional official SDK dependency manifest, and a no-shell/no-write-asset security audit tool/resource.
-- High-level MCP read tools resolve short asset names through indexed asset revisions, fall back across scan history when the latest scan is targeted to another asset, and return Blueprint graph summaries plus animation motion summaries in the LLM-facing response.
-- SQLite-backed worker agent protocol with session-token registration, heartbeat, worker listing, job submission, long-poll leasing, state update, cancellation, timeout/retry recovery, ordered trace events, chunked artifact upload, CLI commands, HTTP endpoints, MCP tools/resources, Editor outbound registration/heartbeat, Editor Live Worker polling/execution for queued `metadata_scan` jobs, read-only `UEPIIndex` commandlet worker execution for queued `metadata_scan` jobs, and regression coverage.
-- Offline C++/Config source index in the daemon with UHT macro symbol extraction, BlueprintCallable/Pure/ReadWrite metadata flags, owner-qualified C++ function/property symbols, Build.cs/Target.cs discovery, compile database discovery, C++ and Config Unreal path references, Blueprint call-to-C++ symbol link queries, effective config value queries, CLI/HTTP/MCP search APIs, and a synthetic source-index regression test.
-- Animation and data manifest query APIs over ingested scan entities with scan/asset filters, covered/omitted completeness summaries, optional snapshot inclusion, data snapshot collection cursor paging plus optional JSON collection artifacts, Sequencer key-time cursor paging plus optional JSON key artifacts, graph JSON cursor paging, CLI/HTTP/MCP entry points, and MCP artifact fallback for large responses.
-- Self-hosted Windows/UE GitHub Actions validation workflow covering Python compile, schema parse, worker protocol, data-page, graph-page, and cinematics key-page paging, MCP stdio, security audit, dirty-package regression, golden summaries, package dry-run, and optional UBT when `UE_ENGINE_ROOT` is configured.
-- Editor Tools menu and Content Browser context menu entry that open a UEPI dashboard tab with scan, Live Worker start/status, incremental event snapshot, saved-folder, and Web UI actions.
-- Local daemon-served Web UI at `/v1/ui` with asset browser, SVG graph viewer, Blueprint flow relation filters, animation/data table tables, diff/stale/report panels, diagnostics/coverage summary, and asset path handoff links.
-- Daemon path sandboxing for scan/token/artifact reads, optional HTTP bearer or `X-UEPI-Token` auth, SQLite integrity and recover command/API/tooling, security fuzz audit script, synthetic daemon performance baseline script with GC counters, dirty-package regression script over stored scan artifacts, and release package manifest/zip dry-run tooling with install/upgrade/uninstall plans.
-- Public extension SDK interfaces for asset adapters and Blueprint node semantic adapters plus user installation, developer architecture, extension SDK, schema reference, operations runbook, troubleshooting, migration, sample query, changelog, and third-party notice documents.
-- Local asset revision table and history query for each ingested `kind=asset` entity, including canonical hashes, scan artifact linkage, current revision flags, and valid-from/valid-to scan tracking.
-- Local scan diff/impact command and HTTP endpoint for comparing two ingested scans by stable entity/relation IDs, including added/removed/changed counts, Blueprint graph delta summaries, DataTable row/column/table delta summaries, Animation manifest delta summaries, and affected entity sets.
-- Stale command, HTTP endpoint, and summary fields for detecting missing/changed source scan JSON plus changed file-backed UE package assets after ingest.
-- Optional Git commit/branch/dirty-state metadata on ingested scans when the project directory is a Git worktree, with unavailable reasons recorded otherwise.
-- Editor subsystem incremental event log for package saves, Asset Registry add/remove/rename/update notifications, and global Blueprint compile notifications, stored in memory and appended to `Saved/UEProjectIntelligence/incremental_events.jsonl`.
-- Zero-dependency scan validator for UEPI envelope/entity/relation/evidence/completeness plus Blueprint, World, WorldDataLayers, World Partition Actor Descriptor, Enhanced Input, CommonUI, AI, StateTree, Gameplay Ability System, Animation, IK Rig/Retargeter, PhysicsAsset, AnimBlueprint, Control Rig Blueprint, UserDefinedStruct/Enum, StringTable, DataTable, Data Curve/Curve Atlas, WidgetBlueprint, Niagara/VFX, PCG, MetaSound, Audio, Cinematics, Render, and Material snapshots.
-- Golden summary fixture for the targeted `BP_ThirdPersonCharacter` L2 scan.
-- Golden summary fixture for the targeted `ThirdPersonMap` L2 world scan.
-- Golden summary fixture for the targeted `ThirdPersonMap` WorldDataLayers L2 scan.
-- Golden summary fixture for the targeted `ThirdPersonMap` World Partition Actor Descriptor L2 scan.
-- Golden summary fixtures for targeted `IA_Move` and `IMC_Default` L2 Enhanced Input scans.
-- Golden summary fixture for targeted CommonUI `GenericInputData` plus `GenericInputActionDataTable` L2 scan.
-- Golden summary fixtures for targeted `BB_UEPI_Agent`, `BT_UEPI_Patrol`, and `EQS_UEPI_FindPoint` L2 AI scans.
-- Golden summary fixture for targeted `ST_UEPI_Minimal` L2 StateTree scan.
-- Golden summary fixtures for targeted `GA_UEPI_Pulse`, `GE_UEPI_Pulse`, and `GCN_UEPI_Pulse_Static` L2 Gameplay Ability System scans.
-- Golden summary fixtures for targeted `SK_Mannequin`, `SKM_Manny`, `MM_Walk_Fwd`, `BS_MM_WalkRun`, `Manny_foot_l_pose`, `IK_Mannequin`, `RTG_Mannequin`, `PA_Mannequin`, `ABP_Manny`, and `CR_Mannequin_BasicFootIK` L2 Animation scans.
-- Golden summary fixtures for targeted `AreaLightsStruct` L2 UserDefinedStruct scan, `ENiagara_AngleInput` L2 UserDefinedEnum scan, `AreaLightsTable` L2 DataTable scan, `ChromaticCurve` L2 Data Curve scan, and `CA_Mannequin` L2 CurveLinearColorAtlas scan.
-- Golden summary fixture for targeted `AudioButtonMatrix` L2 WidgetBlueprint scan.
-- Golden summary fixtures for targeted `Fountain` L2 Niagara Emitter scan, `CoreParameters` L2 Niagara Parameter Definitions scan, and `TilingCurl16` L2 VectorFieldStatic scan.
-- Golden summary fixture for targeted `SimpleForest` L2 PCG graph scan.
-- Golden summary fixture for targeted `MS_UEPI_Tone` L2 MetaSound source graph scan.
-- Golden summary fixture for targeted `LS_UEPI_Simple` L2 LevelSequence/MovieScene scan.
-- Golden summary fixtures for targeted `SW_UEPI_Tone` L2 SoundWave scan and `SC_UEPI_Tone` L2 SoundCue scan.
-- Golden summary fixtures for targeted `ResonanceSubmixDefault` L2 SoundSubmix scan and `ResonanceReverbDefault` L2 SoundSubmix effect preset scan.
-- Golden summary fixtures for targeted `SM_Cube`, `T_GridChecker_A`, `ScenePreviewCube`, and `T_MediaPlate` L2 Render scans.
-- Golden summary fixtures for targeted `M_PrototypeGrid`, `MI_PrototypeGrid_Gray`, `MF_ProcGrid`, and `QMPC_GlobalFoliageActor` L2 Material scans.
-- Checked AI, StateTree, and Gameplay Ability System fixtures now cover zero-diagnostic scan/golden paths; richer non-empty authored samples remain useful future coverage for BehaviorTree nodes, EQS options/tests, StateTree state hierarchies, and registered GameplayTag payloads.
+- UE5.3 editor module and `UEPIIndex` commandlet.
+- Read-only Asset Registry, UObject Reflection, Blueprint, Animation, World, Data, UI, AI, GAS, Niagara, PCG, MetaSound, Audio, Cinematics, Render, and Material readers from the v1 line.
+- Snapshot Store v2 layout under `Saved/UEProjectIntelligence/store`.
+- Editor dashboard `Run Snapshot Scan` action that writes `saved.json`.
+- Commandlet one-shot Snapshot writer.
+- Python `Services/uepi` query package.
+- Ten-tool stdio MCP server: status, overview, search, context, asset, blueprint, blueprint trace, animation, impact, diff.
+- v2 MCP smoke test without daemon, worker, HTTP, Web UI, or SQLite service.
 
-## Next Major Milestones
+## Removed From Mainline
 
-- More specialized Blueprint/AnimBlueprint/ControlRig semantic adapters, CFG loop/dominator analysis, and SSA/path-sensitive DFG.
-- Automatic refresh jobs, rename/move heuristics, engine-plugin package fingerprint resolution, and deeper domain semantic diffing.
-- Broader asset-domain coverage and CI automation for the existing golden fixtures.
-- Clang/compile-database backed C++ symbol indexing.
+- Local daemon.
+- HTTP API.
+- Web UI.
+- Worker registration, heartbeat, queue, lease, and job APIs.
+- Commandlet worker mode.
+- Extension SDK interfaces.
+- Write-operation and runtime-evaluation settings.
+
+## Next
+
+- Per-asset immutable fragments instead of full-scan project fragments.
+- Live overlay and automatic invalidation queue.
+- Rebuildable SQLite v2 cache for faster large-project queries.
+- Broader v2 fixtures around the new Snapshot store.

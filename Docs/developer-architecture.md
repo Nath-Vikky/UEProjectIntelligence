@@ -1,27 +1,24 @@
-# UEPI Developer Architecture
+# Developer Architecture
 
-UEPI is split into three layers:
+UEPI 2.0-dev has one default read path:
 
-- Unreal editor plugin: read-only asset scanning, static graph extraction, dirty package guard, editor dashboard, and content browser entry points.
-- Local daemon: SQLite index, history, diff, stale checks, query/export APIs, Web UI serving, MCP stdio adapter, safety checks, and release tooling.
-- Artifacts: JSON scan snapshots, golden summaries, performance baselines, MCP result artifacts, release manifests, and optional graph exports.
+```text
+UE Editor Plugin / UEPIIndex Commandlet
+  -> Snapshot Store
+  -> Services/uepi stdio MCP
+  -> AI client
+```
 
-## Data Flow
+## Components
 
-1. Commandlet or editor subsystem writes a scan JSON artifact.
-2. `uepi_daemon.py ingest` stores scan, entity, relation, diagnostic, and asset revision rows in SQLite.
-3. CLI, HTTP, MCP, and Web UI call the same query helpers.
-4. Large or budgeted results are served as artifacts rather than oversized inline responses.
+- `Source/UEProjectIntelligence`: Unreal-only readers and Snapshot writer.
+- `Saved/UEProjectIntelligence/store`: immutable Snapshot objects and manifests.
+- `Services/uepi`: Python query package and stdio MCP server.
+- `Tools/test_snapshot_mcp_v2.py`: MCP contract smoke test.
 
-## Read-Only Boundary
+## Boundaries
 
-The scanner may load assets for inspection but does not save packages, compile Blueprints by default, rename assets, delete assets, or mutate content. Dirty package state is checked after scans and surfaced as diagnostics.
-
-## Extension Points
-
-`UEPIExtensionInterfaces.h` defines:
-
-- `UE::ProjectIntelligence::IAssetAdapter`
-- `UE::ProjectIntelligence::INodeSemanticAdapter`
-
-Adapters should register through Unreal modular features and emit UEPI entities/relations with stable IDs, evidence, and completeness metadata.
+- Unreal code is the only layer that loads assets.
+- MCP never writes project assets, config, or source.
+- SQLite is not a fact source in this line; it may return later only as a rebuildable cache.
+- Daemon, HTTP, Web UI, worker queue, and extension SDK code are not part of the default product.

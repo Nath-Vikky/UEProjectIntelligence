@@ -1,35 +1,17 @@
-# UEPI v1.0 Support Matrix
+# Support Matrix
 
-Baseline:
+## Supported In 2.0-dev
 
-- Unreal Engine: UE 5.3.x Win64.
-- Project content: `/Game` and project plugin content.
-- Engine content: reference tracking by default, deep scans only by explicit scope.
-- Runtime mutation: out of scope for v1.0.
+- UE 5.3.2 editor and commandlet collection.
+- Saved Snapshot querying while the editor is closed.
+- Blueprint static graph entities when captured in an L2 Snapshot.
+- Animation static metadata and motion summaries when captured in an L2 Snapshot.
+- Asset search, context, impact, and generation diff over Snapshot data.
+- Codex stdio MCP via `Services/uepi/src/uepi/mcp_server.py`.
 
-Supported surfaces:
+## Not Supported In 2.0-dev
 
-- CLI: commandlet scan, daemon ingest/query/export/report/security tools.
-- HTTP: localhost query API and Web UI.
-- MCP: stdio adapter for query, report, artifact, integrity, and security workflows.
-- Editor: dashboard tab, content browser entry, metadata scan, incremental event log.
-
-Coverage:
-
-- Blueprint source graph and projected graph relations.
-- UObject reflection snapshots.
-- World/Actor/component static structure.
-- DataTable, UDS, enum, curves, CurveLinearColorAtlas.
-- Skeleton, skeletal mesh, animation sequence, blend space, pose asset, IK, retargeter, physics asset, AnimBP, Control Rig.
-- Enhanced Input, CommonUI, WidgetBlueprint.
-- AI, StateTree, Gameplay Ability System.
-- Material, render assets, Niagara, PCG, MetaSound, Audio, LevelSequence.
-- Config, project/plugin descriptors, source file summaries, and asset references.
-
-Known v1.0 limits:
-
-- No automatic asset edits or refactors.
-- No default Blueprint compile.
-- No runtime gameplay execution.
-- AnimBP dynamic final pose remains context-dependent and must report missing runtime context.
-- Optional Parquet and official MCP SDK packages are host-installed extras.
+- Asset writes, saves, deletes, renames, or Blueprint compiles.
+- Runtime pose evaluation.
+- Daemon, HTTP, Web UI, worker queue, or remote service deployment.
+- Third-party extension SDK.

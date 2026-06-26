@@ -1,22 +1,11 @@
 #include "UEPISettings.h"
 
 UUEPISettings::UUEPISettings()
-	: bAutoConnectDaemon(true)
-	, DaemonHost(TEXT("127.0.0.1"))
-	, DaemonPort(8765)
-	, bAutoStartDaemon(true)
-	, bEnableLiveIncrementalIndex(true)
-	, bAllowBlueprintCompile(false)
-	, bAllowPackageSave(false)
-	, bEnableRuntimeEvaluation(false)
-	, bIncludeGameContent(true)
+	: bIncludeGameContent(true)
 	, bIncludeProjectPluginContent(true)
 	, bIncludeEngineContent(false)
 	, MaxAssetsPerBatch(50)
-	, MaxGameThreadBudgetMs(8.0f)
-	, MaxPropertyDepth(16)
 	, MaxInlineCollectionItems(1000)
-	, GarbageCollectEveryBatches(10)
 {
 }
 

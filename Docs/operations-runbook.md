@@ -1,42 +1,30 @@
-# UEPI Operations Runbook
+# Operations Runbook
 
-## Health
-
-```powershell
-python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py `
-  --db Saved\UEProjectIntelligence\index.sqlite3 health
-```
-
-## Integrity And Recovery
+## Build
 
 ```powershell
-python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py `
-  --db Saved\UEProjectIntelligence\index.sqlite3 integrity
-
-python Plugins\UEProjectIntelligence\Services\uepi_daemon\uepi_daemon.py `
-  --db Saved\UEProjectIntelligence\index.sqlite3 recover
+& "F:\Epic Games\don\UE_5.3\Engine\Build\BatchFiles\Build.bat" GasDemoEditor Win64 Development `
+  "-Project=F:\Epic Games\UE5project\GasDemo\GasDemo.uproject" -WaitMutex -NoHotReload
 ```
 
-`recover` checkpoints WAL, runs SQLite optimize, and returns integrity status.
-
-## Security Audit
+## Generate Snapshot
 
 ```powershell
-python Plugins\UEProjectIntelligence\Tools\security_fuzz_audit.py
+& "F:\Epic Games\don\UE_5.3\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  "F:\Epic Games\UE5project\GasDemo\GasDemo.uproject" `
+  -run=UEPIIndex -UEPILevel=L2 -unattended -nop4 -nosplash
 ```
 
-## Performance Baseline
+## Validate MCP
 
 ```powershell
-python Plugins\UEProjectIntelligence\Tools\benchmark_daemon.py `
-  --entities 2000 `
-  --report Saved\UEProjectIntelligence\performance_baseline.json
+python -m compileall Plugins\UEProjectIntelligence\Services\uepi\src
+python Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py
 ```
 
-## Release Package
+## Inspect Snapshot
 
 ```powershell
-python Plugins\UEProjectIntelligence\Tools\package_release.py
+$env:PYTHONPATH="F:\Epic Games\UE5project\GasDemo\Plugins\UEProjectIntelligence\Services\uepi\src"
+python -m uepi status --project "F:\Epic Games\UE5project\GasDemo\GasDemo.uproject"
 ```
-
-The generated manifest includes install, upgrade, and uninstall plans.
