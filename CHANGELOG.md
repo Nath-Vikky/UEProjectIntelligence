@@ -6,6 +6,7 @@
 - Reframed `main` around UE plugin collection, Snapshot Store, and stdio MCP as the only default AI entry point.
 - Added the initial Snapshot Store v2 C++ writer skeleton with canonical `Saved/UEProjectIntelligence/store` and `cache` layout.
 - Converted the UEPIIndex commandlet toward a one-shot Snapshot writer and removed its daemon worker mode.
+- Routed the Editor dashboard scan action through Snapshot Store and removed worker/web controls from the default dashboard UI.
 - Marked daemon, worker, HTTP API, job queue, and Web UI flows as legacy v1 architecture to be removed from the default product.
 - Preserved the previous stable daemon-compatible loop as tag `v1.0.0`.
 

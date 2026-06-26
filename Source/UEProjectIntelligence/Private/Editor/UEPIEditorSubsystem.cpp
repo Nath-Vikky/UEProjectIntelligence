@@ -16,6 +16,7 @@
 #include "Serialization/JsonWriter.h"
 #include "UEPIAssetRegistryScanner.h"
 #include "UEPISettings.h"
+#include "UEPISnapshotStore.h"
 
 namespace
 {
@@ -220,14 +221,6 @@ void UUEPIEditorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		WorkerTickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UUEPIEditorSubsystem::TickLiveWorker), 1.0f);
 	}
 
-	if (const UUEPISettings* Settings = GetDefault<UUEPISettings>())
-	{
-		if (Settings->bAutoConnectDaemon)
-		{
-			FString Error;
-			StartLiveWorker(UEPIDaemonUrlFromSettings(), FString(), Error);
-		}
-	}
 }
 
 void UUEPIEditorSubsystem::Deinitialize()
@@ -262,7 +255,20 @@ bool UUEPIEditorSubsystem::RunMetadataScan(FString OutputPath, FString& OutRepor
 		return false;
 	}
 
-	OutReportPath = FPaths::ConvertRelativePathToFull(Options.OutputPath);
+	UE::ProjectIntelligence::FSnapshotCommitOptions CommitOptions;
+	CommitOptions.DataMode = TEXT("saved");
+	CommitOptions.WriterMode = TEXT("editor");
+	CommitOptions.SourceScanPath = Options.OutputPath;
+
+	UE::ProjectIntelligence::FSnapshotCommitResult CommitResult;
+	if (!UE::ProjectIntelligence::FSnapshotStore::CommitProjectScan(Result, CommitOptions, CommitResult, ErrorText))
+	{
+		OutReportPath.Reset();
+		OutError = ErrorText.ToString();
+		return false;
+	}
+
+	OutReportPath = CommitResult.ManifestPath;
 	OutError.Reset();
 	return Result.Diagnostics.Num() == 0;
 }

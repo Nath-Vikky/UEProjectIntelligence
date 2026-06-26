@@ -2,11 +2,15 @@
 
 #include "UEProjectIntelligence.h"
 
+#include "Dom/JsonObject.h"
 #include "Editor.h"
 #include "Framework/Docking/TabManager.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformProcess.h"
+#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "Styling/AppStyle.h"
 #include "ToolMenus.h"
 #include "UEPIEditorSubsystem.h"
@@ -36,9 +40,51 @@ namespace
 		return FPaths::Combine(UEPISavedDirectory(), TEXT("last_scan.json"));
 	}
 
-	FString UEPIWebUiPath()
+	FString UEPISnapshotManifestPath()
 	{
-		return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectPluginsDir(), TEXT("UEProjectIntelligence"), TEXT("Web"), TEXT("index.html")));
+		return FPaths::Combine(UEPISavedDirectory(), TEXT("store"), TEXT("manifests"), TEXT("saved.json"));
+	}
+
+	FString UEPISnapshotSummary()
+	{
+		const FString ManifestPath = UEPISnapshotManifestPath();
+		FString ManifestText;
+		if (!FFileHelper::LoadFileToString(ManifestText, *ManifestPath))
+		{
+			return TEXT("not generated");
+		}
+
+		TSharedPtr<FJsonObject> Manifest;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ManifestText);
+		if (!FJsonSerializer::Deserialize(Reader, Manifest) || !Manifest.IsValid())
+		{
+			return TEXT("unreadable");
+		}
+
+		int32 Generation = 0;
+		Manifest->TryGetNumberField(TEXT("generation"), Generation);
+		FString CreatedAtUtc;
+		Manifest->TryGetStringField(TEXT("created_at_utc"), CreatedAtUtc);
+
+		int32 EntityCount = 0;
+		int32 RelationCount = 0;
+		int32 DiagnosticCount = 0;
+		if (Manifest->HasTypedField<EJson::Object>(TEXT("counts")))
+		{
+			const TSharedPtr<FJsonObject> Counts = Manifest->GetObjectField(TEXT("counts"));
+			Counts->TryGetNumberField(TEXT("entities"), EntityCount);
+			Counts->TryGetNumberField(TEXT("relations"), RelationCount);
+			Counts->TryGetNumberField(TEXT("diagnostics"), DiagnosticCount);
+		}
+
+		return FString::Printf(
+			TEXT("generation=%d created=%s entities=%d relations=%d diagnostics=%d path=%s"),
+			Generation,
+			CreatedAtUtc.IsEmpty() ? TEXT("-") : *CreatedAtUtc,
+			EntityCount,
+			RelationCount,
+			DiagnosticCount,
+			*ManifestPath);
 	}
 }
 
@@ -151,16 +197,8 @@ TSharedRef<SDockTab> FUEProjectIntelligenceModule::SpawnDashboardTab(const FSpaw
 						.Padding(0.0f, 0.0f, 8.0f, 0.0f)
 						[
 							SNew(SButton)
-							.Text(LOCTEXT("UEPIRunScanButton", "Run Metadata Scan"))
+							.Text(LOCTEXT("UEPIRunScanButton", "Run Snapshot Scan"))
 							.OnClicked_Raw(this, &FUEProjectIntelligenceModule::RunMetadataScan)
-						]
-						+ SHorizontalBox::Slot()
-						.AutoWidth()
-						.Padding(0.0f, 0.0f, 8.0f, 0.0f)
-						[
-							SNew(SButton)
-							.Text(LOCTEXT("UEPIStartWorkerButton", "Start Live Worker"))
-							.OnClicked_Raw(this, &FUEProjectIntelligenceModule::StartLiveWorker)
 						]
 						+ SHorizontalBox::Slot()
 						.AutoWidth()
@@ -178,13 +216,6 @@ TSharedRef<SDockTab> FUEProjectIntelligenceModule::SpawnDashboardTab(const FSpaw
 							.Text(LOCTEXT("UEPIOpenSavedButton", "Open Saved"))
 							.OnClicked_Raw(this, &FUEProjectIntelligenceModule::OpenSavedFolder)
 						]
-						+ SHorizontalBox::Slot()
-						.AutoWidth()
-						[
-							SNew(SButton)
-							.Text(LOCTEXT("UEPIOpenWebButton", "Open Web"))
-							.OnClicked_Raw(this, &FUEProjectIntelligenceModule::OpenWebUi)
-						]
 					]
 				]
 			]
@@ -194,7 +225,6 @@ TSharedRef<SDockTab> FUEProjectIntelligenceModule::SpawnDashboardTab(const FSpaw
 FText FUEProjectIntelligenceModule::GetDashboardStatusText() const
 {
 	int32 IncrementalEventCount = 0;
-	FString WorkerStatus = TEXT("not registered");
 	if (GEditor)
 	{
 		if (const UUEPIEditorSubsystem* Subsystem = GEditor->GetEditorSubsystem<UUEPIEditorSubsystem>())
@@ -202,31 +232,20 @@ FText FUEProjectIntelligenceModule::GetDashboardStatusText() const
 			TArray<FUEPIIncrementalEvent> Events;
 			Subsystem->GetIncrementalEvents(Events);
 			IncrementalEventCount = Events.Num();
-			const FUEPIWorkerSessionStatus Status = Subsystem->GetWorkerSessionStatus();
-			WorkerStatus = FString::Printf(
-				TEXT("%s worker=%s session=%s polling=%s active_job=%s completed=%d error=%s"),
-				*Status.Status,
-				Status.WorkerId.IsEmpty() ? TEXT("-") : *Status.WorkerId,
-				Status.SessionId.IsEmpty() ? TEXT("-") : *Status.SessionId,
-				Status.bPollingEnabled ? TEXT("yes") : TEXT("no"),
-				Status.ActiveJobId.IsEmpty() ? TEXT("-") : *Status.ActiveJobId,
-				Status.CompletedJobCount,
-				Status.LastError.IsEmpty() ? TEXT("-") : *Status.LastError);
 		}
 	}
 
 	const FString LastScan = UEPILastScanPath();
-	const FString WebUi = UEPIWebUiPath();
+	const FString SnapshotSummary = UEPISnapshotSummary();
 	return FText::Format(
 		LOCTEXT(
 			"UEPIDashboardStatus",
-			"Project: {0}\nLast scan: {1}\nIncremental events: {2}\nLive worker: {3}\nSaved directory: {4}\nWeb UI: {5}"),
+			"Project: {0}\nSnapshot: {1}\nLast scan artifact: {2}\nIncremental events: {3}\nSaved directory: {4}"),
 		FText::FromString(FApp::GetProjectName()),
+		FText::FromString(SnapshotSummary),
 		FText::FromString(FPaths::FileExists(LastScan) ? LastScan : FString(TEXT("not generated"))),
 		FText::AsNumber(IncrementalEventCount),
-		FText::FromString(WorkerStatus),
-		FText::FromString(UEPISavedDirectory()),
-		FText::FromString(FPaths::FileExists(WebUi) ? WebUi : FString(TEXT("not installed"))));
+		FText::FromString(UEPISavedDirectory()));
 }
 
 FText FUEProjectIntelligenceModule::GetLastActionText() const
@@ -253,29 +272,8 @@ FReply FUEProjectIntelligenceModule::RunMetadataScan()
 	FString Error;
 	const bool bSuccess = Subsystem->RunMetadataScan(FString(), ReportPath, Error);
 	LastActionMessage = bSuccess
-		? FString::Printf(TEXT("Metadata scan wrote %s"), *ReportPath)
-		: FString::Printf(TEXT("Metadata scan completed with diagnostics or error: %s"), Error.IsEmpty() ? *ReportPath : *Error);
-	return FReply::Handled();
-}
-
-FReply FUEProjectIntelligenceModule::StartLiveWorker()
-{
-	if (!GEditor)
-	{
-		LastActionMessage = TEXT("Editor is not available.");
-		return FReply::Handled();
-	}
-
-	UUEPIEditorSubsystem* Subsystem = GEditor->GetEditorSubsystem<UUEPIEditorSubsystem>();
-	if (!Subsystem)
-	{
-		LastActionMessage = TEXT("UEPI editor subsystem is not available.");
-		return FReply::Handled();
-	}
-
-	FString Error;
-	const bool bStarted = Subsystem->StartLiveWorker(FString(), FString(), Error);
-	LastActionMessage = bStarted ? TEXT("Live worker registration started.") : Error;
+		? FString::Printf(TEXT("Snapshot scan wrote manifest %s"), *ReportPath)
+		: FString::Printf(TEXT("Snapshot scan completed with diagnostics or error: %s"), Error.IsEmpty() ? *ReportPath : *Error);
 	return FReply::Handled();
 }
 
@@ -308,16 +306,6 @@ FReply FUEProjectIntelligenceModule::OpenSavedFolder() const
 	const FString SavedDirectory = UEPISavedDirectory();
 	IFileManager::Get().MakeDirectory(*SavedDirectory, true);
 	FPlatformProcess::ExploreFolder(*SavedDirectory);
-	return FReply::Handled();
-}
-
-FReply FUEProjectIntelligenceModule::OpenWebUi() const
-{
-	const FString WebUi = UEPIWebUiPath();
-	if (FPaths::FileExists(WebUi))
-	{
-		FPlatformProcess::LaunchFileInDefaultExternalApplication(*WebUi);
-	}
 	return FReply::Handled();
 }
 
