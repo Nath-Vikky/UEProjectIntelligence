@@ -12,6 +12,7 @@
 - Animation static metadata and motion summaries when captured in an L2 Snapshot.
 - Asset search, context, impact, and generation diff over Snapshot data.
 - Codex stdio MCP via `Services/uepi/src/uepi/mcp_server.py`.
+- Optional domain plugin references are declared as non-enabled optional dependencies.
 
 ## Not Supported In 2.0-dev
 
@@ -19,3 +20,4 @@
 - Runtime pose evaluation.
 - Daemon, HTTP, Web UI, worker queue, or remote service deployment.
 - Third-party extension SDK.
+- Full optional-reader compile-time isolation; some optional domain modules are still linked by the editor module in 2.0-dev.

@@ -24,39 +24,58 @@
 	"Plugins": [
 		{
 			"Name": "EnhancedInput",
-			"Enabled": true
+			"Enabled": false,
+			"Optional": true
 		},
 		{
 			"Name": "CommonUI",
-			"Enabled": true
+			"Enabled": false,
+			"Optional": true
 		},
 		{
 			"Name": "GameplayAbilities",
-			"Enabled": true
+			"Enabled": false,
+			"Optional": true
 		},
 		{
 			"Name": "StateTree",
-			"Enabled": true
+			"Enabled": false,
+			"Optional": true
 		},
 		{
 			"Name": "IKRig",
-			"Enabled": true
+			"Enabled": false,
+			"Optional": true
 		},
 		{
 			"Name": "ControlRig",
-			"Enabled": true
+			"Enabled": false,
+			"Optional": true
+		},
+		{
+			"Name": "RigVM",
+			"Enabled": false,
+			"Optional": true
+		},
+		{
+			"Name": "StructUtils",
+			"Enabled": false,
+			"Optional": true
 		},
 		{
 			"Name": "Niagara",
-			"Enabled": true
+			"Enabled": false,
+			"Optional": true
 		},
 		{
 			"Name": "PCG",
-			"Enabled": true
+			"Enabled": false,
+			"Optional": true
 		},
 		{
 			"Name": "Metasound",
-			"Enabled": true
+			"Enabled": false,
+			"Optional": true
 		}
 	]
 }
