@@ -879,15 +879,45 @@ FProjectScanResult FAssetRegistryScanner::ScanProject(const FScanOptions& Option
 		Result.Completeness.Covered.AddUnique(TEXT("dfg_def_use"));
 		Result.Completeness.Covered.AddUnique(TEXT("blueprint_semantics_first_pass"));
 		Result.Completeness.Covered.AddUnique(TEXT("world_structure"));
+#if UEPI_WITH_ENHANCED_INPUT
 		Result.Completeness.Covered.AddUnique(TEXT("enhanced_input_assets"));
+#else
+		Result.Completeness.Omitted.AddUnique(TEXT("enhanced_input_reader_disabled"));
+#endif
 		Result.Completeness.Covered.AddUnique(TEXT("animation_static_assets"));
 		Result.Completeness.Covered.AddUnique(TEXT("data_static_assets"));
-				Result.Completeness.Covered.AddUnique(TEXT("niagara_static_assets"));
-				Result.Completeness.Covered.AddUnique(TEXT("render_static_assets"));
-				Result.Completeness.Covered.AddUnique(TEXT("material_graphs"));
-				Result.Completeness.Covered.AddUnique(TEXT("cinematics_static_assets"));
-				Result.Completeness.Covered.AddUnique(TEXT("pcg_graphs"));
-				Result.Completeness.Covered.AddUnique(TEXT("ui_widget_blueprints"));
+#if UEPI_WITH_NIAGARA
+		Result.Completeness.Covered.AddUnique(TEXT("niagara_static_assets"));
+#else
+		Result.Completeness.Omitted.AddUnique(TEXT("niagara_reader_disabled"));
+#endif
+		Result.Completeness.Covered.AddUnique(TEXT("render_static_assets"));
+		Result.Completeness.Covered.AddUnique(TEXT("material_graphs"));
+		Result.Completeness.Covered.AddUnique(TEXT("cinematics_static_assets"));
+#if UEPI_WITH_PCG
+		Result.Completeness.Covered.AddUnique(TEXT("pcg_graphs"));
+#else
+		Result.Completeness.Omitted.AddUnique(TEXT("pcg_reader_disabled"));
+#endif
+		Result.Completeness.Covered.AddUnique(TEXT("ui_widget_blueprints"));
+#if !UEPI_WITH_COMMON_UI
+		Result.Completeness.Omitted.AddUnique(TEXT("common_ui_reader_disabled"));
+#endif
+#if !UEPI_WITH_GAMEPLAY_ABILITIES
+		Result.Completeness.Omitted.AddUnique(TEXT("gameplay_abilities_reader_disabled"));
+#endif
+#if !UEPI_WITH_STATE_TREE
+		Result.Completeness.Omitted.AddUnique(TEXT("state_tree_reader_disabled"));
+#endif
+#if !UEPI_WITH_METASOUND
+		Result.Completeness.Omitted.AddUnique(TEXT("metasound_reader_disabled"));
+#endif
+#if !UEPI_WITH_IK_RIG
+		Result.Completeness.Omitted.AddUnique(TEXT("ik_rig_reader_disabled"));
+#endif
+#if !UEPI_WITH_CONTROL_RIG
+		Result.Completeness.Omitted.AddUnique(TEXT("control_rig_reader_disabled"));
+#endif
 		Result.Completeness.Omitted.Remove(TEXT("blueprint_graphs"));
 		Result.Completeness.Omitted.Remove(TEXT("animation_data"));
 		Result.Completeness.Omitted.Remove(TEXT("cfg_basic_blocks"));

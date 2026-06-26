@@ -1,5 +1,7 @@
 #include "UEPICommonUIReader.h"
 
+#if UEPI_WITH_COMMON_UI
+
 #include "CommonInputBaseTypes.h"
 #include "CommonInputTypeEnum.h"
 #include "CommonUITypes.h"
@@ -559,8 +561,6 @@ void AppendInputActionRelation(
 		OutRelations,
 		&Attributes);
 }
-}
-
 bool FCommonUIReader::AppendCommonUIAsset(
 	UObject& Asset,
 	const FString& ProjectId,
@@ -641,3 +641,20 @@ bool FCommonUIReader::AppendCommonUIAsset(
 	return false;
 }
 }
+
+#else
+
+namespace UE::ProjectIntelligence
+{
+bool FCommonUIReader::AppendCommonUIAsset(
+	UObject& Asset,
+	const FString& ProjectId,
+	FEntityRecord& AssetEntity,
+	TArray<FEntityRecord>& OutEntities,
+	TArray<FRelationRecord>& OutRelations)
+{
+	return false;
+}
+}
+
+#endif

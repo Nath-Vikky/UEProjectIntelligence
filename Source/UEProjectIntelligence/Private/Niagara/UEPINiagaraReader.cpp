@@ -1,5 +1,7 @@
 #include "UEPINiagaraReader.h"
 
+#if UEPI_WITH_NIAGARA
+
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "NiagaraCommon.h"
@@ -1169,8 +1171,6 @@ TSharedRef<FJsonObject> NiagaraSystemSnapshot(
 	Object->SetArrayField(TEXT("emitters"), EmitterValues);
 	return Object;
 }
-}
-
 bool FNiagaraReader::AppendNiagaraAsset(
 	UObject& Asset,
 	const FString& ProjectId,
@@ -1322,3 +1322,20 @@ bool FNiagaraReader::AppendNiagaraAsset(
 	return false;
 }
 }
+
+#else
+
+namespace UE::ProjectIntelligence
+{
+bool FNiagaraReader::AppendNiagaraAsset(
+	UObject& Asset,
+	const FString& ProjectId,
+	FEntityRecord& AssetEntity,
+	TArray<FEntityRecord>& OutEntities,
+	TArray<FRelationRecord>& OutRelations)
+{
+	return false;
+}
+}
+
+#endif

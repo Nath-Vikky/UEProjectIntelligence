@@ -1,5 +1,7 @@
 #include "UEPIStateTreeReader.h"
 
+#if UEPI_WITH_STATE_TREE
+
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Misc/PackageName.h"
@@ -657,8 +659,6 @@ TSharedRef<FJsonObject> StateTreeSnapshot(
 	Object->SetArrayField(TEXT("context_data"), ContextDataValues);
 	return Object;
 }
-}
-
 bool FStateTreeReader::AppendStateTreeAsset(
 	UObject& Asset,
 	const FString& ProjectId,
@@ -708,3 +708,20 @@ bool FStateTreeReader::AppendStateTreeAsset(
 	return true;
 }
 }
+
+#else
+
+namespace UE::ProjectIntelligence
+{
+bool FStateTreeReader::AppendStateTreeAsset(
+	UObject& Asset,
+	const FString& ProjectId,
+	FEntityRecord& AssetEntity,
+	TArray<FEntityRecord>& OutEntities,
+	TArray<FRelationRecord>& OutRelations)
+{
+	return false;
+}
+}
+
+#endif

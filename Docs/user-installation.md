@@ -24,6 +24,12 @@ Use the editor dashboard button `Run Snapshot Scan`, or run the `UEPIIndex` comm
 Saved/UEProjectIntelligence/store/
 ```
 
+## Optional Domain Readers
+
+UEPI does not force-enable optional Unreal plugins. Readers such as EnhancedInput, CommonUI, GameplayAbilities, StateTree, IKRig, ControlRig, Niagara, PCG, and MetaSound compile only when the project explicitly enables the matching plugin, or when `UEPI_OPTIONAL_READERS` is set to `all` or a comma-separated plugin list before building.
+
+When an optional reader is disabled, UEPI still reports basic Asset Registry and reflection metadata for those assets.
+
 ## Codex MCP
 
 Configure Codex to launch:

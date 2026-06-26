@@ -5,8 +5,8 @@
 ## Implemented
 
 - UE5.3 editor module and `UEPIIndex` commandlet.
-- Read-only Asset Registry, UObject Reflection, Blueprint, Animation, World, Data, UI, AI, GAS, Niagara, PCG, MetaSound, Audio, Cinematics, Render, and Material readers from the v1 line.
-- Optional domain plugins are no longer force-enabled by the UEPI descriptor; remaining module dependencies are tracked for deeper Reader Gate cleanup.
+- Read-only Asset Registry, UObject Reflection, Blueprint, Animation, World, Data, UI, AI, Audio, Cinematics, Render, and Material readers.
+- Optional domain readers for EnhancedInput, CommonUI, GameplayAbilities, StateTree, IKRig, ControlRig, Niagara, PCG, and MetaSound are compile-gated and return safe no-op readers when their UE plugins are not explicitly enabled.
 - Snapshot Store v2 layout under `Saved/UEProjectIntelligence/store`.
 - Immutable `asset_fragment` objects are written for each indexed asset and referenced from Snapshot manifests.
 - Full `project_scan` fragments are still written as a compatibility bridge until the query cache no longer needs them.
@@ -23,6 +23,7 @@
 - Blueprint derived projections now report `confidence_basis` and use sub-1.0 confidence for static derived flows.
 - Ten-tool stdio MCP server: status, overview, search, context, asset, blueprint, blueprint trace, animation, impact, diff.
 - v2 MCP smoke test without daemon, worker, HTTP, Web UI, or SQLite service, including saved+live overlay merge.
+- Reader Gate build validation with optional domain modules disabled by default and Blueprint L2 commandlet smoke coverage.
 
 ## Removed From Mainline
 
@@ -39,5 +40,4 @@
 - Remove the compatibility full-scan `project_scan` fragment after the SQLite v2 cache and fragment-only tests are complete.
 - Migrate generic string attributes to typed v2 attribute values.
 - Route large-project search and graph traversal through the SQLite v2 cache when it is synced.
-- Split optional domain readers behind true optional compile/runtime gates to remove UBT dependency warnings.
 - Broader v2 fixtures around the new Snapshot store.

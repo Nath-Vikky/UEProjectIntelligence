@@ -1,5 +1,7 @@
 #include "UEPIMetaSoundReader.h"
 
+#if UEPI_WITH_METASOUND
+
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Interfaces/MetasoundOutputFormatInterfaces.h"
@@ -661,8 +663,6 @@ TSharedRef<FJsonObject> MetaSoundSnapshot(
 			DependencyValues.Num()));
 	return Object;
 }
-}
-
 bool FMetaSoundReader::AppendMetaSoundAsset(
 	UObject& Asset,
 	const FString& ProjectId,
@@ -719,3 +719,20 @@ bool FMetaSoundReader::AppendMetaSoundAsset(
 	return true;
 }
 }
+
+#else
+
+namespace UE::ProjectIntelligence
+{
+bool FMetaSoundReader::AppendMetaSoundAsset(
+	UObject& Asset,
+	const FString& ProjectId,
+	FEntityRecord& AssetEntity,
+	TArray<FEntityRecord>& OutEntities,
+	TArray<FRelationRecord>& OutRelations)
+{
+	return false;
+}
+}
+
+#endif

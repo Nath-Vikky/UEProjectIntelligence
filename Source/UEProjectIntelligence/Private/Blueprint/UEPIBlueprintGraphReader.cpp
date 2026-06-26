@@ -19,7 +19,9 @@
 #include "AnimStateNode.h"
 #include "AnimStateNodeBase.h"
 #include "AnimStateTransitionNode.h"
+#if UEPI_WITH_CONTROL_RIG
 #include "ControlRigBlueprint.h"
+#endif
 #include "Components/ActorComponent.h"
 #include "Engine/Blueprint.h"
 #include "Engine/SCS_Node.h"
@@ -40,6 +42,7 @@
 #include "K2Node_Variable.h"
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
+#if UEPI_WITH_CONTROL_RIG
 #include "RigVMModel/RigVMClient.h"
 #include "RigVMModel/RigVMGraph.h"
 #include "RigVMModel/RigVMLink.h"
@@ -47,6 +50,7 @@
 #include "RigVMModel/RigVMPin.h"
 #include "Rigs/RigHierarchy.h"
 #include "Rigs/RigHierarchyElements.h"
+#endif
 #include "UObject/UnrealType.h"
 
 namespace UE::ProjectIntelligence
@@ -1287,6 +1291,8 @@ void AppendAnimBlueprintStaticSummary(
 	});
 }
 
+#if UEPI_WITH_CONTROL_RIG
+
 void AppendControlRigBlueprintStaticSummary(
 	UControlRigBlueprint& ControlRigBlueprint,
 	const FString& ProjectId,
@@ -1710,6 +1716,8 @@ void AppendControlRigBlueprintStaticSummary(
 		TEXT("Control Rig Blueprint static RigVM model and hierarchy metadata extracted from editor source data.")
 	});
 }
+
+#endif
 
 TSharedPtr<FJsonObject> AnnotateNodeSemantics(
 	const FString& ProjectId,
@@ -3005,10 +3013,12 @@ void FBlueprintGraphReader::AppendBlueprintGraph(
 	{
 		AppendAnimBlueprintStaticSummary(*AnimBlueprint, ProjectId, AssetEntity, AnimBlueprintNodeRecords, OutEntities, OutRelations);
 	}
+#if UEPI_WITH_CONTROL_RIG
 	if (UControlRigBlueprint* ControlRigBlueprint = Cast<UControlRigBlueprint>(&Blueprint))
 	{
 		AppendControlRigBlueprintStaticSummary(*ControlRigBlueprint, ProjectId, AssetEntity, OutEntities, OutRelations);
 	}
+#endif
 	AssetEntity.Attributes.Add(TEXT("blueprint_graph_count"), FString::FromInt(GraphValues.Num()));
 	AssetEntity.Completeness.State = ECompletenessState::Partial;
 	AssetEntity.Completeness.Covered.AddUnique(TEXT("blueprint_graphs"));

@@ -1,5 +1,7 @@
 #include "UEPIInputReader.h"
 
+#if UEPI_WITH_ENHANCED_INPUT
+
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "EnhancedActionKeyMapping.h"
@@ -207,8 +209,6 @@ TSharedRef<FJsonObject> MappingContextSnapshot(
 	Object->SetArrayField(TEXT("mappings"), MappingValues);
 	return Object;
 }
-}
-
 bool FInputReader::AppendInputAsset(
 	UObject& Asset,
 	const FString& ProjectId,
@@ -269,3 +269,20 @@ bool FInputReader::AppendInputAsset(
 	return false;
 }
 }
+
+#else
+
+namespace UE::ProjectIntelligence
+{
+bool FInputReader::AppendInputAsset(
+	UObject& Asset,
+	const FString& ProjectId,
+	FEntityRecord& AssetEntity,
+	TArray<FEntityRecord>& OutEntities,
+	TArray<FRelationRecord>& OutRelations)
+{
+	return false;
+}
+}
+
+#endif

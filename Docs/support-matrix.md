@@ -13,6 +13,8 @@
 - Asset search, context, impact, and generation diff over Snapshot data.
 - Codex stdio MCP via `Services/uepi/src/uepi/mcp_server.py`.
 - Optional domain plugin references are declared as non-enabled optional dependencies.
+- Optional domain readers are compile-gated by the project descriptor and do not link unrelated UE plugin modules by default.
+- `UEPI_OPTIONAL_READERS=all` or a comma-separated plugin list can force optional reader compilation for projects that intentionally use those domains.
 
 ## Not Supported In 2.0-dev
 
@@ -20,4 +22,4 @@
 - Runtime pose evaluation.
 - Daemon, HTTP, Web UI, worker queue, or remote service deployment.
 - Third-party extension SDK.
-- Full optional-reader compile-time isolation; some optional domain modules are still linked by the editor module in 2.0-dev.
+- Optional reader coverage for disabled plugins is downgraded to generic Asset Registry and reflection metadata.

@@ -8,6 +8,7 @@
 - Converted the UEPIIndex commandlet toward a one-shot Snapshot writer and removed its daemon worker mode.
 - Routed the Editor dashboard scan action through Snapshot Store and removed worker/web controls from the default dashboard UI.
 - Added the new Snapshot-backed `Services/uepi` Python query package and ten-tool stdio MCP server.
+- Added optional-reader compile gates so ordinary projects do not link EnhancedInput, CommonUI, GAS, StateTree, IKRig, ControlRig, Niagara, PCG, or MetaSound modules unless explicitly enabled.
 - Removed legacy daemon, HTTP/Web UI, worker/queue tooling, and extension SDK files from the mainline.
 - Marked daemon, worker, HTTP API, job queue, and Web UI flows as legacy v1 architecture to be removed from the default product.
 - Preserved the previous stable daemon-compatible loop as tag `v1.0.0`.

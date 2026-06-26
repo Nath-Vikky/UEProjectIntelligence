@@ -20,9 +20,11 @@
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "PhysicsEngine/PhysicsConstraintTemplate.h"
 #include "ReferenceSkeleton.h"
+#if UEPI_WITH_IK_RIG
 #include "Retargeter/IKRetargeter.h"
 #include "Rig/IKRigDefinition.h"
 #include "Rig/Solvers/IKRigSolver.h"
+#endif
 
 namespace UE::ProjectIntelligence
 {
@@ -2021,6 +2023,8 @@ TSharedRef<FJsonObject> PhysicsAssetSnapshot(
 	return Object;
 }
 
+#if UEPI_WITH_IK_RIG
+
 FString IKRigPreviewMeshPath(const UIKRigDefinition& IKRig)
 {
 	return IKRig.PreviewSkeletalMesh.ToSoftObjectPath().ToString();
@@ -2545,6 +2549,8 @@ TSharedRef<FJsonObject> IKRetargeterSnapshot(
 	Object->SetArrayField(TEXT("chain_maps"), ChainMapValues);
 	return Object;
 }
+
+#endif
 
 TSharedRef<FJsonObject> AnimSegmentJson(
 	const FAnimSegment& Segment,
@@ -3148,6 +3154,7 @@ bool FAnimationReader::AppendAnimationAsset(
 		return true;
 	}
 
+#if UEPI_WITH_IK_RIG
 	if (UIKRigDefinition* IKRig = Cast<UIKRigDefinition>(&Asset))
 	{
 		const FString IKRigId = AddIKRigEntity(ProjectId, *IKRig, OutEntities);
@@ -3218,6 +3225,7 @@ bool FAnimationReader::AppendAnimationAsset(
 		});
 		return true;
 	}
+#endif
 
 	if (UBlendSpace* BlendSpace = Cast<UBlendSpace>(&Asset))
 	{

@@ -1,5 +1,7 @@
 #include "UEPIPCGReader.h"
 
+#if UEPI_WITH_PCG
+
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Misc/PackageName.h"
@@ -738,8 +740,6 @@ TSharedRef<FJsonObject> PCGGraphSnapshot(
 	Object->SetObjectField(TEXT("universal_graph"), UniversalGraph);
 	return Object;
 }
-}
-
 bool FPCGReader::AppendPCGAsset(
 	UObject& Asset,
 	const FString& ProjectId,
@@ -787,3 +787,20 @@ bool FPCGReader::AppendPCGAsset(
 	return true;
 }
 }
+
+#else
+
+namespace UE::ProjectIntelligence
+{
+bool FPCGReader::AppendPCGAsset(
+	UObject& Asset,
+	const FString& ProjectId,
+	FEntityRecord& AssetEntity,
+	TArray<FEntityRecord>& OutEntities,
+	TArray<FRelationRecord>& OutRelations)
+{
+	return false;
+}
+}
+
+#endif

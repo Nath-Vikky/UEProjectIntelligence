@@ -1,5 +1,7 @@
 #include "UEPIGASReader.h"
 
+#if UEPI_WITH_GAMEPLAY_ABILITIES
+
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "AttributeSet.h"
@@ -858,8 +860,6 @@ TSharedRef<FJsonObject> ActorCueSnapshot(const UObject& Asset, const AGameplayCu
 	Object->SetNumberField(TEXT("num_preallocated_instances"), Cue.NumPreallocatedInstances);
 	return Object;
 }
-}
-
 bool FGASReader::AppendGASAsset(
 	UObject& Asset,
 	const FString& ProjectId,
@@ -952,3 +952,20 @@ bool FGASReader::AppendGASAsset(
 	return false;
 }
 }
+
+#else
+
+namespace UE::ProjectIntelligence
+{
+bool FGASReader::AppendGASAsset(
+	UObject& Asset,
+	const FString& ProjectId,
+	FEntityRecord& AssetEntity,
+	TArray<FEntityRecord>& OutEntities,
+	TArray<FRelationRecord>& OutRelations)
+{
+	return false;
+}
+}
+
+#endif
