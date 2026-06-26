@@ -5,6 +5,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Editor.h"
+#include "Engine/Blueprint.h"
 #include "HAL/FileManager.h"
 #include "Misc/App.h"
 #include "Misc/DateTime.h"
@@ -16,6 +17,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonWriter.h"
+#include "UObject/UObjectIterator.h"
 #include "UEPIAssetRegistryScanner.h"
 #include "UEPISnapshotStore.h"
 
@@ -79,7 +81,8 @@ namespace
 
 	bool UEPIIsScannableInvalidationEvent(const FString& EventType)
 	{
-		return EventType.Equals(TEXT("asset_renamed"), ESearchCase::IgnoreCase) ||
+		return EventType.Equals(TEXT("blueprint_compiled"), ESearchCase::IgnoreCase) ||
+			EventType.Equals(TEXT("asset_renamed"), ESearchCase::IgnoreCase) ||
 			EventType.Equals(TEXT("package_saved"), ESearchCase::IgnoreCase);
 	}
 
@@ -150,6 +153,7 @@ void UUEPIEditorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	{
 		StartLiveSession();
 		RegisterIncrementalDelegates();
+		RegisterLoadedBlueprintCompileDelegates();
 		CollectorTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
 			FTickerDelegate::CreateUObject(this, &UUEPIEditorSubsystem::TickCollector),
 			GUEPICollectorTickSeconds);
@@ -382,6 +386,7 @@ bool UUEPIEditorSubsystem::TickCollector(float DeltaTime)
 		WriteLiveSessionState(TEXT("active"));
 	}
 
+	RegisterLoadedBlueprintCompileDelegates();
 	ProcessInvalidationQueue();
 	ProcessRefreshRequests();
 	return true;
@@ -626,10 +631,7 @@ void UUEPIEditorSubsystem::RegisterIncrementalDelegates()
 		AssetUpdatedHandle = AssetRegistry.OnAssetUpdated().AddUObject(this, &UUEPIEditorSubsystem::HandleAssetUpdated);
 	}
 
-	if (GEditor && !BlueprintCompiledHandle.IsValid())
-	{
-		BlueprintCompiledHandle = GEditor->OnBlueprintCompiled().AddUObject(this, &UUEPIEditorSubsystem::HandleBlueprintCompiled);
-	}
+	RegisterLoadedBlueprintCompileDelegates();
 }
 
 void UUEPIEditorSubsystem::UnregisterIncrementalDelegates()
@@ -665,10 +667,33 @@ void UUEPIEditorSubsystem::UnregisterIncrementalDelegates()
 		}
 	}
 
-	if (GEditor && BlueprintCompiledHandle.IsValid())
+	for (TObjectIterator<UBlueprint> It; It; ++It)
 	{
-		GEditor->OnBlueprintCompiled().Remove(BlueprintCompiledHandle);
-		BlueprintCompiledHandle.Reset();
+		if (UBlueprint* Blueprint = *It)
+		{
+			Blueprint->OnCompiled().RemoveAll(this);
+		}
+	}
+}
+
+void UUEPIEditorSubsystem::RegisterLoadedBlueprintCompileDelegates()
+{
+	for (TObjectIterator<UBlueprint> It; It; ++It)
+	{
+		RegisterBlueprintCompileDelegate(*It);
+	}
+}
+
+void UUEPIEditorSubsystem::RegisterBlueprintCompileDelegate(UBlueprint* Blueprint)
+{
+	if (!Blueprint)
+	{
+		return;
+	}
+
+	if (!Blueprint->OnCompiled().IsBoundToObject(this))
+	{
+		Blueprint->OnCompiled().AddUObject(this, &UUEPIEditorSubsystem::HandleBlueprintCompiled);
 	}
 }
 
@@ -730,9 +755,23 @@ void UUEPIEditorSubsystem::HandleAssetUpdated(const FAssetData& AssetData)
 		FString());
 }
 
-void UUEPIEditorSubsystem::HandleBlueprintCompiled()
+void UUEPIEditorSubsystem::HandleBlueprintCompiled(UBlueprint* CompiledBlueprint)
 {
-	RecordIncrementalEvent(TEXT("blueprint_compiled"), FString(), FString(), TEXT("UBlueprint"), FString(), FString());
+	if (!CompiledBlueprint)
+	{
+		RecordIncrementalEvent(TEXT("blueprint_compiled"), FString(), FString(), TEXT("UBlueprint"), FString(), FString());
+		return;
+	}
+
+	const FString AssetPath = CompiledBlueprint->GetPathName();
+	const FString PackageName = CompiledBlueprint->GetOutermost() ? CompiledBlueprint->GetOutermost()->GetName() : FString();
+	RecordIncrementalEvent(
+		TEXT("blueprint_compiled"),
+		AssetPath,
+		PackageName,
+		CompiledBlueprint->GetClass() ? CompiledBlueprint->GetClass()->GetPathName() : TEXT("UBlueprint"),
+		FString(),
+		FString());
 }
 
 void UUEPIEditorSubsystem::RecordIncrementalEvent(

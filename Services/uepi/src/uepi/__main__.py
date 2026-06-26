@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
@@ -19,7 +20,7 @@ def emit(value: dict[str, Any]) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="UEPI v2 Snapshot query CLI.")
-    parser.add_argument("command", choices=["mcp", "sync", "status", "overview", "search", "asset"], nargs="?", default="status")
+    parser.add_argument("command", choices=["mcp", "sync", "compact", "status", "overview", "search", "asset"], nargs="?", default="status")
     parser.add_argument("--project", type=Path)
     parser.add_argument("--store", type=Path)
     parser.add_argument("--db", type=Path)
@@ -46,6 +47,31 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sync":
         store = SnapshotStore.from_paths(project=args.project, store=args.store, db=args.db)
         return emit(sync_cache(store))
+
+    if args.command == "compact":
+        store = SnapshotStore.from_paths(project=args.project, store=args.store, db=args.db)
+        state = store.load_state()
+        scan = store.load_project_scan(state)
+        artifacts_dir = store.store_dir / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        output_path = artifacts_dir / "current_view_compact.json"
+        payload = {
+            "schema_version": "uepi.current-view-compact.v1",
+            "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "source_manifest": str(state.manifest_path),
+            "data_mode": state.data_mode,
+            "generation": state.generation,
+            "counts": {
+                "entities": len(scan.get("entities") or []),
+                "relations": len(scan.get("relations") or []),
+                "diagnostics": len(scan.get("diagnostics") or []),
+                "tombstones": len(scan.get("tombstones") or []),
+            },
+            "scan": scan,
+        }
+        output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        cache = sync_cache(store)
+        return emit({"schema_version": "uepi.compact-result.v1", "output_path": str(output_path), "cache": cache})
 
     engine = make_engine(project=args.project, store=args.store, db=args.db)
     if args.command == "status":

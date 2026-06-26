@@ -16,6 +16,7 @@
 - Editor live session writes incremental change events without scanning the whole project on open.
 - Editor polls `store/requests` for MCP-created targeted refresh requests and scans only requested assets.
 - Asset removal and old rename paths are represented as `asset_tombstone` Snapshot fragments.
+- Blueprint compile events bind to loaded `UBlueprint::OnCompiled()` delegates and trigger targeted live refresh for the compiled Blueprint.
 - Targeted live Snapshot overlay writes to `manifests/live.json`.
 - Package-saved targeted scans append to the saved manifest instead of replacing the full saved baseline.
 - Commandlet one-shot Snapshot writer.
@@ -31,6 +32,9 @@
 - Blueprint derived projections now report `confidence_basis` and use sub-1.0 confidence for static derived flows.
 - Ten-tool stdio MCP server: status, overview, search, context, asset, blueprint, blueprint trace, animation, impact, diff.
 - v2 MCP smoke test without daemon, worker, HTTP, Web UI, or SQLite service, including saved+live overlay merge, tombstones, cache sync, initialize instructions, and targeted refresh request creation.
+- Synthetic Snapshot MCP fixture now covers deleted assets and renamed old-path tombstones with a valid new-path fragment.
+- Release packaging script supports `--version` and `--out`, validates required files, scans docs for local paths, writes commit SHA, and packages under a `UEProjectIntelligence/` zip root.
+- Public docs and Codex configuration template use `<UE_ROOT>`, `<PROJECT_ROOT>`, `<PROJECT_NAME>`, and `<PYTHON_EXE>` placeholders instead of local machine paths.
 - Reader Gate build validation with optional domain modules disabled by default and Blueprint L2 commandlet smoke coverage.
 
 ## Removed From Mainline
@@ -45,5 +49,5 @@
 
 ## Next
 
-- Broader real-project verification across Blueprint, animation, world, UI, AI, audio, PCG, Niagara, and material-heavy samples.
+- Broader real-project verification across blank, template, and feature sample projects.
 - Future write-operation work should remain separate from the current read-only MCP contract.

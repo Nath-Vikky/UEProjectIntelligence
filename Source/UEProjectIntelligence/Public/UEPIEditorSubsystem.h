@@ -112,6 +112,8 @@ public:
 private:
 	void RegisterIncrementalDelegates();
 	void UnregisterIncrementalDelegates();
+	void RegisterLoadedBlueprintCompileDelegates();
+	void RegisterBlueprintCompileDelegate(class UBlueprint* Blueprint);
 	void StartLiveSession();
 	void WriteLiveSessionState(const FString& State);
 	void StopLiveSession();
@@ -126,7 +128,7 @@ private:
 	void HandleAssetRemoved(const struct FAssetData& AssetData);
 	void HandleAssetRenamed(const struct FAssetData& AssetData, const FString& OldObjectPath);
 	void HandleAssetUpdated(const struct FAssetData& AssetData);
-	void HandleBlueprintCompiled();
+	void HandleBlueprintCompiled(class UBlueprint* CompiledBlueprint);
 
 	void RecordIncrementalEvent(
 		const FString& EventType,
@@ -157,5 +159,4 @@ private:
 	FDelegateHandle AssetRemovedHandle;
 	FDelegateHandle AssetRenamedHandle;
 	FDelegateHandle AssetUpdatedHandle;
-	FDelegateHandle BlueprintCompiledHandle;
 };

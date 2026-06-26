@@ -28,6 +28,15 @@ EXPECTED_TOOLS = {
 }
 
 
+def assert_envelope(value: dict[str, Any]) -> None:
+    assert value["schema_version"] == "uepi.mcp-envelope.v1"
+    assert isinstance(value.get("diagnostics"), list)
+    assert "state" in value
+    assert "data_mode" in value["state"]
+    assert "freshness" in value["state"]
+    assert "truncation" in value
+
+
 def send_message(process: subprocess.Popen[bytes], message: dict[str, Any]) -> None:
     data = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     assert process.stdin is not None
@@ -208,6 +217,8 @@ def write_fixture(root: Path) -> None:
     live_relation_id = "rel-live-contains-node"
     deleted_asset_id = "asset-bp-deleted"
     deleted_node_id = "node-deleted"
+    renamed_old_asset_id = "asset-bp-old-name"
+    renamed_new_asset_id = "asset-bp-new-name"
     live_asset_entity = dict(asset_entity)
     live_asset_entity["attributes"] = {"object_path": "/Game/BP_Hero.BP_Hero", "asset_name": "BP_Hero", "live_marker": "true"}
     live_asset_fragment = {
@@ -319,11 +330,86 @@ def write_fixture(root: Path) -> None:
     }
     deleted_tombstone_path = objects / "aadeletedtombstone.json"
     deleted_tombstone_path.write_text(json.dumps(deleted_tombstone, ensure_ascii=False), encoding="utf-8")
+    renamed_old_fragment = {
+        "schema_version": "uepi.asset-fragment.v2",
+        "project_id": "project-fixture",
+        "project_name": "FixtureProject",
+        "project_file": str(root / "FixtureProject.uproject"),
+        "engine_version": "5.3.2",
+        "source_scan_finished_at_utc": "2026-06-26T00:00:01Z",
+        "asset": {"id": renamed_old_asset_id, "canonical_key": "/Game/BP_OldName.BP_OldName", "display_name": "BP_OldName", "kind": "asset"},
+        "entities": [
+            {
+                "id": renamed_old_asset_id,
+                "kind": "asset",
+                "canonical_key": "/Game/BP_OldName.BP_OldName",
+                "display_name": "BP_OldName",
+                "source_layer": "asset_registry",
+                "attributes": {"object_path": "/Game/BP_OldName.BP_OldName", "asset_name": "BP_OldName"},
+                "completeness": {"state": "partial", "covered": ["asset_registry_metadata"], "omitted": [], "warnings": []},
+                "diagnostics": [],
+                "evidence": [],
+            }
+        ],
+        "relations": [],
+        "diagnostics": [],
+    }
+    renamed_old_path = objects / "aarenamedoldfragment.json"
+    renamed_old_path.write_text(json.dumps(renamed_old_fragment, ensure_ascii=False), encoding="utf-8")
+    renamed_tombstone = {
+        "schema_version": "uepi.asset-tombstone.v2",
+        "project_id": "project-fixture",
+        "project_name": "FixtureProject",
+        "project_file": str(root / "FixtureProject.uproject"),
+        "engine_version": "5.3.2",
+        "created_at_utc": "2026-06-26T00:00:05Z",
+        "asset_key": "/Game/BP_OldName.BP_OldName",
+        "asset_name": "BP_OldName",
+        "asset_id": renamed_old_asset_id,
+        "package_name": "/Game/BP_OldName",
+        "class_path": "/Script/Engine.Blueprint",
+        "reason": "asset_renamed_old_path",
+        "event_type": "asset_renamed",
+        "old_object_path": "/Game/BP_OldName.BP_OldName",
+        "new_object_path": "/Game/BP_NewName.BP_NewName",
+        "source_event_sequence": 4,
+    }
+    renamed_tombstone_path = objects / "aarenamedtombstone.json"
+    renamed_tombstone_path.write_text(json.dumps(renamed_tombstone, ensure_ascii=False), encoding="utf-8")
+    renamed_new_fragment = {
+        "schema_version": "uepi.asset-fragment.v2",
+        "project_id": "project-fixture",
+        "project_name": "FixtureProject",
+        "project_file": str(root / "FixtureProject.uproject"),
+        "engine_version": "5.3.2",
+        "source_scan_finished_at_utc": "2026-06-26T00:00:06Z",
+        "asset": {"id": renamed_new_asset_id, "canonical_key": "/Game/BP_NewName.BP_NewName", "display_name": "BP_NewName", "kind": "asset"},
+        "entities": [
+            {
+                "id": renamed_new_asset_id,
+                "kind": "asset",
+                "canonical_key": "/Game/BP_NewName.BP_NewName",
+                "display_name": "BP_NewName",
+                "source_layer": "asset_registry",
+                "attributes": {"object_path": "/Game/BP_NewName.BP_NewName", "asset_name": "BP_NewName"},
+                "completeness": {"state": "partial", "covered": ["asset_registry_metadata"], "omitted": [], "warnings": []},
+                "diagnostics": [],
+                "evidence": [],
+            }
+        ],
+        "relations": [],
+        "diagnostics": [],
+    }
+    renamed_new_path = objects / "aarenamednewfragment.json"
+    renamed_new_path.write_text(json.dumps(renamed_new_fragment, ensure_ascii=False), encoding="utf-8")
     live_manifest = dict(manifest)
     manifest["fragments"].extend(
         [
             {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aadeletedassetfragment", "path": str(deleted_object_path), "asset_id": deleted_asset_id},
             {"kind": "asset_tombstone", "schema_version": "uepi.asset-tombstone.v2", "hash": "aadeletedtombstone", "path": str(deleted_tombstone_path), "asset_id": deleted_asset_id, "asset_key": "/Game/BP_Deleted.BP_Deleted"},
+            {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aarenamedoldfragment", "path": str(renamed_old_path), "asset_id": renamed_old_asset_id},
+            {"kind": "asset_tombstone", "schema_version": "uepi.asset-tombstone.v2", "hash": "aarenamedtombstone", "path": str(renamed_tombstone_path), "asset_id": renamed_old_asset_id, "asset_key": "/Game/BP_OldName.BP_OldName"},
+            {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aarenamednewfragment", "path": str(renamed_new_path), "asset_id": renamed_new_asset_id},
         ]
     )
     (manifests / "saved.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
@@ -416,20 +502,30 @@ def main() -> int:
             assert not any("worker" in name or "queue" in name or "daemon" in name for name in names)
 
             status = request(process, 3, "tools/call", {"name": "uepi_status", "arguments": {}})["structuredContent"]
+            assert_envelope(status)
             assert status["state"]["data_mode"] == "live"
             assert status["state"]["editor_connected"] is True
             assert status["result"]["llm_readiness"]["requires_daemon"] is False
             assert status["result"]["cache"]["synced"] is True
             assert status["result"]["cache"]["schema_version"] == "uepi.sqlite-cache.v2.1"
             search = request(process, 4, "tools/call", {"name": "uepi_search", "arguments": {"query": "BP_Hero"}})["structuredContent"]
+            assert_envelope(search)
             assert search["result"]["match_count"] >= 1
             assert search["result"]["query_source"] == "sqlite_cache"
             assert "typed_attributes" in search["result"]["matches"][0]
             deleted_search = request(process, 40, "tools/call", {"name": "uepi_search", "arguments": {"query": "BP_Deleted"}})["structuredContent"]
             assert deleted_search["result"]["match_count"] == 0
             deleted_asset = request(process, 41, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "BP_Deleted"}})["structuredContent"]
+            assert_envelope(deleted_asset)
             assert deleted_asset["error"]["code"] == "UEPI_ASSET_TOMBSTONED"
+            renamed_old = request(process, 42, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "BP_OldName"}})["structuredContent"]
+            assert_envelope(renamed_old)
+            assert renamed_old["error"]["code"] == "UEPI_ASSET_TOMBSTONED"
+            renamed_new = request(process, 43, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "BP_NewName"}})["structuredContent"]
+            assert_envelope(renamed_new)
+            assert renamed_new["result"]["entity"]["display_name"] == "BP_NewName"
             blueprint = request(process, 5, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_Hero.BP_Hero"}})["structuredContent"]
+            assert_envelope(blueprint)
             assert blueprint["result"]["query_source"] == "sqlite_cache"
             assert blueprint["state"]["freshness"] == "refresh_requested"
             assert blueprint["diagnostics"][0]["code"] == "UEPI_REFRESH_REQUESTED"
