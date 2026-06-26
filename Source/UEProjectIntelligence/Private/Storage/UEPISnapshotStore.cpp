@@ -224,7 +224,7 @@ bool FSnapshotStore::SaveJsonAtomically(const TSharedRef<FJsonObject>& Object, c
 
 	const FString Json = JsonObjectToString(Object);
 	const FString TempPath = OutputPath + TEXT(".tmp-") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
-	if (!FFileHelper::SaveStringToFile(Json, *TempPath, FFileHelper::EEncodingOptions::ForceUTF8))
+	if (!FFileHelper::SaveStringToFile(Json, *TempPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 	{
 		OutError = FText::Format(
 			NSLOCTEXT("UEProjectIntelligence", "SnapshotStoreTempWriteFailed", "Failed to write temporary UEPI Snapshot file: {0}."),
