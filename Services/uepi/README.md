@@ -24,3 +24,11 @@ codex
 ```
 
 The UE editor is only needed to create or refresh snapshots. Once `saved.json` exists, the MCP server can answer from the latest saved snapshot while the editor is closed.
+
+## Rebuild The Local Cache
+
+```text
+python -m uepi sync --project F:/Epic Games/UE5project/GasDemo/GasDemo.uproject
+```
+
+The SQLite file is a derived cache under `Saved/UEProjectIntelligence/cache/uepi.sqlite3`. It can be deleted and rebuilt from Snapshot fragments.

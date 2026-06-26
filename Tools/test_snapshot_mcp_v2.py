@@ -267,6 +267,18 @@ def main() -> int:
         write_fixture(root)
         env = os.environ.copy()
         env["PYTHONPATH"] = str(PYTHONPATH)
+        sync = subprocess.run(
+            [sys.executable, "-B", "-m", "uepi", "sync", "--store", str(root)],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        sync_result = json.loads(sync.stdout)
+        assert sync_result["schema_version"] == "uepi.sqlite-cache.v2"
+        assert sync_result["entity_count"] >= 3
+
         process = subprocess.Popen(
             [sys.executable, "-B", str(SERVER), "--store", str(root), "--tool-profile", "codex"],
             stdin=subprocess.PIPE,
@@ -291,6 +303,7 @@ def main() -> int:
             assert status["state"]["data_mode"] == "live"
             assert status["state"]["editor_connected"] is True
             assert status["result"]["llm_readiness"]["requires_daemon"] is False
+            assert status["result"]["cache"]["synced"] is True
             search = request(process, 4, "tools/call", {"name": "uepi_search", "arguments": {"query": "BP_Hero"}})["structuredContent"]
             assert search["result"]["match_count"] >= 1
             blueprint = request(process, 5, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_Hero.BP_Hero"}})["structuredContent"]

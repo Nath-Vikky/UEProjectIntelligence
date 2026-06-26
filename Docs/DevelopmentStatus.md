@@ -16,6 +16,7 @@
 - Package-saved targeted scans append to the saved manifest instead of replacing the full saved baseline.
 - Commandlet one-shot Snapshot writer.
 - Python `Services/uepi` query package.
+- Rebuildable SQLite v2 cache via `python -m uepi sync`; cache state is reported by `uepi_status`.
 - MCP query auto-selects a fresh live overlay and merges it over the saved Snapshot baseline.
 - Relation identity no longer includes descriptive attributes; IDs are based on project, relation type, from ID, and to ID.
 - Blueprint derived projections now report `confidence_basis` and use sub-1.0 confidence for static derived flows.
@@ -36,5 +37,5 @@
 
 - Remove the compatibility full-scan `project_scan` fragment after the SQLite v2 cache and fragment-only tests are complete.
 - Migrate generic string attributes to typed v2 attribute values.
-- Rebuildable SQLite v2 cache for faster large-project queries.
+- Route large-project search and graph traversal through the SQLite v2 cache when it is synced.
 - Broader v2 fixtures around the new Snapshot store.

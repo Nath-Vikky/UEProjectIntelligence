@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .cache import cache_status
 from .store import SnapshotState, SnapshotStore, SnapshotStoreError, _load_json
 
 
@@ -236,6 +237,7 @@ class UEPIQueryEngine:
                 "fragment_kinds": dict(fragment_kinds),
                 "fragment_count": sum(fragment_kinds.values()),
                 "fragment_path_samples": fragment_paths,
+                "cache": cache_status(self.store, self.state),
                 "llm_readiness": {
                     "can_query_snapshot": bool(self.entities),
                     "requires_daemon": False,

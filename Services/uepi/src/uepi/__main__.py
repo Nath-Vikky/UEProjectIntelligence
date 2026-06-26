@@ -6,8 +6,10 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from .cache import sync_cache
 from .mcp_server import main as mcp_main
 from .query import make_engine
+from .store import SnapshotStore
 
 
 def emit(value: dict[str, Any]) -> int:
@@ -17,7 +19,7 @@ def emit(value: dict[str, Any]) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="UEPI v2 Snapshot query CLI.")
-    parser.add_argument("command", choices=["mcp", "status", "overview", "search", "asset"], nargs="?", default="status")
+    parser.add_argument("command", choices=["mcp", "sync", "status", "overview", "search", "asset"], nargs="?", default="status")
     parser.add_argument("--project", type=Path)
     parser.add_argument("--store", type=Path)
     parser.add_argument("--db", type=Path)
@@ -40,6 +42,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.db:
             mcp_args.extend(["--db", str(args.db)])
         return mcp_main(mcp_args)
+
+    if args.command == "sync":
+        store = SnapshotStore.from_paths(project=args.project, store=args.store, db=args.db)
+        return emit(sync_cache(store))
 
     engine = make_engine(project=args.project, store=args.store, db=args.db)
     if args.command == "status":
