@@ -26,6 +26,8 @@ struct FSnapshotCommitOptions
 	FString WriterMode = TEXT("editor");
 	FString SessionId;
 	FString SourceScanPath;
+	bool bMergeWithExisting = false;
+	TArray<FString> TargetObjectPaths;
 };
 
 struct FSnapshotCommitResult

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 from typing import Any
+from datetime import datetime, timezone
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,8 +71,10 @@ def write_fixture(root: Path) -> None:
     store = root / "store"
     objects = store / "objects" / "aa"
     manifests = store / "manifests"
+    sessions = store / "sessions"
     objects.mkdir(parents=True)
     manifests.mkdir(parents=True)
+    sessions.mkdir(parents=True)
 
     asset_id = "asset-bp-hero"
     node_id = "node-beginplay"
@@ -144,6 +147,76 @@ def write_fixture(root: Path) -> None:
     (manifests / "saved.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     (manifests / "saved-1.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
 
+    live_node_id = "node-live-print"
+    live_relation_id = "rel-live-contains-node"
+    live_scan = dict(scan)
+    live_scan["entities"] = [
+        {
+            "id": asset_id,
+            "kind": "asset",
+            "canonical_key": "/Game/BP_Hero.BP_Hero",
+            "display_name": "BP_Hero",
+            "source_layer": "asset_registry",
+            "attributes": {"object_path": "/Game/BP_Hero.BP_Hero", "asset_name": "BP_Hero", "live_marker": "true"},
+            "completeness": {"state": "partial", "covered": ["asset_registry_metadata"], "omitted": [], "warnings": []},
+            "diagnostics": [],
+            "evidence": [],
+        },
+        {
+            "id": live_node_id,
+            "kind": "blueprint_node",
+            "canonical_key": "/Game/BP_Hero.BP_Hero::EventGraph::PrintString",
+            "display_name": "Live Print String",
+            "source_layer": "editor_source_graph",
+            "attributes": {"node_title": "Live Print String"},
+            "completeness": {"state": "partial", "covered": ["node"], "omitted": [], "warnings": []},
+            "diagnostics": [],
+            "evidence": [],
+        },
+    ]
+    live_scan["relations"] = [
+        {
+            "id": live_relation_id,
+            "type": "contains_node",
+            "from_id": asset_id,
+            "to_id": live_node_id,
+            "source_layer": "editor_source_graph",
+            "derived": False,
+            "confidence": 1.0,
+            "attributes": {},
+            "evidence": [],
+        }
+    ]
+    live_object_path = objects / "aalive.json"
+    live_object_path.write_text(json.dumps(live_scan, ensure_ascii=False), encoding="utf-8")
+    live_manifest = dict(manifest)
+    live_manifest.update(
+        {
+            "data_mode": "live",
+            "writer_mode": "editor",
+            "session_id": "session-live",
+            "generation": 1,
+            "base_saved_generation": 1,
+            "is_overlay": True,
+            "merge_strategy": "replace",
+            "target_object_paths": ["/Game/BP_Hero.BP_Hero"],
+            "fragments": [{"kind": "project_scan", "schema_version": "uepi.scan.v1", "hash": "aalive", "path": str(live_object_path)}],
+        }
+    )
+    (manifests / "live.json").write_text(json.dumps(live_manifest, ensure_ascii=False), encoding="utf-8")
+    (sessions / "editor-session.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "uepi.live-session.v2",
+                "session_id": "session-live",
+                "state": "active",
+                "last_seen_at_utc": datetime.now(timezone.utc).isoformat(),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
 
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="uepi_snapshot_mcp_") as temp_dir:
@@ -172,11 +245,15 @@ def main() -> int:
             assert not any("worker" in name or "queue" in name or "daemon" in name for name in names)
 
             status = request(process, 3, "tools/call", {"name": "uepi_status", "arguments": {}})["structuredContent"]
+            assert status["state"]["data_mode"] == "live"
+            assert status["state"]["editor_connected"] is True
             assert status["result"]["llm_readiness"]["requires_daemon"] is False
             search = request(process, 4, "tools/call", {"name": "uepi_search", "arguments": {"query": "BP_Hero"}})["structuredContent"]
             assert search["result"]["match_count"] >= 1
             blueprint = request(process, 5, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_Hero.BP_Hero"}})["structuredContent"]
-            assert blueprint["result"]["blueprint_entities"][0]["kind"] == "blueprint_node"
+            blueprint_names = {item["display_name"] for item in blueprint["result"]["blueprint_entities"]}
+            assert "Event BeginPlay" in blueprint_names
+            assert "Live Print String" in blueprint_names
         finally:
             if process.stdin:
                 process.stdin.close()

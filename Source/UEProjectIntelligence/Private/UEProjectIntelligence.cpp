@@ -225,13 +225,27 @@ TSharedRef<SDockTab> FUEProjectIntelligenceModule::SpawnDashboardTab(const FSpaw
 FText FUEProjectIntelligenceModule::GetDashboardStatusText() const
 {
 	int32 IncrementalEventCount = 0;
+	int32 PendingInvalidationCount = 0;
+	FString SessionId = TEXT("-");
+	FString LastHeartbeat = TEXT("-");
+	FString LastAutoScan = TEXT("-");
+	FString LastAutoScanMode = TEXT("-");
+	FString LastAutoScanManifest = TEXT("-");
+	FString LastCollectorError;
 	if (GEditor)
 	{
 		if (const UUEPIEditorSubsystem* Subsystem = GEditor->GetEditorSubsystem<UUEPIEditorSubsystem>())
 		{
-			TArray<FUEPIIncrementalEvent> Events;
-			Subsystem->GetIncrementalEvents(Events);
-			IncrementalEventCount = Events.Num();
+			FUEPICollectorStatus Status;
+			Subsystem->GetCollectorStatus(Status);
+			IncrementalEventCount = Status.IncrementalEvents;
+			PendingInvalidationCount = Status.PendingInvalidations;
+			SessionId = Status.SessionId.IsEmpty() ? TEXT("-") : Status.SessionId;
+			LastHeartbeat = Status.LastHeartbeatUtc.IsEmpty() ? TEXT("-") : Status.LastHeartbeatUtc;
+			LastAutoScan = Status.LastAutoScanUtc.IsEmpty() ? TEXT("-") : Status.LastAutoScanUtc;
+			LastAutoScanMode = Status.LastAutoScanMode.IsEmpty() ? TEXT("-") : Status.LastAutoScanMode;
+			LastAutoScanManifest = Status.LastAutoScanManifestPath.IsEmpty() ? TEXT("-") : Status.LastAutoScanManifestPath;
+			LastCollectorError = Status.LastError;
 		}
 	}
 
@@ -240,11 +254,18 @@ FText FUEProjectIntelligenceModule::GetDashboardStatusText() const
 	return FText::Format(
 		LOCTEXT(
 			"UEPIDashboardStatus",
-			"Project: {0}\nSnapshot: {1}\nLast scan artifact: {2}\nIncremental events: {3}\nSaved directory: {4}"),
+			"Project: {0}\nSnapshot: {1}\nLive session: {2}\nLast heartbeat: {3}\nIncremental events: {4}\nPending invalidations: {5}\nLast auto scan: {6} ({7})\nLast auto manifest: {8}\nLast collector error: {9}\nLast scan artifact: {10}\nSaved directory: {11}"),
 		FText::FromString(FApp::GetProjectName()),
 		FText::FromString(SnapshotSummary),
-		FText::FromString(FPaths::FileExists(LastScan) ? LastScan : FString(TEXT("not generated"))),
+		FText::FromString(SessionId),
+		FText::FromString(LastHeartbeat),
 		FText::AsNumber(IncrementalEventCount),
+		FText::AsNumber(PendingInvalidationCount),
+		FText::FromString(LastAutoScan),
+		FText::FromString(LastAutoScanMode),
+		FText::FromString(LastAutoScanManifest),
+		FText::FromString(LastCollectorError.IsEmpty() ? FString(TEXT("-")) : LastCollectorError),
+		FText::FromString(FPaths::FileExists(LastScan) ? LastScan : FString(TEXT("not generated"))),
 		FText::FromString(UEPISavedDirectory()));
 }
 

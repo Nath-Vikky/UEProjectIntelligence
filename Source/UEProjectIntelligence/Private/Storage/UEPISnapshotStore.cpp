@@ -54,6 +54,36 @@ TArray<TSharedPtr<FJsonValue>> SnapshotStringArrayToJsonValues(const TArray<FStr
 	}
 	return Result;
 }
+
+TArray<TSharedPtr<FJsonValue>> CopyObjectArrayField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName)
+{
+	TArray<TSharedPtr<FJsonValue>> Result;
+	if (!Object.IsValid())
+	{
+		return Result;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+	if (!Object->TryGetArrayField(FieldName, Values) || !Values)
+	{
+		return Result;
+	}
+
+	for (const TSharedPtr<FJsonValue>& Value : *Values)
+	{
+		if (!Value.IsValid())
+		{
+			continue;
+		}
+
+		const TSharedPtr<FJsonObject>* ObjectValue = nullptr;
+		if (Value->TryGetObject(ObjectValue) && ObjectValue && ObjectValue->IsValid())
+		{
+			Result.Add(MakeShared<FJsonValueObject>(*ObjectValue));
+		}
+	}
+	return Result;
+}
 }
 
 FString FSnapshotStore::DefaultRootDir()
@@ -147,11 +177,21 @@ bool FSnapshotStore::CommitProjectScan(
 	}
 	AssetEntityIds.Sort();
 
-	const FString ManifestPath = FPaths::Combine(Paths.ManifestsDir, Options.DataMode.Equals(TEXT("live"), ESearchCase::IgnoreCase) ? TEXT("live.json") : TEXT("saved.json"));
+	const bool bLiveMode = Options.DataMode.Equals(TEXT("live"), ESearchCase::IgnoreCase);
+	const FString ManifestPath = FPaths::Combine(Paths.ManifestsDir, bLiveMode ? TEXT("live.json") : TEXT("saved.json"));
 	const int64 Generation = ReadCurrentGeneration(ManifestPath) + 1;
 	const FString VersionedManifestPath = FPaths::Combine(
 		Paths.ManifestsDir,
-		FString::Printf(TEXT("%s-%lld.json"), Options.DataMode.Equals(TEXT("live"), ESearchCase::IgnoreCase) ? TEXT("live") : TEXT("saved"), Generation));
+		FString::Printf(TEXT("%s-%lld.json"), bLiveMode ? TEXT("live") : TEXT("saved"), Generation));
+
+	TSharedPtr<FJsonObject> ExistingManifest;
+	if (Options.bMergeWithExisting)
+	{
+		ExistingManifest = LoadJsonObject(ManifestPath);
+	}
+	const TSharedPtr<FJsonObject> SavedBaselineManifest = bLiveMode
+		? LoadJsonObject(FPaths::Combine(Paths.ManifestsDir, TEXT("saved.json")))
+		: ExistingManifest;
 
 	TSharedRef<FJsonObject> ProjectObject = MakeShared<FJsonObject>();
 	ProjectObject->SetStringField(TEXT("id"), ScanResult.ProjectId);
@@ -168,7 +208,7 @@ bool FSnapshotStore::CommitProjectScan(
 	FragmentObject->SetNumberField(TEXT("relation_count"), ScanResult.Relations.Num());
 	FragmentObject->SetNumberField(TEXT("diagnostic_count"), ScanResult.Diagnostics.Num());
 
-	TArray<TSharedPtr<FJsonValue>> FragmentValues;
+	TArray<TSharedPtr<FJsonValue>> FragmentValues = CopyObjectArrayField(ExistingManifest, TEXT("fragments"));
 	FragmentValues.Add(MakeShared<FJsonValueObject>(FragmentObject));
 
 	TSharedRef<FJsonObject> CountsObject = MakeShared<FJsonObject>();
@@ -191,7 +231,18 @@ bool FSnapshotStore::CommitProjectScan(
 	Manifest->SetStringField(TEXT("writer_mode"), Options.WriterMode.IsEmpty() ? TEXT("editor") : Options.WriterMode);
 	Manifest->SetStringField(TEXT("session_id"), Options.SessionId);
 	Manifest->SetNumberField(TEXT("generation"), Generation);
+	if (SavedBaselineManifest.IsValid())
+	{
+		double SavedGeneration = 0.0;
+		if (SavedBaselineManifest->TryGetNumberField(TEXT("generation"), SavedGeneration))
+		{
+			Manifest->SetNumberField(TEXT("base_saved_generation"), SavedGeneration);
+		}
+	}
 	Manifest->SetStringField(TEXT("created_at_utc"), FDateTime::UtcNow().ToIso8601());
+	Manifest->SetBoolField(TEXT("is_overlay"), Options.TargetObjectPaths.Num() > 0 || bLiveMode);
+	Manifest->SetStringField(TEXT("merge_strategy"), Options.bMergeWithExisting ? TEXT("append_project_scan_fragments") : TEXT("replace"));
+	Manifest->SetArrayField(TEXT("target_object_paths"), SnapshotStringArrayToJsonValues(Options.TargetObjectPaths));
 	Manifest->SetObjectField(TEXT("project"), ProjectObject);
 	Manifest->SetObjectField(TEXT("counts"), CountsObject);
 	Manifest->SetObjectField(TEXT("source"), SourceObject);

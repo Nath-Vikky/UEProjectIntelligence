@@ -86,6 +86,12 @@ class UEPIQueryEngine:
         self.scan = store.load_project_scan(self.state)
         self.entities = [entity for entity in _as_list(self.scan.get("entities")) if isinstance(entity, dict)]
         self.relations = [relation for relation in _as_list(self.scan.get("relations")) if isinstance(relation, dict)]
+        self.counts = {
+            "entities": len(self.entities),
+            "relations": len(self.relations),
+            "diagnostics": len(_as_list(self.scan.get("diagnostics"))),
+            "asset_entities": sum(1 for entity in self.entities if entity.get("kind") in {"asset", "asset_redirector"}),
+        }
         self.entity_by_id = {entity.get("id"): entity for entity in self.entities if entity.get("id")}
         self.outgoing: dict[str, list[dict[str, Any]]] = {}
         self.incoming: dict[str, list[dict[str, Any]]] = {}
@@ -220,7 +226,8 @@ class UEPIQueryEngine:
                 "manifest_path": str(self.state.manifest_path),
                 "schema_version": self.state.manifest.get("schema_version"),
                 "generation": self.state.generation,
-                "counts": self.state.counts,
+                "counts": self.counts,
+                "manifest_counts": self.state.counts,
                 "fragments": fragment_paths,
                 "llm_readiness": {
                     "can_query_snapshot": bool(self.entities),
@@ -241,7 +248,7 @@ class UEPIQueryEngine:
         ][:limit]
         return self._envelope(
             {
-                "counts": self.state.counts,
+                "counts": self.counts,
                 "entity_kinds": dict(entity_kinds.most_common(limit)),
                 "relation_types": dict(relation_types.most_common(limit)),
                 "top_assets": top_assets,

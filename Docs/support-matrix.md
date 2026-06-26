@@ -4,6 +4,9 @@
 
 - UE 5.3.2 editor and commandlet collection.
 - Saved Snapshot querying while the editor is closed.
+- Fresh editor live overlay querying when `editor-session.json` heartbeat is current.
+- Automatic targeted live overlay scans for asset added, updated, and renamed editor events.
+- Automatic saved manifest append on package saved events.
 - Blueprint static graph entities when captured in an L2 Snapshot.
 - Animation static metadata and motion summaries when captured in an L2 Snapshot.
 - Asset search, context, impact, and generation diff over Snapshot data.
