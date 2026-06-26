@@ -12,6 +12,8 @@
 - Blueprint static graph entities when captured in an L2 Snapshot.
 - Animation static metadata and motion summaries when captured in an L2 Snapshot.
 - Asset search, context, impact, and generation diff over Snapshot data.
+- `typed_attributes` v2 wrappers are emitted next to the legacy string `attributes` map.
+- Synced SQLite v2.1 cache routing for high-volume search and graph-neighborhood reads.
 - Codex stdio MCP via `Services/uepi/src/uepi/mcp_server.py`.
 - Optional domain plugin references are declared as non-enabled optional dependencies.
 - Optional domain readers are compile-gated by the project descriptor and do not link unrelated UE plugin modules by default.

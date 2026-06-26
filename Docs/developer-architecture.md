@@ -20,5 +20,5 @@ UE Editor Plugin / UEPIIndex Commandlet
 
 - Unreal code is the only layer that loads assets.
 - MCP never writes project assets, config, or source.
-- SQLite is not a fact source in this line; it may return later only as a rebuildable cache.
+- SQLite is a rebuildable query cache for MCP routing, not a fact source.
 - Daemon, HTTP, Web UI, worker queue, and extension SDK code are not part of the default product.

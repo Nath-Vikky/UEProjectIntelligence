@@ -291,7 +291,7 @@ def main() -> int:
             check=True,
         )
         sync_result = json.loads(sync.stdout)
-        assert sync_result["schema_version"] == "uepi.sqlite-cache.v2"
+        assert sync_result["schema_version"] == "uepi.sqlite-cache.v2.1"
         assert sync_result["entity_count"] >= 3
 
         process = subprocess.Popen(
@@ -319,9 +319,13 @@ def main() -> int:
             assert status["state"]["editor_connected"] is True
             assert status["result"]["llm_readiness"]["requires_daemon"] is False
             assert status["result"]["cache"]["synced"] is True
+            assert status["result"]["cache"]["schema_version"] == "uepi.sqlite-cache.v2.1"
             search = request(process, 4, "tools/call", {"name": "uepi_search", "arguments": {"query": "BP_Hero"}})["structuredContent"]
             assert search["result"]["match_count"] >= 1
+            assert search["result"]["query_source"] == "sqlite_cache"
+            assert "typed_attributes" in search["result"]["matches"][0]
             blueprint = request(process, 5, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_Hero.BP_Hero"}})["structuredContent"]
+            assert blueprint["result"]["query_source"] == "sqlite_cache"
             blueprint_names = {item["display_name"] for item in blueprint["result"]["blueprint_entities"]}
             assert "Event BeginPlay" in blueprint_names
             assert "Asset Fragment Node" in blueprint_names

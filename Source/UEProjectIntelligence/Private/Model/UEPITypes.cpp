@@ -2,6 +2,9 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Misc/DefaultValueHelper.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 
 namespace UE::ProjectIntelligence
 {
@@ -187,6 +190,153 @@ TSharedRef<FJsonObject> StringMapToJsonObject(const TMap<FString, FString>& Valu
 
 	return Object;
 }
+
+bool IsIntegerLiteral(const FString& Value)
+{
+	if (Value.IsEmpty())
+	{
+		return false;
+	}
+
+	int32 Index = 0;
+	if (Value[0] == TEXT('-') || Value[0] == TEXT('+'))
+	{
+		Index = 1;
+	}
+	if (Index >= Value.Len())
+	{
+		return false;
+	}
+	if (Value[Index] == TEXT('0') && Index + 1 < Value.Len())
+	{
+		return false;
+	}
+	for (; Index < Value.Len(); ++Index)
+	{
+		if (!FChar::IsDigit(Value[Index]))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool IsNumberLiteralCandidate(const FString& Value)
+{
+	if (Value.IsEmpty())
+	{
+		return false;
+	}
+
+	bool bHasDigit = false;
+	bool bHasDecimalOrExponent = false;
+	for (int32 Index = 0; Index < Value.Len(); ++Index)
+	{
+		const TCHAR Ch = Value[Index];
+		if (FChar::IsDigit(Ch))
+		{
+			bHasDigit = true;
+			continue;
+		}
+		if (Ch == TEXT('.') || Ch == TEXT('e') || Ch == TEXT('E'))
+		{
+			bHasDecimalOrExponent = true;
+			continue;
+		}
+		if ((Ch == TEXT('-') || Ch == TEXT('+')) && (Index == 0 || Value[Index - 1] == TEXT('e') || Value[Index - 1] == TEXT('E')))
+		{
+			continue;
+		}
+		return false;
+	}
+	return bHasDigit && bHasDecimalOrExponent;
+}
+
+TSharedPtr<FJsonValue> TryParseJsonAttributeValue(const FString& Value)
+{
+	const bool bLooksStructured = Value.StartsWith(TEXT("{")) || Value.StartsWith(TEXT("["));
+	if (!bLooksStructured)
+	{
+		return nullptr;
+	}
+
+	TSharedPtr<FJsonValue> ParsedValue;
+	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Value);
+	if (FJsonSerializer::Deserialize(Reader, ParsedValue) && ParsedValue.IsValid())
+	{
+		return ParsedValue;
+	}
+	return nullptr;
+}
+
+TSharedRef<FJsonObject> MakeTypedAttributeValue(const FString& RawValue)
+{
+	FString Trimmed = RawValue;
+	Trimmed.TrimStartAndEndInline();
+
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetStringField(TEXT("schema_version"), TEXT("uepi.attribute-value.v2"));
+	Object->SetStringField(TEXT("source_type"), TEXT("legacy_string"));
+	Object->SetStringField(TEXT("raw"), RawValue);
+
+	if (Trimmed.Equals(TEXT("true"), ESearchCase::IgnoreCase) || Trimmed.Equals(TEXT("false"), ESearchCase::IgnoreCase))
+	{
+		Object->SetStringField(TEXT("type"), TEXT("boolean"));
+		Object->SetBoolField(TEXT("value"), Trimmed.Equals(TEXT("true"), ESearchCase::IgnoreCase));
+		return Object;
+	}
+
+	if (Trimmed.Equals(TEXT("null"), ESearchCase::IgnoreCase))
+	{
+		Object->SetStringField(TEXT("type"), TEXT("null"));
+		Object->SetField(TEXT("value"), MakeShared<FJsonValueNull>());
+		return Object;
+	}
+
+	if (IsIntegerLiteral(Trimmed))
+	{
+		Object->SetStringField(TEXT("type"), TEXT("integer"));
+		Object->SetNumberField(TEXT("value"), static_cast<double>(FCString::Strtoi64(*Trimmed, nullptr, 10)));
+		return Object;
+	}
+
+	if (IsNumberLiteralCandidate(Trimmed))
+	{
+		double Number = 0.0;
+		if (FDefaultValueHelper::ParseDouble(Trimmed, Number))
+		{
+			Object->SetStringField(TEXT("type"), TEXT("number"));
+			Object->SetNumberField(TEXT("value"), Number);
+			return Object;
+		}
+	}
+
+	if (TSharedPtr<FJsonValue> ParsedValue = TryParseJsonAttributeValue(Trimmed))
+	{
+		Object->SetStringField(TEXT("type"), ParsedValue->Type == EJson::Array ? TEXT("array") : TEXT("object"));
+		Object->SetField(TEXT("value"), ParsedValue);
+		return Object;
+	}
+
+	Object->SetStringField(TEXT("type"), TEXT("string"));
+	Object->SetStringField(TEXT("value"), RawValue);
+	return Object;
+}
+
+TSharedRef<FJsonObject> StringMapToTypedAttributeObject(const TMap<FString, FString>& Values)
+{
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	TArray<FString> Keys;
+	Values.GetKeys(Keys);
+	Keys.Sort();
+
+	for (const FString& Key : Keys)
+	{
+		Object->SetObjectField(Key, MakeTypedAttributeValue(Values[Key]));
+	}
+
+	return Object;
+}
 }
 
 TSharedRef<FJsonObject> FEvidence::ToJson() const
@@ -227,6 +377,7 @@ TSharedRef<FJsonObject> FEntityRecord::ToJson() const
 	Object->SetStringField(TEXT("display_name"), DisplayName);
 	Object->SetStringField(TEXT("source_layer"), SourceLayer);
 	Object->SetObjectField(TEXT("attributes"), StringMapToJsonObject(Attributes));
+	Object->SetObjectField(TEXT("typed_attributes"), StringMapToTypedAttributeObject(Attributes));
 	Object->SetObjectField(TEXT("completeness"), Completeness.ToJson());
 
 	TArray<TSharedPtr<FJsonValue>> DiagnosticValues;
@@ -264,6 +415,7 @@ TSharedRef<FJsonObject> FRelationRecord::ToJson() const
 	Object->SetBoolField(TEXT("derived"), bDerived);
 	Object->SetNumberField(TEXT("confidence"), Confidence);
 	Object->SetObjectField(TEXT("attributes"), StringMapToJsonObject(Attributes));
+	Object->SetObjectField(TEXT("typed_attributes"), StringMapToTypedAttributeObject(Attributes));
 
 	TArray<TSharedPtr<FJsonValue>> EvidenceValues;
 	EvidenceValues.Reserve(Evidence.Num());

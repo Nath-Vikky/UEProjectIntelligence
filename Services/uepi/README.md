@@ -31,4 +31,4 @@ The UE editor is only needed to create or refresh snapshots. Once `saved.json` e
 python -m uepi sync --project F:/Epic Games/UE5project/GasDemo/GasDemo.uproject
 ```
 
-The SQLite file is a derived cache under `Saved/UEProjectIntelligence/cache/uepi.sqlite3`. It can be deleted and rebuilt from Snapshot fragments.
+The SQLite file is a derived v2.1 query cache under `Saved/UEProjectIntelligence/cache/uepi.sqlite3`. It can be deleted and rebuilt from Snapshot fragments; MCP tools route through it when it is synced with the active Snapshot generation.

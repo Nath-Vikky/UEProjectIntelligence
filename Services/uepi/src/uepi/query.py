@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .cache import cache_status
+from .cache import SQLiteSnapshotCache, cache_status
 from .store import SnapshotState, SnapshotStore, SnapshotStoreError, _load_json
 
 
@@ -57,6 +57,7 @@ def _short_entity(entity: dict[str, Any], include_snapshot: bool = False) -> dic
         "display_name": entity.get("display_name"),
         "source_layer": entity.get("source_layer"),
         "attributes": _as_dict(entity.get("attributes")),
+        "typed_attributes": _as_dict(entity.get("typed_attributes")),
         "completeness": _as_dict(entity.get("completeness")),
         "diagnostics": _as_list(entity.get("diagnostics")),
         "evidence": _as_list(entity.get("evidence")),
@@ -76,6 +77,7 @@ def _relation_summary(relation: dict[str, Any]) -> dict[str, Any]:
         "derived": bool(relation.get("derived")),
         "confidence": relation.get("confidence"),
         "attributes": _as_dict(relation.get("attributes")),
+        "typed_attributes": _as_dict(relation.get("typed_attributes")),
         "evidence": _as_list(relation.get("evidence")),
     }
 
@@ -84,18 +86,51 @@ class UEPIQueryEngine:
     def __init__(self, store: SnapshotStore):
         self.store = store
         self.state: SnapshotState = store.load_state()
-        self.scan = store.load_project_scan(self.state)
-        self.entities = [entity for entity in _as_list(self.scan.get("entities")) if isinstance(entity, dict)]
-        self.relations = [relation for relation in _as_list(self.scan.get("relations")) if isinstance(relation, dict)]
+        self.cache = SQLiteSnapshotCache.open_if_synced(store, self.state)
+        self._cache_status = cache_status(self.store, self.state)
+        self._scan: dict[str, Any] | None = None
+        self.entities: list[dict[str, Any]] = []
+        self.relations: list[dict[str, Any]] = []
+        self.counts = dict(self.state.counts)
+        if self.cache:
+            self.counts.update(self.cache.counts())
+        self.counts.setdefault("entities", 0)
+        self.counts.setdefault("relations", 0)
+        self.counts.setdefault("diagnostics", 0)
+        self.counts.setdefault("asset_entities", 0)
+        self.entity_by_id: dict[str, dict[str, Any]] = {}
+        self.outgoing: dict[str, list[dict[str, Any]]] = {}
+        self.incoming: dict[str, list[dict[str, Any]]] = {}
+
+    @property
+    def scan(self) -> dict[str, Any]:
+        self._ensure_loaded()
+        return self._scan or {}
+
+    def _project_id(self) -> Any:
+        return self.state.project.get("id") or (self._scan or {}).get("project_id")
+
+    def _project_name(self) -> Any:
+        return self.state.project.get("name") or (self._scan or {}).get("project_name")
+
+    def _engine_version(self) -> Any:
+        return self.state.project.get("engine_version") or (self._scan or {}).get("engine_version")
+
+    def _ensure_loaded(self) -> None:
+        if self._scan is not None:
+            return
+        self._scan = self.store.load_project_scan(self.state)
+        self.entities = [entity for entity in _as_list(self._scan.get("entities")) if isinstance(entity, dict)]
+        self.relations = [relation for relation in _as_list(self._scan.get("relations")) if isinstance(relation, dict)]
         self.counts = {
             "entities": len(self.entities),
             "relations": len(self.relations),
-            "diagnostics": len(_as_list(self.scan.get("diagnostics"))),
+            "diagnostics": len(_as_list(self._scan.get("diagnostics"))),
             "asset_entities": sum(1 for entity in self.entities if entity.get("kind") in {"asset", "asset_redirector"}),
         }
         self.entity_by_id = {entity.get("id"): entity for entity in self.entities if entity.get("id")}
-        self.outgoing: dict[str, list[dict[str, Any]]] = {}
-        self.incoming: dict[str, list[dict[str, Any]]] = {}
+        self.outgoing = {}
+        self.incoming = {}
         for relation in self.relations:
             self.outgoing.setdefault(str(relation.get("from_id") or ""), []).append(relation)
             self.incoming.setdefault(str(relation.get("to_id") or ""), []).append(relation)
@@ -110,9 +145,9 @@ class UEPIQueryEngine:
             "schema_version": "uepi.mcp-envelope.v1",
             "request_id": str(uuid4()),
             "project": {
-                "id": self.state.project.get("id") or self.scan.get("project_id"),
-                "name": self.state.project.get("name") or self.scan.get("project_name"),
-                "engine_version": self.state.project.get("engine_version") or self.scan.get("engine_version"),
+                "id": self._project_id(),
+                "name": self._project_name(),
+                "engine_version": self._engine_version(),
             },
             "state": self.state.envelope_state(),
             "result": result,
@@ -126,9 +161,9 @@ class UEPIQueryEngine:
             "schema_version": "uepi.mcp-envelope.v1",
             "request_id": str(uuid4()),
             "project": {
-                "id": self.state.project.get("id") or self.scan.get("project_id"),
-                "name": self.state.project.get("name") or self.scan.get("project_name"),
-                "engine_version": self.state.project.get("engine_version") or self.scan.get("engine_version"),
+                "id": self._project_id(),
+                "name": self._project_name(),
+                "engine_version": self._engine_version(),
             },
             "state": self.state.envelope_state(),
             "error": {
@@ -147,6 +182,7 @@ class UEPIQueryEngine:
             return True
         text = query.casefold()
         attributes = _as_dict(entity.get("attributes"))
+        typed_attributes = _as_dict(entity.get("typed_attributes"))
         haystack = " ".join(
             [
                 str(entity.get("id") or ""),
@@ -154,6 +190,7 @@ class UEPIQueryEngine:
                 str(entity.get("canonical_key") or ""),
                 str(entity.get("display_name") or ""),
                 json.dumps(attributes, ensure_ascii=False, sort_keys=True),
+                json.dumps(typed_attributes, ensure_ascii=False, sort_keys=True),
             ]
         ).casefold()
         return text in haystack
@@ -162,6 +199,11 @@ class UEPIQueryEngine:
         needle = (identifier or "").strip()
         if not needle:
             return None, []
+        if self.cache:
+            entity, candidates = self.cache.resolve_entity(needle)
+            return entity, [_short_entity(item) for item in candidates]
+
+        self._ensure_loaded()
         folded = needle.casefold()
 
         exact_candidates: list[dict[str, Any]] = []
@@ -190,6 +232,13 @@ class UEPIQueryEngine:
 
     def _domain_entities_for_asset(self, asset: dict[str, Any], domain_kinds: set[str], limit: int) -> list[dict[str, Any]]:
         asset_id = str(asset.get("id") or "")
+        if self.cache:
+            return [
+                _short_entity(entity, include_snapshot=True)
+                for entity in self.cache.domain_entities_for_asset(asset_id, domain_kinds, max(1, int(limit)))
+            ]
+
+        self._ensure_loaded()
         seen = {asset_id}
         results: list[dict[str, Any]] = []
         queue = deque([asset_id])
@@ -239,7 +288,7 @@ class UEPIQueryEngine:
                 "fragment_path_samples": fragment_paths,
                 "cache": cache_status(self.store, self.state),
                 "llm_readiness": {
-                    "can_query_snapshot": bool(self.entities),
+                    "can_query_snapshot": int(self.counts.get("entities") or 0) > 0,
                     "requires_daemon": False,
                     "requires_editor_for_reads": False,
                     "can_refresh_without_editor": False,
@@ -248,42 +297,67 @@ class UEPIQueryEngine:
         )
 
     def overview(self, limit: int = 20) -> dict[str, Any]:
-        entity_kinds = Counter(str(entity.get("kind") or "unknown") for entity in self.entities)
-        relation_types = Counter(str(relation.get("type") or "unknown") for relation in self.relations)
-        top_assets = [
-            _short_entity(entity)
-            for entity in self.entities
-            if entity.get("kind") == "asset"
-        ][:limit]
+        if self.cache:
+            entity_kinds = self.cache.entity_kind_counts(limit)
+            relation_types = self.cache.relation_type_counts(limit)
+            top_assets = [_short_entity(entity) for entity in self.cache.top_assets(limit)]
+            query_source = "sqlite_cache"
+        else:
+            self._ensure_loaded()
+            entity_kinds = dict(Counter(str(entity.get("kind") or "unknown") for entity in self.entities).most_common(limit))
+            relation_types = dict(Counter(str(relation.get("type") or "unknown") for relation in self.relations).most_common(limit))
+            top_assets = [
+                _short_entity(entity)
+                for entity in self.entities
+                if entity.get("kind") == "asset"
+            ][:limit]
+            query_source = "snapshot_fragments"
         return self._envelope(
             {
                 "counts": self.counts,
-                "entity_kinds": dict(entity_kinds.most_common(limit)),
-                "relation_types": dict(relation_types.most_common(limit)),
+                "query_source": query_source,
+                "entity_kinds": entity_kinds,
+                "relation_types": relation_types,
                 "top_assets": top_assets,
             }
         )
 
     def search(self, query: str = "", kind: str | None = None, limit: int = 20) -> dict[str, Any]:
         limit = max(1, min(int(limit or 20), 100))
-        matches = [_short_entity(entity) for entity in self.entities if self._matches_entity(entity, query, kind)][:limit]
-        return self._envelope({"query": query, "kind": kind, "matches": matches, "match_count": len(matches)})
+        if self.cache:
+            matches = [_short_entity(entity) for entity in self.cache.search_entities(query, kind, limit)]
+            query_source = "sqlite_cache"
+        else:
+            self._ensure_loaded()
+            matches = [_short_entity(entity) for entity in self.entities if self._matches_entity(entity, query, kind)][:limit]
+            query_source = "snapshot_fragments"
+        return self._envelope({"query": query, "kind": kind, "matches": matches, "match_count": len(matches), "query_source": query_source})
 
     def asset(self, asset: str, include_snapshot: bool = True, relation_limit: int = 80) -> dict[str, Any]:
         entity, candidates = self._resolve_entity(asset)
         if not entity:
             return self._error("UEPI_ASSET_NOT_FOUND", "No indexed entity matched the supplied asset identifier.", candidates)
         entity_id = str(entity.get("id") or "")
-        relations = (self.outgoing.get(entity_id, []) + self.incoming.get(entity_id, []))[: max(0, relation_limit)]
-        related_ids = {relation.get("from_id") for relation in relations} | {relation.get("to_id") for relation in relations}
-        related_ids.discard(entity_id)
-        related = [_short_entity(self.entity_by_id[item]) for item in related_ids if item in self.entity_by_id][:relation_limit]
+        if self.cache:
+            relations = self.cache.relations_for_entity(entity_id, max(0, relation_limit))
+            related_ids = {relation.get("from_id") for relation in relations} | {relation.get("to_id") for relation in relations}
+            related_ids.discard(entity_id)
+            related = [_short_entity(item) for item in self.cache.entities_by_ids({str(item) for item in related_ids if item}, relation_limit)]
+            query_source = "sqlite_cache"
+        else:
+            self._ensure_loaded()
+            relations = (self.outgoing.get(entity_id, []) + self.incoming.get(entity_id, []))[: max(0, relation_limit)]
+            related_ids = {relation.get("from_id") for relation in relations} | {relation.get("to_id") for relation in relations}
+            related_ids.discard(entity_id)
+            related = [_short_entity(self.entity_by_id[item]) for item in related_ids if item in self.entity_by_id][:relation_limit]
+            query_source = "snapshot_fragments"
         return self._envelope(
             {
                 "entity": _short_entity(entity, include_snapshot=include_snapshot),
                 "relations": [_relation_summary(relation) for relation in relations],
                 "related_entities": related,
                 "resolution_candidates": candidates,
+                "query_source": query_source,
             }
         )
 
@@ -295,11 +369,17 @@ class UEPIQueryEngine:
         entity_id = str(entity.get("id") or "")
         relation_ids = {item.get("id") for item in domain_entities if item.get("id")}
         relation_ids.add(entity_id)
-        relations = [
-            _relation_summary(relation)
-            for relation in self.relations
-            if relation.get("from_id") in relation_ids and relation.get("to_id") in relation_ids
-        ][:limit]
+        if self.cache:
+            relations = [_relation_summary(relation) for relation in self.cache.relations_between_ids({str(item) for item in relation_ids if item}, limit)]
+            query_source = "sqlite_cache"
+        else:
+            self._ensure_loaded()
+            relations = [
+                _relation_summary(relation)
+                for relation in self.relations
+                if relation.get("from_id") in relation_ids and relation.get("to_id") in relation_ids
+            ][:limit]
+            query_source = "snapshot_fragments"
         omissions: list[str] = []
         if not domain_entities:
             omissions.append("blueprint_graph_entities_not_present_in_snapshot")
@@ -309,6 +389,7 @@ class UEPIQueryEngine:
                 "blueprint_entities": domain_entities,
                 "relations": relations,
                 "resolution_candidates": candidates,
+                "query_source": query_source,
             },
             omissions=omissions,
         )
@@ -325,14 +406,20 @@ class UEPIQueryEngine:
                 {"paths": [], "resolution_candidates": candidates},
                 omissions=["blueprint_graph_entities_not_present_in_snapshot"],
             )
+        if not self.cache:
+            self._ensure_loaded()
 
         start_ids = [
             item_id
             for item_id in domain_ids
-            if not start or start.casefold() in json.dumps(self.entity_by_id.get(item_id, {}), ensure_ascii=False).casefold()
+            if not start or start.casefold() in json.dumps(
+                (self.cache.entity_by_id(item_id, include_snapshot=True) if self.cache else self.entity_by_id.get(item_id, {})),
+                ensure_ascii=False,
+            ).casefold()
         ]
         start_ids = start_ids[:max_paths] or list(domain_ids)[:1]
         paths: list[list[dict[str, Any]]] = []
+        domain_by_id = {str(item.get("id")): item for item in blueprint_entities if item.get("id")}
         for start_id in start_ids:
             queue = deque([(start_id, [])])
             visited = {start_id}
@@ -341,16 +428,23 @@ class UEPIQueryEngine:
                 if len(path) >= max_depth:
                     paths.append(path)
                     continue
-                for relation in self.outgoing.get(current, []):
+                outgoing = self.cache.outgoing_relations(current, allowed, limit=1000) if self.cache else self.outgoing.get(current, [])
+                for relation in outgoing:
                     if relation.get("type") not in allowed:
                         continue
                     next_id = relation.get("to_id")
                     if next_id not in domain_ids or next_id in visited:
                         continue
                     visited.add(str(next_id))
+                    to_entity = domain_by_id.get(str(next_id))
+                    if to_entity is None and self.cache:
+                        cached_entity = self.cache.entity_by_id(str(next_id))
+                        to_entity = _short_entity(cached_entity) if cached_entity else {}
+                    elif to_entity is None:
+                        to_entity = _short_entity(self.entity_by_id[str(next_id)])
                     step = {
                         "relation": _relation_summary(relation),
-                        "to_entity": _short_entity(self.entity_by_id[str(next_id)]),
+                        "to_entity": to_entity,
                     }
                     next_path = path + [step]
                     queue.append((str(next_id), next_path))
@@ -365,6 +459,7 @@ class UEPIQueryEngine:
                 "relation_types": sorted(allowed),
                 "paths": paths[:max_paths],
                 "resolution": "static_snapshot",
+                "query_source": "sqlite_cache" if self.cache else "snapshot_fragments",
             }
         )
 
@@ -382,6 +477,7 @@ class UEPIQueryEngine:
             "motion_summary": snapshot.get("animation_motion_summary") or snapshot.get("motion_summary"),
             "sequence": snapshot.get("animation_sequence") or (snapshot if snapshot.get("schema_version") == "uepi.anim_sequence.v1" else None),
             "resolution_candidates": candidates,
+            "query_source": "sqlite_cache" if self.cache else "snapshot_fragments",
         }
         omissions: list[str] = []
         if not domain_entities and not snapshot:
@@ -395,16 +491,29 @@ class UEPIQueryEngine:
         if not entity:
             return self._error("UEPI_ASSET_NOT_FOUND", "No indexed entity matched the supplied asset identifier.", candidates)
         entity_id = str(entity.get("id") or "")
-        incoming = self.incoming.get(entity_id, [])[:relation_limit]
-        outgoing = self.outgoing.get(entity_id, [])[:relation_limit]
-        affected_ids = {relation.get("from_id") for relation in incoming} | {relation.get("to_id") for relation in outgoing}
-        affected_ids.discard(entity_id)
+        if self.cache:
+            adjacent = self.cache.relations_for_entity(entity_id, relation_limit * 2)
+            incoming = [relation for relation in adjacent if relation.get("to_id") == entity_id][:relation_limit]
+            outgoing = [relation for relation in adjacent if relation.get("from_id") == entity_id][:relation_limit]
+            affected_ids = {relation.get("from_id") for relation in incoming} | {relation.get("to_id") for relation in outgoing}
+            affected_ids.discard(entity_id)
+            affected = [_short_entity(item) for item in self.cache.entities_by_ids({str(item) for item in affected_ids if item}, relation_limit)]
+            query_source = "sqlite_cache"
+        else:
+            self._ensure_loaded()
+            incoming = self.incoming.get(entity_id, [])[:relation_limit]
+            outgoing = self.outgoing.get(entity_id, [])[:relation_limit]
+            affected_ids = {relation.get("from_id") for relation in incoming} | {relation.get("to_id") for relation in outgoing}
+            affected_ids.discard(entity_id)
+            affected = [_short_entity(self.entity_by_id[item]) for item in affected_ids if item in self.entity_by_id][:relation_limit]
+            query_source = "snapshot_fragments"
         return self._envelope(
             {
                 "asset": _short_entity(entity),
                 "incoming": [_relation_summary(relation) for relation in incoming],
                 "outgoing": [_relation_summary(relation) for relation in outgoing],
-                "affected_entities": [_short_entity(self.entity_by_id[item]) for item in affected_ids if item in self.entity_by_id][:relation_limit],
+                "affected_entities": affected,
+                "query_source": query_source,
             }
         )
 
@@ -452,14 +561,34 @@ class UEPIQueryEngine:
         scope = scope or []
         terms = [term for term in question.replace("/", " ").replace("_", " ").split() if len(term) >= 2]
         query = " ".join(terms[:4]) if terms else question
-        matches = [entity for entity in self.entities if self._matches_entity(entity, query)]
-        if not matches and terms:
-            matches = [entity for entity in self.entities if any(self._matches_entity(entity, term) for term in terms[:8])]
-        matches = matches[: max(1, min(max_items, 100))]
+        limit = max(1, min(max_items, 100))
+        if self.cache:
+            matches = self.cache.search_entities(query, limit=limit)
+            if not matches and terms:
+                seen: set[str] = set()
+                term_matches: list[dict[str, Any]] = []
+                for term in terms[:8]:
+                    for entity in self.cache.search_entities(term, limit=limit):
+                        entity_id = str(entity.get("id") or "")
+                        if entity_id and entity_id not in seen:
+                            seen.add(entity_id)
+                            term_matches.append(entity)
+                    if len(term_matches) >= limit:
+                        break
+                matches = term_matches[:limit]
+            query_source = "sqlite_cache"
+        else:
+            self._ensure_loaded()
+            matches = [entity for entity in self.entities if self._matches_entity(entity, query)]
+            if not matches and terms:
+                matches = [entity for entity in self.entities if any(self._matches_entity(entity, term) for term in terms[:8])]
+            matches = matches[:limit]
+            query_source = "snapshot_fragments"
         related: list[dict[str, Any]] = []
         for entity in matches[:10]:
             entity_id = str(entity.get("id") or "")
-            for relation in (self.outgoing.get(entity_id, []) + self.incoming.get(entity_id, []))[:10]:
+            adjacent = self.cache.relations_for_entity(entity_id, limit=10) if self.cache else (self.outgoing.get(entity_id, []) + self.incoming.get(entity_id, []))[:10]
+            for relation in adjacent:
                 related.append(_relation_summary(relation))
         return self._envelope(
             {
@@ -468,6 +597,7 @@ class UEPIQueryEngine:
                 "interpretation": "static snapshot context",
                 "matches": [_short_entity(entity, include_snapshot=False) for entity in matches],
                 "relations": related[:max_items],
+                "query_source": query_source,
                 "uncertainties": [
                     "Runtime branch conditions, latent action timing, and live unsaved editor changes are not observed in saved snapshot mode."
                 ],
