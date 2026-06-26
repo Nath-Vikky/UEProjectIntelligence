@@ -4,6 +4,7 @@
 
 - Started the snapshot-first read-only MCP convergence line.
 - Reframed `main` around UE plugin collection, Snapshot Store, and stdio MCP as the only default AI entry point.
+- Added the initial Snapshot Store v2 C++ writer skeleton with canonical `Saved/UEProjectIntelligence/store` and `cache` layout.
 - Marked daemon, worker, HTTP API, job queue, and Web UI flows as legacy v1 architecture to be removed from the default product.
 - Preserved the previous stable daemon-compatible loop as tag `v1.0.0`.
 
