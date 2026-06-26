@@ -8,7 +8,7 @@ This repository is currently on the `2.0-dev` Snapshot-first line described in `
 
 UEPI is organized around three components:
 
-- **UEPI Editor Plugin**: authoritative Unreal-side read-only collection, change observation, and snapshot writing.
+- **UEPI Editor Plugin**: authoritative Unreal-side read-only collection, change observation, targeted refresh request polling, and snapshot writing.
 - **UEPI Snapshot Store**: saved snapshots, live overlay state, history manifests, and large read-only artifacts under `Saved/UEProjectIntelligence`.
 - **UEPI MCP Process**: stdio MCP entry point, snapshot sync, rebuildable SQLite query cache, and AI context construction.
 
@@ -16,10 +16,10 @@ The default user path should be:
 
 ```text
 Install and enable the UEPI plugin
-  -> open the Unreal project
-  -> the plugin collects read-only project snapshots
+  -> generate a saved baseline Snapshot from the editor panel or commandlet
   -> Codex / Claude Code / Cursor starts UEPI MCP over stdio
-  -> the AI queries live state or the latest saved snapshot
+  -> the AI chooses the narrow read tools needed for the user's question
+  -> if a watched asset changed, MCP queues a targeted editor refresh request
 ```
 
 The default product no longer treats a local daemon, HTTP API, worker registration, job queue, or Web UI as part of the main workflow.
@@ -44,6 +44,18 @@ UEPI writes only its own observations, snapshots, indexes, logs, and artifacts u
 ```text
 Saved/UEProjectIntelligence
 ```
+
+## On-Demand Refresh Model
+
+UEPI does not scan the whole project simply because the editor opens. Editor startup records a live session heartbeat and incremental events. Saved baselines remain queryable while the editor is closed.
+
+When an MCP read targets an asset, the query layer compares the current Snapshot with incremental editor events. If the target has changed and the editor session is active, the tool writes a small refresh request to:
+
+```text
+Saved/UEProjectIntelligence/store/requests
+```
+
+The editor plugin polls that directory and runs a targeted scan only for the requested asset. The original MCP response includes `UEPI_REFRESH_REQUESTED`, so the agent can retry the same read after the request completes.
 
 ## Build
 
@@ -93,6 +105,7 @@ Internal maintenance, ingest, worker, queue, HTTP, and recovery tools are not pa
 ## Documentation
 
 - Current v2 plan: `DOCX/Improvement.md`
+- Next improvement plan: `DOCX/NextImprove.md`
 - User guide: `Docs/user-guide.md`
 - Development status: `Docs/DevelopmentStatus.md`
 - Architecture notes: `Docs/developer-architecture.md`

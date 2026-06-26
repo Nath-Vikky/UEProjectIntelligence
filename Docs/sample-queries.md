@@ -1,6 +1,6 @@
 # Sample Queries
 
-After MCP connects, start with:
+Start every new MCP session with:
 
 ```text
 uepi_status
@@ -25,6 +25,12 @@ Read Blueprint structure:
 uepi_blueprint {"asset": "BP_ThirdPersonCharacter", "limit": 300}
 ```
 
+Trace BeginPlay-style static flow:
+
+```text
+uepi_blueprint_trace {"asset": "BP_ThirdPersonCharacter", "start": "BeginPlay", "relation_types": ["exec_flows_to", "calls_function"], "max_depth": 8, "max_paths": 20}
+```
+
 Read animation context:
 
 ```text
@@ -36,3 +42,5 @@ Build a context bundle:
 ```text
 uepi_context {"question": "BP_ThirdPersonCharacter 的 BeginPlay 连接了哪些节点？", "scope": ["blueprint"], "max_items": 80}
 ```
+
+If the result diagnostics include `UEPI_REFRESH_REQUESTED`, wait for the editor plugin to process the request and retry the same call.

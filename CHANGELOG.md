@@ -11,6 +11,8 @@
 - Added optional-reader compile gates so ordinary projects do not link EnhancedInput, CommonUI, GAS, StateTree, IKRig, ControlRig, Niagara, PCG, or MetaSound modules unless explicitly enabled.
 - Replaced newly written full `project_scan` Snapshot fragments with small `project_fragment` objects while keeping legacy `project_scan` reads for migration.
 - Added `typed_attributes` v2 wrappers and SQLite cache v2.1 routing for search and graph-neighborhood MCP reads.
+- Added on-demand targeted refresh requests from MCP reads, editor-side request polling, incremental-event freshness diagnostics, and `asset_tombstone` current-view handling.
+- Added cache auto-sync, MCP initialize instructions, Codex config template, release checklist, and refreshed user documentation.
 - Removed legacy daemon, HTTP/Web UI, worker/queue tooling, and extension SDK files from the mainline.
 - Marked daemon, worker, HTTP API, job queue, and Web UI flows as legacy v1 architecture to be removed from the default product.
 - Preserved the previous stable daemon-compatible loop as tag `v1.0.0`.

@@ -206,6 +206,8 @@ def write_fixture(root: Path) -> None:
 
     live_node_id = "node-live-print"
     live_relation_id = "rel-live-contains-node"
+    deleted_asset_id = "asset-bp-deleted"
+    deleted_node_id = "node-deleted"
     live_asset_entity = dict(asset_entity)
     live_asset_entity["attributes"] = {"object_path": "/Game/BP_Hero.BP_Hero", "asset_name": "BP_Hero", "live_marker": "true"}
     live_asset_fragment = {
@@ -247,7 +249,85 @@ def write_fixture(root: Path) -> None:
     }
     live_object_path = objects / "aaliveassetfragment.json"
     live_object_path.write_text(json.dumps(live_asset_fragment, ensure_ascii=False), encoding="utf-8")
+
+    deleted_asset_fragment = {
+        "schema_version": "uepi.asset-fragment.v2",
+        "project_id": "project-fixture",
+        "project_name": "FixtureProject",
+        "project_file": str(root / "FixtureProject.uproject"),
+        "engine_version": "5.3.2",
+        "source_scan_finished_at_utc": "2026-06-26T00:00:01Z",
+        "asset": {"id": deleted_asset_id, "canonical_key": "/Game/BP_Deleted.BP_Deleted", "display_name": "BP_Deleted", "kind": "asset"},
+        "entities": [
+            {
+                "id": deleted_asset_id,
+                "kind": "asset",
+                "canonical_key": "/Game/BP_Deleted.BP_Deleted",
+                "display_name": "BP_Deleted",
+                "source_layer": "asset_registry",
+                "attributes": {"object_path": "/Game/BP_Deleted.BP_Deleted", "asset_name": "BP_Deleted"},
+                "completeness": {"state": "partial", "covered": ["asset_registry_metadata"], "omitted": [], "warnings": []},
+                "diagnostics": [],
+                "evidence": [],
+            },
+            {
+                "id": deleted_node_id,
+                "kind": "blueprint_node",
+                "canonical_key": "/Game/BP_Deleted.BP_Deleted::EventGraph::OldNode",
+                "display_name": "Deleted Node",
+                "source_layer": "editor_source_graph",
+                "attributes": {"node_title": "Deleted Node"},
+                "completeness": {"state": "partial", "covered": ["node"], "omitted": [], "warnings": []},
+                "diagnostics": [],
+                "evidence": [],
+            },
+        ],
+        "relations": [
+            {
+                "id": "rel-deleted-contains-node",
+                "type": "contains_node",
+                "from_id": deleted_asset_id,
+                "to_id": deleted_node_id,
+                "source_layer": "editor_source_graph",
+                "derived": False,
+                "confidence": 1.0,
+                "attributes": {},
+                "evidence": [],
+            }
+        ],
+        "diagnostics": [],
+    }
+    deleted_object_path = objects / "aadeletedassetfragment.json"
+    deleted_object_path.write_text(json.dumps(deleted_asset_fragment, ensure_ascii=False), encoding="utf-8")
+    deleted_tombstone = {
+        "schema_version": "uepi.asset-tombstone.v2",
+        "project_id": "project-fixture",
+        "project_name": "FixtureProject",
+        "project_file": str(root / "FixtureProject.uproject"),
+        "engine_version": "5.3.2",
+        "created_at_utc": "2026-06-26T00:00:04Z",
+        "asset_key": "/Game/BP_Deleted.BP_Deleted",
+        "asset_name": "BP_Deleted",
+        "asset_id": deleted_asset_id,
+        "package_name": "/Game/BP_Deleted",
+        "class_path": "/Script/Engine.Blueprint",
+        "reason": "asset_removed",
+        "event_type": "asset_removed",
+        "old_object_path": "",
+        "new_object_path": "",
+        "source_event_sequence": 2,
+    }
+    deleted_tombstone_path = objects / "aadeletedtombstone.json"
+    deleted_tombstone_path.write_text(json.dumps(deleted_tombstone, ensure_ascii=False), encoding="utf-8")
     live_manifest = dict(manifest)
+    manifest["fragments"].extend(
+        [
+            {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aadeletedassetfragment", "path": str(deleted_object_path), "asset_id": deleted_asset_id},
+            {"kind": "asset_tombstone", "schema_version": "uepi.asset-tombstone.v2", "hash": "aadeletedtombstone", "path": str(deleted_tombstone_path), "asset_id": deleted_asset_id, "asset_key": "/Game/BP_Deleted.BP_Deleted"},
+        ]
+    )
+    (manifests / "saved.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    (manifests / "saved-1.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     live_manifest.update(
         {
             "data_mode": "live",
@@ -272,6 +352,25 @@ def write_fixture(root: Path) -> None:
             },
             ensure_ascii=False,
         ),
+        encoding="utf-8",
+    )
+    logs = store / "logs"
+    logs.mkdir(parents=True)
+    (logs / "incremental_events.jsonl").write_text(
+        json.dumps(
+            {
+                "sequence": 3,
+                "event_type": "asset_updated",
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "asset_path": "/Game/BP_Hero.BP_Hero",
+                "package_name": "/Game/BP_Hero",
+                "class_path": "/Script/Engine.Blueprint",
+                "old_object_path": "",
+                "package_file_name": "",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -309,6 +408,8 @@ def main() -> int:
                 {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "snapshot-test", "version": "1"}},
             )
             assert init["serverInfo"]["name"] == "uepi-mcp"
+            assert "instructions" in init
+            assert "resources" not in init["capabilities"]
             tools = request(process, 2, "tools/list")["tools"]
             names = {tool["name"] for tool in tools}
             assert names == EXPECTED_TOOLS
@@ -324,12 +425,21 @@ def main() -> int:
             assert search["result"]["match_count"] >= 1
             assert search["result"]["query_source"] == "sqlite_cache"
             assert "typed_attributes" in search["result"]["matches"][0]
+            deleted_search = request(process, 40, "tools/call", {"name": "uepi_search", "arguments": {"query": "BP_Deleted"}})["structuredContent"]
+            assert deleted_search["result"]["match_count"] == 0
+            deleted_asset = request(process, 41, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "BP_Deleted"}})["structuredContent"]
+            assert deleted_asset["error"]["code"] == "UEPI_ASSET_TOMBSTONED"
             blueprint = request(process, 5, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_Hero.BP_Hero"}})["structuredContent"]
             assert blueprint["result"]["query_source"] == "sqlite_cache"
+            assert blueprint["state"]["freshness"] == "refresh_requested"
+            assert blueprint["diagnostics"][0]["code"] == "UEPI_REFRESH_REQUESTED"
             blueprint_names = {item["display_name"] for item in blueprint["result"]["blueprint_entities"]}
             assert "Event BeginPlay" in blueprint_names
             assert "Asset Fragment Node" in blueprint_names
             assert "Live Print String" in blueprint_names
+            assert any((root / "store" / "requests").glob("refresh-*.json"))
+            unknown = request(process, 6, "tools/call", {"name": "uepi_missing", "arguments": {}})["structuredContent"]
+            assert unknown["error"]["code"] == "UEPI_UNKNOWN_TOOL"
         finally:
             if process.stdin:
                 process.stdin.close()

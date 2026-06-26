@@ -1,0 +1,14 @@
+# UE Project Intelligence MCP template for Codex-style TOML configuration.
+# Replace PROJECT_ROOT and PYTHON_EXE for your machine.
+
+[mcp_servers.uepi]
+command = "C:/Users/renne/AppData/Local/Programs/Python/Python313/python.exe"
+args = [
+  "-B",
+  "F:/Epic Games/UE5project/GasDemo/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py",
+  "--project",
+  "F:/Epic Games/UE5project/GasDemo/GasDemo.uproject",
+  "--tool-profile",
+  "codex",
+]
+cwd = "F:/Epic Games/UE5project/GasDemo/Plugins/UEProjectIntelligence"
