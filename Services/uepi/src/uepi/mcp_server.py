@@ -129,6 +129,13 @@ TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+SERVER_INSTRUCTIONS = """UE Project Intelligence is a read-only Unreal Engine project-understanding server.
+Start with uepi_status to inspect snapshot freshness, cache state, and editor availability.
+Use uepi_search or uepi_context to identify the minimum set of assets needed for the user's question.
+Then call the narrow domain tool: uepi_asset for local context, uepi_blueprint for Blueprint graph/node/pin data, uepi_blueprint_trace for static flow paths, uepi_animation for animation/skeleton/track summaries, and uepi_impact for dependency impact.
+Reads never require the Unreal Editor when the snapshot/cache is current. If a read response includes diagnostic code UEPI_REFRESH_REQUESTED, a targeted editor refresh request has been queued under the Snapshot Store; retry the same read after the editor processes it. If UEPI_SNAPSHOT_STALE appears, ask the user to open the editor/plugin before expecting realtime data.
+Treat uepi_diff as a generation-level saved snapshot comparison, not a live editor diff."""
+
 
 def read_message(stdin: BinaryIO) -> tuple[dict[str, Any], str] | None:
     line = stdin.readline()
@@ -193,6 +200,7 @@ class UEPIMCPServer:
             "protocolVersion": "2024-11-05",
             "serverInfo": {"name": "uepi-mcp", "version": __version__},
             "capabilities": capabilities,
+            "instructions": SERVER_INSTRUCTIONS,
         }
 
     def tools(self) -> list[dict[str, Any]]:
@@ -312,10 +320,16 @@ class UEPIMCPServer:
                 "description": "Current saved Snapshot manifest.",
             },
             {
-                "uri": "uepi://snapshot/project-scan",
-                "name": "UEPI Project Scan Fragment",
+                "uri": "uepi://snapshot/current-view",
+                "name": "UEPI Current Snapshot View",
                 "mimeType": "application/json",
-                "description": "Current saved project_scan object referenced by the manifest.",
+                "description": "Merged current view after saved fragments, live overlay, and tombstones.",
+            },
+            {
+                "uri": "uepi://snapshot/project-scan",
+                "name": "UEPI Current Snapshot View (Legacy URI)",
+                "mimeType": "application/json",
+                "description": "Legacy URI retained for clients that previously read the merged project scan.",
             },
         ]
 
@@ -323,7 +337,7 @@ class UEPIMCPServer:
         engine = self._engine()
         if uri == "uepi://snapshot/manifest":
             text = json.dumps(engine.state.manifest, ensure_ascii=False, indent=2)
-        elif uri == "uepi://snapshot/project-scan":
+        elif uri in {"uepi://snapshot/current-view", "uepi://snapshot/project-scan"}:
             text = json.dumps(engine.scan, ensure_ascii=False, indent=2)
         else:
             raise ValueError(f"Unknown UEPI resource: {uri}")

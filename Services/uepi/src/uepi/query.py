@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .cache import SQLiteSnapshotCache, cache_status
-from .store import SnapshotState, SnapshotStore, SnapshotStoreError, _load_json
+from .cache import SQLiteSnapshotCache, cache_status, sync_cache
+from .store import SnapshotState, SnapshotStore, SnapshotStoreError, _load_json, _parse_utc
 
 
 BLUEPRINT_KINDS = {
@@ -86,6 +86,14 @@ class UEPIQueryEngine:
     def __init__(self, store: SnapshotStore):
         self.store = store
         self.state: SnapshotState = store.load_state()
+        self._cache_status = cache_status(self.store, self.state)
+        self._cache_sync_result: dict[str, Any] | None = None
+        self._cache_sync_error: str | None = None
+        if not self._cache_status.get("synced"):
+            try:
+                self._cache_sync_result = sync_cache(self.store)
+            except Exception as exc:
+                self._cache_sync_error = str(exc)
         self.cache = SQLiteSnapshotCache.open_if_synced(store, self.state)
         self._cache_status = cache_status(self.store, self.state)
         self._scan: dict[str, Any] | None = None
@@ -140,7 +148,12 @@ class UEPIQueryEngine:
         result: dict[str, Any],
         diagnostics: list[dict[str, Any]] | None = None,
         omissions: list[str] | None = None,
+        freshness: str | None = None,
+        truncation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        state = self.state.envelope_state()
+        if freshness:
+            state["freshness"] = freshness
         return {
             "schema_version": "uepi.mcp-envelope.v1",
             "request_id": str(uuid4()),
@@ -149,14 +162,25 @@ class UEPIQueryEngine:
                 "name": self._project_name(),
                 "engine_version": self._engine_version(),
             },
-            "state": self.state.envelope_state(),
+            "state": state,
             "result": result,
             "diagnostics": diagnostics or [],
             "omissions": omissions or [],
+            "truncation": truncation or {"truncated": False, "reason": None},
             "continuation": {"cursor": None, "has_more": False},
         }
 
-    def _error(self, code: str, message: str, candidates: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def _error(
+        self,
+        code: str,
+        message: str,
+        candidates: list[dict[str, Any]] | None = None,
+        diagnostics: list[dict[str, Any]] | None = None,
+        freshness: str | None = None,
+    ) -> dict[str, Any]:
+        state = self.state.envelope_state()
+        if freshness:
+            state["freshness"] = freshness
         return {
             "schema_version": "uepi.mcp-envelope.v1",
             "request_id": str(uuid4()),
@@ -165,14 +189,15 @@ class UEPIQueryEngine:
                 "name": self._project_name(),
                 "engine_version": self._engine_version(),
             },
-            "state": self.state.envelope_state(),
+            "state": state,
             "error": {
                 "code": code,
                 "message": message,
                 "retryable": False,
                 "candidates": candidates or [],
             },
-            "diagnostics": [],
+            "diagnostics": diagnostics or [],
+            "truncation": {"truncated": False, "reason": None},
         }
 
     def _matches_entity(self, entity: dict[str, Any], query: str, kind: str | None = None) -> bool:
@@ -230,6 +255,71 @@ class UEPIQueryEngine:
         asset_first = sorted(candidates, key=lambda item: (0 if item.get("kind") == "asset" else 1, str(item.get("canonical_key") or "")))
         return asset_first[0], [_short_entity(item) for item in asset_first[:10]]
 
+    def _tombstone_candidate(self, identifier: str) -> list[dict[str, Any]]:
+        tombstone = self.store.find_tombstone(identifier, self.state)
+        if not tombstone:
+            return []
+        return [
+            {
+                "kind": "asset_tombstone",
+                "asset_key": tombstone.get("asset_key"),
+                "asset_name": tombstone.get("asset_name"),
+                "asset_id": tombstone.get("asset_id"),
+                "reason": tombstone.get("reason"),
+                "old_object_path": tombstone.get("old_object_path"),
+                "new_object_path": tombstone.get("new_object_path"),
+                "created_at_utc": tombstone.get("created_at_utc"),
+            }
+        ]
+
+    def _freshness_for_identifier(self, identifier: str, tool_name: str) -> tuple[str | None, list[dict[str, Any]]]:
+        if not identifier:
+            return None, []
+        event = self.store.latest_incremental_event(identifier)
+        if not event:
+            return None, []
+
+        event_time = _parse_utc(event.get("timestamp_utc"))
+        observed_at = self.store.asset_fragment_observed_at(identifier, self.state)
+        if event_time is not None and observed_at is not None and event_time <= observed_at:
+            return None, []
+
+        tombstone = self.store.find_tombstone(identifier, self.state)
+        if tombstone and event.get("event_type") in {"asset_removed", "asset_renamed"}:
+            tombstone_time = _parse_utc(tombstone.get("created_at_utc"))
+            if event_time is None or tombstone_time is None or tombstone_time >= event_time:
+                return None, []
+
+        session = self.store.active_editor_session()
+        if session:
+            request_path = self.store.request_refresh(
+                [identifier],
+                reason="incremental_event_newer_than_snapshot",
+                tool_name=tool_name,
+                data_mode="live",
+            )
+            return "refresh_requested", [
+                {
+                    "severity": "warning",
+                    "code": "UEPI_REFRESH_REQUESTED",
+                    "message": "An editor change event is newer than the current snapshot for this target. A targeted refresh request was queued; retry the same read after the editor processes it.",
+                    "event": event,
+                    "observed_at": observed_at.isoformat().replace("+00:00", "Z") if observed_at else None,
+                    "request_path": str(request_path),
+                    "editor_session_id": session.get("session_id"),
+                }
+            ]
+
+        return "stale", [
+            {
+                "severity": "warning",
+                "code": "UEPI_SNAPSHOT_STALE",
+                "message": "An editor change event is newer than the current snapshot, but no active editor session is available to service a targeted refresh request.",
+                "event": event,
+                "observed_at": observed_at.isoformat().replace("+00:00", "Z") if observed_at else None,
+            }
+        ]
+
     def _domain_entities_for_asset(self, asset: dict[str, Any], domain_kinds: set[str], limit: int) -> list[dict[str, Any]]:
         asset_id = str(asset.get("id") or "")
         if self.cache:
@@ -272,6 +362,13 @@ class UEPIQueryEngine:
                 except SnapshotStoreError as exc:
                     if len(fragment_paths) < 20:
                         fragment_paths.append(f"unreadable: {exc}")
+        editor_session = self.store.active_editor_session()
+        latest_event = self.store.latest_incremental_event()
+        cache = cache_status(self.store, self.state)
+        if self._cache_sync_result:
+            cache["auto_sync"] = self._cache_sync_result
+        if self._cache_sync_error:
+            cache["auto_sync_error"] = self._cache_sync_error
         return self._envelope(
             {
                 "ok": True,
@@ -286,12 +383,28 @@ class UEPIQueryEngine:
                 "fragment_kinds": dict(fragment_kinds),
                 "fragment_count": sum(fragment_kinds.values()),
                 "fragment_path_samples": fragment_paths,
-                "cache": cache_status(self.store, self.state),
+                "cache": cache,
+                "editor_session": editor_session,
+                "incremental_events": {
+                    "latest": latest_event,
+                    "log_path": str(self.store.logs_dir / "incremental_events.jsonl"),
+                },
+                "refresh_requests": {
+                    "pending": self.store.pending_refresh_requests(),
+                    "directory": str(self.store.requests_dir),
+                },
                 "llm_readiness": {
                     "can_query_snapshot": int(self.counts.get("entities") or 0) > 0,
                     "requires_daemon": False,
                     "requires_editor_for_reads": False,
                     "can_refresh_without_editor": False,
+                    "can_request_editor_refresh": editor_session is not None,
+                    "recommended_flow": [
+                        "Call uepi_status first.",
+                        "Use uepi_search or uepi_context to identify candidate assets.",
+                        "Call the domain-specific read tool only for assets needed by the user question.",
+                        "If diagnostics include UEPI_REFRESH_REQUESTED, retry the same read after the editor processes the request.",
+                    ],
                 },
             }
         )
@@ -334,9 +447,13 @@ class UEPIQueryEngine:
         return self._envelope({"query": query, "kind": kind, "matches": matches, "match_count": len(matches), "query_source": query_source})
 
     def asset(self, asset: str, include_snapshot: bool = True, relation_limit: int = 80) -> dict[str, Any]:
+        freshness, diagnostics = self._freshness_for_identifier(asset, "uepi_asset")
         entity, candidates = self._resolve_entity(asset)
         if not entity:
-            return self._error("UEPI_ASSET_NOT_FOUND", "No indexed entity matched the supplied asset identifier.", candidates)
+            tombstone = self._tombstone_candidate(asset)
+            if tombstone:
+                return self._error("UEPI_ASSET_TOMBSTONED", "The supplied asset identifier matches a deleted or renamed asset tombstone.", tombstone, diagnostics, freshness)
+            return self._error("UEPI_ASSET_NOT_FOUND", "No indexed entity matched the supplied asset identifier.", candidates, diagnostics, freshness)
         entity_id = str(entity.get("id") or "")
         if self.cache:
             relations = self.cache.relations_for_entity(entity_id, max(0, relation_limit))
@@ -358,13 +475,19 @@ class UEPIQueryEngine:
                 "related_entities": related,
                 "resolution_candidates": candidates,
                 "query_source": query_source,
-            }
+            },
+            diagnostics=diagnostics,
+            freshness=freshness,
         )
 
     def blueprint(self, asset: str, limit: int = 200) -> dict[str, Any]:
+        freshness, diagnostics = self._freshness_for_identifier(asset, "uepi_blueprint")
         entity, candidates = self._resolve_entity(asset)
         if not entity:
-            return self._error("UEPI_ASSET_NOT_FOUND", "No indexed Blueprint asset matched the supplied identifier.", candidates)
+            tombstone = self._tombstone_candidate(asset)
+            if tombstone:
+                return self._error("UEPI_ASSET_TOMBSTONED", "The supplied Blueprint identifier matches a deleted or renamed asset tombstone.", tombstone, diagnostics, freshness)
+            return self._error("UEPI_ASSET_NOT_FOUND", "No indexed Blueprint asset matched the supplied identifier.", candidates, diagnostics, freshness)
         domain_entities = self._domain_entities_for_asset(entity, BLUEPRINT_KINDS, max(1, min(limit, 1000)))
         entity_id = str(entity.get("id") or "")
         relation_ids = {item.get("id") for item in domain_entities if item.get("id")}
@@ -391,20 +514,28 @@ class UEPIQueryEngine:
                 "resolution_candidates": candidates,
                 "query_source": query_source,
             },
+            diagnostics=diagnostics,
             omissions=omissions,
+            freshness=freshness,
         )
 
     def blueprint_trace(self, asset: str, start: str | None = None, relation_types: list[str] | None = None, max_depth: int = 8, max_paths: int = 20) -> dict[str, Any]:
+        freshness, diagnostics = self._freshness_for_identifier(asset, "uepi_blueprint_trace")
         entity, candidates = self._resolve_entity(asset)
         if not entity:
-            return self._error("UEPI_ASSET_NOT_FOUND", "No indexed Blueprint asset matched the supplied identifier.", candidates)
+            tombstone = self._tombstone_candidate(asset)
+            if tombstone:
+                return self._error("UEPI_ASSET_TOMBSTONED", "The supplied Blueprint identifier matches a deleted or renamed asset tombstone.", tombstone, diagnostics, freshness)
+            return self._error("UEPI_ASSET_NOT_FOUND", "No indexed Blueprint asset matched the supplied identifier.", candidates, diagnostics, freshness)
         allowed = set(relation_types or ["exec_flows_to", "data_flows_to", "delegate_flows_to", "calls_function"])
         blueprint_entities = self._domain_entities_for_asset(entity, BLUEPRINT_KINDS, 1000)
         domain_ids = {str(item.get("id")) for item in blueprint_entities if item.get("id")}
         if not domain_ids:
             return self._envelope(
                 {"paths": [], "resolution_candidates": candidates},
+                diagnostics=diagnostics,
                 omissions=["blueprint_graph_entities_not_present_in_snapshot"],
+                freshness=freshness,
             )
         if not self.cache:
             self._ensure_loaded()
@@ -460,13 +591,19 @@ class UEPIQueryEngine:
                 "paths": paths[:max_paths],
                 "resolution": "static_snapshot",
                 "query_source": "sqlite_cache" if self.cache else "snapshot_fragments",
-            }
+            },
+            diagnostics=diagnostics,
+            freshness=freshness,
         )
 
     def animation(self, asset: str, include: list[str] | None = None, limit: int = 300) -> dict[str, Any]:
+        freshness, diagnostics = self._freshness_for_identifier(asset, "uepi_animation")
         entity, candidates = self._resolve_entity(asset)
         if not entity:
-            return self._error("UEPI_ASSET_NOT_FOUND", "No indexed animation entity matched the supplied identifier.", candidates)
+            tombstone = self._tombstone_candidate(asset)
+            if tombstone:
+                return self._error("UEPI_ASSET_TOMBSTONED", "The supplied animation identifier matches a deleted or renamed asset tombstone.", tombstone, diagnostics, freshness)
+            return self._error("UEPI_ASSET_NOT_FOUND", "No indexed animation entity matched the supplied identifier.", candidates, diagnostics, freshness)
         domain_entities = self._domain_entities_for_asset(entity, ANIMATION_KINDS, max(1, min(limit, 1000)))
         snapshot = _as_dict(entity.get("snapshot"))
         requested = include or ["summary", "tracks", "notifies", "curves", "relations"]
@@ -484,12 +621,16 @@ class UEPIQueryEngine:
             omissions.append("animation_details_not_present_in_snapshot")
         if "pose_samples" in requested and not result["sequence"]:
             omissions.append("pose_samples_require_animation_sequence_snapshot")
-        return self._envelope(result, omissions=omissions)
+        return self._envelope(result, diagnostics=diagnostics, omissions=omissions, freshness=freshness)
 
     def impact(self, asset: str, relation_limit: int = 200) -> dict[str, Any]:
+        freshness, diagnostics = self._freshness_for_identifier(asset, "uepi_impact")
         entity, candidates = self._resolve_entity(asset)
         if not entity:
-            return self._error("UEPI_ASSET_NOT_FOUND", "No indexed entity matched the supplied asset identifier.", candidates)
+            tombstone = self._tombstone_candidate(asset)
+            if tombstone:
+                return self._error("UEPI_ASSET_TOMBSTONED", "The supplied asset identifier matches a deleted or renamed asset tombstone.", tombstone, diagnostics, freshness)
+            return self._error("UEPI_ASSET_NOT_FOUND", "No indexed entity matched the supplied asset identifier.", candidates, diagnostics, freshness)
         entity_id = str(entity.get("id") or "")
         if self.cache:
             adjacent = self.cache.relations_for_entity(entity_id, relation_limit * 2)
@@ -514,7 +655,9 @@ class UEPIQueryEngine:
                 "outgoing": [_relation_summary(relation) for relation in outgoing],
                 "affected_entities": affected,
                 "query_source": query_source,
-            }
+            },
+            diagnostics=diagnostics,
+            freshness=freshness,
         )
 
     def diff(self, from_generation: int | None = None, to_generation: int | None = None) -> dict[str, Any]:
