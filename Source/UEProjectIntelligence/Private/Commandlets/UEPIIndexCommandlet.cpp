@@ -111,6 +111,8 @@ int32 UUEPIIndexCommandlet::Main(const FString& Params)
 	CommitOptions.DataMode = TEXT("saved");
 	CommitOptions.WriterMode = TEXT("commandlet");
 	CommitOptions.SourceScanPath = Options.OutputPath;
+	CommitOptions.TargetObjectPaths = Options.TargetObjectPaths;
+	CommitOptions.bMergeWithExisting = Options.TargetObjectPaths.Num() > 0;
 
 	UE::ProjectIntelligence::FSnapshotCommitResult CommitResult;
 	if (!UE::ProjectIntelligence::FSnapshotStore::CommitProjectScan(Result, CommitOptions, CommitResult, ErrorText))

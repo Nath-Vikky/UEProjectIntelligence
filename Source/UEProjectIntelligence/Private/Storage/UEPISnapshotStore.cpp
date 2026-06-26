@@ -458,6 +458,7 @@ bool FSnapshotStore::CommitProjectScan(
 	Manifest->SetStringField(TEXT("created_at_utc"), FDateTime::UtcNow().ToIso8601());
 	Manifest->SetBoolField(TEXT("is_overlay"), Options.TargetObjectPaths.Num() > 0 || bLiveMode);
 	Manifest->SetStringField(TEXT("merge_strategy"), Options.bMergeWithExisting ? TEXT("append_project_scan_fragments") : TEXT("replace"));
+	Manifest->SetStringField(TEXT("counts_scope"), Options.bMergeWithExisting ? TEXT("latest_fragment") : TEXT("manifest"));
 	Manifest->SetArrayField(TEXT("target_object_paths"), SnapshotStringArrayToJsonValues(Options.TargetObjectPaths));
 	Manifest->SetObjectField(TEXT("project"), ProjectObject);
 	Manifest->SetObjectField(TEXT("counts"), CountsObject);

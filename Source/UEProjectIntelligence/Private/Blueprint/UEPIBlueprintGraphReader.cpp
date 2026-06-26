@@ -180,14 +180,23 @@ void AddRelation(
 	const TMap<FString, FString>& Attributes = TMap<FString, FString>())
 {
 	FRelationRecord Relation;
-	Relation.Id = MakeRelationId(ProjectId, Type, FromId, ToId, Attributes.Num() > 0 ? &Attributes : nullptr);
+	Relation.Id = MakeRelationId(ProjectId, Type, FromId, ToId);
 	Relation.Type = Type;
 	Relation.FromId = FromId;
 	Relation.ToId = ToId;
 	Relation.SourceLayer = LexToString(ESourceLayer::EditorSourceGraph);
 	Relation.bDerived = bDerived;
-	Relation.Confidence = 1.0f;
 	Relation.Attributes = Attributes;
+	if (bDerived)
+	{
+		Relation.Confidence = 0.95f;
+		Relation.Attributes.Add(TEXT("confidence_basis"), TEXT("derived_static_projection_with_canonical_pin_evidence"));
+	}
+	else
+	{
+		Relation.Confidence = 1.0f;
+		Relation.Attributes.Add(TEXT("confidence_basis"), TEXT("direct_editor_source_graph_fact"));
+	}
 	Relation.Evidence.Add({
 		LexToString(ESourceLayer::EditorSourceGraph),
 		EvidencePath,

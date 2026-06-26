@@ -405,6 +405,8 @@ FString MakeRelationId(
 	const FString& ToId,
 	const TMap<FString, FString>* Attributes)
 {
+	static_cast<void>(Attributes);
+
 	FString CanonicalKey;
 	CanonicalKey.Reserve(RelationType.Len() + FromId.Len() + ToId.Len() + 2);
 	CanonicalKey += RelationType;
@@ -412,21 +414,6 @@ FString MakeRelationId(
 	CanonicalKey += FromId;
 	CanonicalKey.AppendChar(TEXT('\0'));
 	CanonicalKey += ToId;
-
-	if (Attributes && Attributes->Num() > 0)
-	{
-		TArray<FString> Keys;
-		Attributes->GetKeys(Keys);
-		Keys.Sort();
-
-		for (const FString& Key : Keys)
-		{
-			CanonicalKey.AppendChar(TEXT('\0'));
-			CanonicalKey += Key;
-			CanonicalKey.AppendChar(TEXT('\0'));
-			CanonicalKey += (*Attributes)[Key];
-		}
-	}
 
 	return MakeStableId(ProjectId, TEXT("relation"), CanonicalKey);
 }

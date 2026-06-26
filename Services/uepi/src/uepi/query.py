@@ -232,6 +232,7 @@ class UEPIQueryEngine:
                 "generation": self.state.generation,
                 "counts": self.counts,
                 "manifest_counts": self.state.counts,
+                "manifest_counts_scope": self.state.manifest.get("counts_scope") or "manifest",
                 "fragment_kinds": dict(fragment_kinds),
                 "fragment_count": sum(fragment_kinds.values()),
                 "fragment_path_samples": fragment_paths,

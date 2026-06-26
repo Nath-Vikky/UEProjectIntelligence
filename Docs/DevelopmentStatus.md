@@ -17,6 +17,8 @@
 - Commandlet one-shot Snapshot writer.
 - Python `Services/uepi` query package.
 - MCP query auto-selects a fresh live overlay and merges it over the saved Snapshot baseline.
+- Relation identity no longer includes descriptive attributes; IDs are based on project, relation type, from ID, and to ID.
+- Blueprint derived projections now report `confidence_basis` and use sub-1.0 confidence for static derived flows.
 - Ten-tool stdio MCP server: status, overview, search, context, asset, blueprint, blueprint trace, animation, impact, diff.
 - v2 MCP smoke test without daemon, worker, HTTP, Web UI, or SQLite service, including saved+live overlay merge.
 
@@ -33,5 +35,6 @@
 ## Next
 
 - Remove the compatibility full-scan `project_scan` fragment after the SQLite v2 cache and fragment-only tests are complete.
+- Migrate generic string attributes to typed v2 attribute values.
 - Rebuildable SQLite v2 cache for faster large-project queries.
 - Broader v2 fixtures around the new Snapshot store.
