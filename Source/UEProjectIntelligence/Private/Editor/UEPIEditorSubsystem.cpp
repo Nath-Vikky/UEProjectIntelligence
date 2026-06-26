@@ -14,6 +14,7 @@
 #include "HAL/PlatformProcess.h"
 #include "Modules/ModuleManager.h"
 #include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonReader.h"
 #include "Serialization/JsonWriter.h"
 #include "UEPIAssetRegistryScanner.h"
 #include "UEPISnapshotStore.h"
@@ -53,6 +54,11 @@ namespace
 		return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("sessions"));
 	}
 
+	FString UEPIRequestsDirectory()
+	{
+		return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("requests"));
+	}
+
 	FString UEPIEditorSessionPath()
 	{
 		return FPaths::Combine(UEPISessionsDirectory(), TEXT("editor-session.json"));
@@ -67,14 +73,13 @@ namespace
 
 	bool UEPIIsSavedPromotionEvent(const FString& EventType)
 	{
-		return EventType.Equals(TEXT("package_saved"), ESearchCase::IgnoreCase);
+		return EventType.Equals(TEXT("package_saved"), ESearchCase::IgnoreCase) ||
+			EventType.Equals(TEXT("asset_renamed"), ESearchCase::IgnoreCase);
 	}
 
 	bool UEPIIsScannableInvalidationEvent(const FString& EventType)
 	{
-		return EventType.Equals(TEXT("asset_added"), ESearchCase::IgnoreCase) ||
-			EventType.Equals(TEXT("asset_updated"), ESearchCase::IgnoreCase) ||
-			EventType.Equals(TEXT("asset_renamed"), ESearchCase::IgnoreCase) ||
+		return EventType.Equals(TEXT("asset_renamed"), ESearchCase::IgnoreCase) ||
 			EventType.Equals(TEXT("package_saved"), ESearchCase::IgnoreCase);
 	}
 
@@ -85,6 +90,56 @@ namespace
 			return Event.AssetPath;
 		}
 		return Event.PackageName;
+	}
+
+	bool UEPILoadJsonObject(const FString& Path, TSharedPtr<FJsonObject>& OutObject)
+	{
+		FString JsonText;
+		if (!FFileHelper::LoadFileToString(JsonText, *Path))
+		{
+			return false;
+		}
+
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonText);
+		return FJsonSerializer::Deserialize(Reader, OutObject) && OutObject.IsValid();
+	}
+
+	bool UEPISaveJsonObject(const TSharedRef<FJsonObject>& Object, const FString& Path)
+	{
+		FString Output;
+		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Output);
+		if (!FJsonSerializer::Serialize(Object, Writer))
+		{
+			return false;
+		}
+
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+		return FFileHelper::SaveStringToFile(Output, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+	}
+
+	TArray<FString> UEPIStringArrayField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName)
+	{
+		TArray<FString> Values;
+		if (!Object.IsValid())
+		{
+			return Values;
+		}
+
+		const TArray<TSharedPtr<FJsonValue>>* JsonValues = nullptr;
+		if (!Object->TryGetArrayField(FieldName, JsonValues) || JsonValues == nullptr)
+		{
+			return Values;
+		}
+
+		for (const TSharedPtr<FJsonValue>& Value : *JsonValues)
+		{
+			FString Text;
+			if (Value.IsValid() && Value->TryGetString(Text) && !Text.IsEmpty())
+			{
+				Values.AddUnique(Text);
+			}
+		}
+		return Values;
 	}
 }
 
@@ -223,10 +278,13 @@ void UUEPIEditorSubsystem::GetCollectorStatus(FUEPICollectorStatus& OutStatus) c
 	OutStatus.SessionPath = UEPIEditorSessionPath();
 	OutStatus.LastHeartbeatUtc = LastHeartbeatUtc;
 	OutStatus.PendingInvalidations = PendingInvalidations.Num();
+	OutStatus.PendingRefreshRequests = PendingRefreshRequests;
 	OutStatus.IncrementalEvents = IncrementalEvents.Num();
 	OutStatus.LastAutoScanUtc = LastAutoScanUtc;
 	OutStatus.LastAutoScanMode = LastAutoScanMode;
 	OutStatus.LastAutoScanManifestPath = LastAutoScanManifestPath;
+	OutStatus.LastRefreshRequestUtc = LastRefreshRequestUtc;
+	OutStatus.LastRefreshRequestPath = LastRefreshRequestPath;
 	OutStatus.LastError = LastCollectorError;
 }
 
@@ -325,6 +383,7 @@ bool UUEPIEditorSubsystem::TickCollector(float DeltaTime)
 	}
 
 	ProcessInvalidationQueue();
+	ProcessRefreshRequests();
 	return true;
 }
 
@@ -425,6 +484,122 @@ void UUEPIEditorSubsystem::ProcessInvalidationQueue()
 	}
 }
 
+void UUEPIEditorSubsystem::ProcessRefreshRequests()
+{
+	const FString RequestsDir = UEPIRequestsDirectory();
+	IFileManager::Get().MakeDirectory(*RequestsDir, true);
+
+	TArray<FString> RequestFiles;
+	IFileManager::Get().FindFiles(RequestFiles, *FPaths::Combine(RequestsDir, TEXT("*.json")), true, false);
+	RequestFiles.Sort();
+
+	int32 PendingCount = 0;
+	int32 ProcessedCount = 0;
+	for (const FString& RequestFile : RequestFiles)
+	{
+		const FString RequestPath = FPaths::Combine(RequestsDir, RequestFile);
+		TSharedPtr<FJsonObject> Request;
+		if (!UEPILoadJsonObject(RequestPath, Request) || !Request.IsValid())
+		{
+			continue;
+		}
+
+		FString SchemaVersion;
+		Request->TryGetStringField(TEXT("schema_version"), SchemaVersion);
+		if (!SchemaVersion.Equals(TEXT("uepi.refresh-request.v1"), ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+
+		FString Status;
+		Request->TryGetStringField(TEXT("status"), Status);
+		if (Status.IsEmpty())
+		{
+			Status = TEXT("pending");
+		}
+		if (!Status.Equals(TEXT("pending"), ESearchCase::IgnoreCase) && !Status.Equals(TEXT("running"), ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+
+		++PendingCount;
+		if (ProcessedCount >= 4)
+		{
+			continue;
+		}
+
+		TArray<FString> TargetObjectPaths = UEPIStringArrayField(Request, TEXT("target_object_paths"));
+		FString SingleTarget;
+		if (Request->TryGetStringField(TEXT("target_object_path"), SingleTarget) && !SingleTarget.IsEmpty())
+		{
+			TargetObjectPaths.AddUnique(SingleTarget);
+		}
+		if (Request->TryGetStringField(TEXT("asset"), SingleTarget) && !SingleTarget.IsEmpty())
+		{
+			TargetObjectPaths.AddUnique(SingleTarget);
+		}
+
+		FString DataMode;
+		if (!Request->TryGetStringField(TEXT("data_mode"), DataMode) || DataMode.IsEmpty())
+		{
+			DataMode = TEXT("live");
+		}
+
+		Request->SetStringField(TEXT("status"), TEXT("running"));
+		Request->SetStringField(TEXT("started_at_utc"), FDateTime::UtcNow().ToIso8601());
+		Request->SetStringField(TEXT("editor_session_id"), LiveSessionId);
+		UEPISaveJsonObject(Request.ToSharedRef(), RequestPath);
+
+		FString ReportPath;
+		FString Error;
+		const bool bOk = RunTargetedSnapshotScan(TargetObjectPaths, DataMode, ReportPath, Error);
+		Request->SetStringField(TEXT("status"), bOk ? TEXT("completed") : TEXT("failed"));
+		Request->SetStringField(TEXT("completed_at_utc"), FDateTime::UtcNow().ToIso8601());
+		Request->SetStringField(TEXT("editor_session_id"), LiveSessionId);
+		Request->SetStringField(TEXT("manifest_path"), ReportPath);
+		Request->SetStringField(TEXT("error"), Error);
+		UEPISaveJsonObject(Request.ToSharedRef(), RequestPath);
+
+		LastRefreshRequestUtc = FDateTime::UtcNow().ToIso8601();
+		LastRefreshRequestPath = RequestPath;
+		++ProcessedCount;
+	}
+
+	PendingRefreshRequests = PendingCount;
+}
+
+void UUEPIEditorSubsystem::CommitAssetTombstoneFromEvent(const FUEPIIncrementalEvent& Event, const FString& Reason)
+{
+	UE::ProjectIntelligence::FSnapshotTombstoneOptions Options;
+	Options.DataMode = TEXT("saved");
+	Options.WriterMode = TEXT("editor");
+	Options.SessionId = LiveSessionId;
+	Options.AssetKey = !Event.OldObjectPath.IsEmpty() ? Event.OldObjectPath : Event.AssetPath;
+	Options.AssetName = FPaths::GetBaseFilename(Options.AssetKey);
+	Options.PackageName = Event.PackageName;
+	Options.ClassPath = Event.ClassPath;
+	Options.Reason = Reason;
+	Options.EventType = Event.EventType;
+	Options.OldObjectPath = Event.OldObjectPath;
+	Options.NewObjectPath = Event.AssetPath;
+	Options.SourceEventSequence = Event.Sequence;
+
+	if (Options.AssetKey.IsEmpty())
+	{
+		return;
+	}
+
+	UE::ProjectIntelligence::FSnapshotCommitResult CommitResult;
+	FText ErrorText;
+	if (!UE::ProjectIntelligence::FSnapshotStore::CommitAssetTombstone(Options, CommitResult, ErrorText))
+	{
+		LastCollectorError = ErrorText.ToString();
+		return;
+	}
+
+	LastCollectorError.Reset();
+}
+
 void UUEPIEditorSubsystem::RegisterIncrementalDelegates()
 {
 	if (!PackageSavedHandle.IsValid())
@@ -523,6 +698,10 @@ void UUEPIEditorSubsystem::HandleAssetRemoved(const FAssetData& AssetData)
 		AssetData.AssetClassPath.ToString(),
 		FString(),
 		FString());
+	if (IncrementalEvents.Num() > 0)
+	{
+		CommitAssetTombstoneFromEvent(IncrementalEvents.Last(), TEXT("asset_removed"));
+	}
 }
 
 void UUEPIEditorSubsystem::HandleAssetRenamed(const FAssetData& AssetData, const FString& OldObjectPath)
@@ -534,6 +713,10 @@ void UUEPIEditorSubsystem::HandleAssetRenamed(const FAssetData& AssetData, const
 		AssetData.AssetClassPath.ToString(),
 		OldObjectPath,
 		FString());
+	if (IncrementalEvents.Num() > 0)
+	{
+		CommitAssetTombstoneFromEvent(IncrementalEvents.Last(), TEXT("asset_renamed_old_path"));
+	}
 }
 
 void UUEPIEditorSubsystem::HandleAssetUpdated(const FAssetData& AssetData)

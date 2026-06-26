@@ -15,6 +15,7 @@ struct FSnapshotStorePaths
 	FString ArtifactsDir;
 	FString ManifestsDir;
 	FString SessionsDir;
+	FString RequestsDir;
 	FString LocksDir;
 	FString LogsDir;
 	FString CacheDir;
@@ -39,6 +40,28 @@ struct FSnapshotCommitResult
 	int64 Generation = 0;
 };
 
+struct FSnapshotTombstoneOptions
+{
+	FString ProjectId;
+	FString ProjectName;
+	FString ProjectFile;
+	FString EngineVersion;
+	FString DataMode = TEXT("saved");
+	FString WriterMode = TEXT("editor");
+	FString SessionId;
+	FString AssetKey;
+	FString AssetName;
+	FString AssetId;
+	FString PackageName;
+	FString ClassPath;
+	FString Reason;
+	FString EventType;
+	FString OldObjectPath;
+	FString NewObjectPath;
+	int64 SourceEventSequence = 0;
+	bool bMergeWithExisting = true;
+};
+
 class UEPROJECTINTELLIGENCE_API FSnapshotStore
 {
 public:
@@ -48,6 +71,10 @@ public:
 	static bool CommitProjectScan(
 		const FProjectScanResult& ScanResult,
 		const FSnapshotCommitOptions& Options,
+		FSnapshotCommitResult& OutResult,
+		FText& OutError);
+	static bool CommitAssetTombstone(
+		const FSnapshotTombstoneOptions& Options,
 		FSnapshotCommitResult& OutResult,
 		FText& OutError);
 

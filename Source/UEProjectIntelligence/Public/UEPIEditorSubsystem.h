@@ -55,6 +55,9 @@ struct FUEPICollectorStatus
 	int32 PendingInvalidations = 0;
 
 	UPROPERTY(BlueprintReadOnly, Category="UE Project Intelligence")
+	int32 PendingRefreshRequests = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category="UE Project Intelligence")
 	int32 IncrementalEvents = 0;
 
 	UPROPERTY(BlueprintReadOnly, Category="UE Project Intelligence")
@@ -65,6 +68,12 @@ struct FUEPICollectorStatus
 
 	UPROPERTY(BlueprintReadOnly, Category="UE Project Intelligence")
 	FString LastAutoScanManifestPath;
+
+	UPROPERTY(BlueprintReadOnly, Category="UE Project Intelligence")
+	FString LastRefreshRequestUtc;
+
+	UPROPERTY(BlueprintReadOnly, Category="UE Project Intelligence")
+	FString LastRefreshRequestPath;
 
 	UPROPERTY(BlueprintReadOnly, Category="UE Project Intelligence")
 	FString LastError;
@@ -109,6 +118,8 @@ private:
 	bool TickCollector(float DeltaTime);
 	void EnqueueInvalidation(const FUEPIIncrementalEvent& Event);
 	void ProcessInvalidationQueue();
+	void ProcessRefreshRequests();
+	void CommitAssetTombstoneFromEvent(const FUEPIIncrementalEvent& Event, const FString& Reason);
 
 	void HandlePackageSaved(const FString& PackageFileName, UPackage* Package, FObjectPostSaveContext ObjectSaveContext);
 	void HandleAssetAdded(const struct FAssetData& AssetData);
@@ -135,7 +146,10 @@ private:
 	FString LastAutoScanUtc;
 	FString LastAutoScanMode;
 	FString LastAutoScanManifestPath;
+	FString LastRefreshRequestUtc;
+	FString LastRefreshRequestPath;
 	FString LastCollectorError;
+	int32 PendingRefreshRequests = 0;
 	double LastHeartbeatSeconds = 0.0;
 	FTSTicker::FDelegateHandle CollectorTickerHandle;
 	FDelegateHandle PackageSavedHandle;
