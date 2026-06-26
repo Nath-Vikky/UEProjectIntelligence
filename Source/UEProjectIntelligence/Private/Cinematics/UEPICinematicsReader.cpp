@@ -203,7 +203,7 @@ TSharedRef<FJsonObject> KeyArtifactManifest(
 	Object->SetStringField(TEXT("schema_version"), TEXT("uepi.cinematics_key_artifact_manifest.v1"));
 	Object->SetStringField(TEXT("artifact_id"), ArtifactId);
 	Object->SetStringField(TEXT("artifact_uri"), TEXT("uepi://cinematics-key-artifact/") + ArtifactId);
-	Object->SetStringField(TEXT("storage"), TEXT("daemon_materialized_json"));
+	Object->SetStringField(TEXT("storage"), TEXT("snapshot_materialized_json"));
 	Object->SetStringField(TEXT("scope_kind"), ScopeKind);
 	Object->SetStringField(TEXT("scope_id"), ScopeId);
 	Object->SetNumberField(TEXT("item_count"), ItemCount);
@@ -940,7 +940,7 @@ TSharedRef<FJsonObject> SectionSnapshot(
 
 	Object->SetNumberField(TEXT("channel_count"), ChannelValues.Num());
 	Object->SetNumberField(TEXT("key_count"), KeyCount);
-	Object->SetStringField(TEXT("key_storage"), KeyCount > 0 ? TEXT("inline_key_times_daemon_artifact") : TEXT("no_keys"));
+	Object->SetStringField(TEXT("key_storage"), KeyCount > 0 ? TEXT("inline_key_times_snapshot_artifact") : TEXT("no_keys"));
 	if (KeyCount > 0)
 	{
 		Object->SetObjectField(TEXT("key_artifact"), KeyArtifactManifest(ProjectId, TEXT("section"), SectionId, KeyCount));
@@ -1327,7 +1327,7 @@ TSharedRef<FJsonObject> LevelSequenceSnapshot(
 	Object->SetNumberField(TEXT("section_count"), SectionValues.Num());
 	Object->SetNumberField(TEXT("channel_count"), TotalChannelCount);
 	Object->SetNumberField(TEXT("key_count"), TotalKeyCount);
-	Object->SetStringField(TEXT("key_storage"), TotalKeyCount > 0 ? TEXT("inline_key_times_daemon_artifact") : TEXT("no_keys"));
+	Object->SetStringField(TEXT("key_storage"), TotalKeyCount > 0 ? TEXT("inline_key_times_snapshot_artifact") : TEXT("no_keys"));
 	if (TotalKeyCount > 0)
 	{
 		Object->SetObjectField(TEXT("key_artifact"), KeyArtifactManifest(ProjectId, TEXT("level_sequence"), SequenceId, TotalKeyCount));

@@ -2,11 +2,11 @@
 
 UE Project Intelligence is a read-only, project-aware MCP server for helping AI agents understand, navigate, and explain Unreal Engine projects.
 
-This repository is currently on the `2.0-dev` refactor line described in `DOCX/Improvement.md`. The previous daemon/worker/web based stable point is preserved as the `v1.0.0` tag.
+This repository is currently on the `2.0-dev` Snapshot-first line described in `DOCX/Improvement.md`. The previous daemon/worker/web based stable point is preserved only as the historical `v1.0.0` tag.
 
 ## Product Shape
 
-UEPI is being converged to three components:
+UEPI is organized around three components:
 
 - **UEPI Editor Plugin**: authoritative Unreal-side read-only collection, change observation, and snapshot writing.
 - **UEPI Snapshot Store**: saved snapshots, live overlay state, history manifests, and large read-only artifacts under `Saved/UEProjectIntelligence`.
@@ -26,10 +26,8 @@ The default product no longer treats a local daemon, HTTP API, worker registrati
 
 ## Current Stability
 
-- `v1.0.0`: stable read-only MCP loop using the legacy SQLite/daemon-compatible implementation.
-- `main`: active `2.0-dev` convergence work toward direct snapshot + stdio MCP.
-
-Use `v1.0.0` if you need the previously tested live worker flow. Use `main` if you are developing the new snapshot-first architecture.
+- `main`: active `2.0-dev` Snapshot-first read-only MCP line.
+- `v1.0.0`: historical tag for the previous daemon-compatible implementation.
 
 ## Read-Only Contract
 
@@ -62,7 +60,7 @@ If Unreal reports Live Coding is active, close the editor or press `Ctrl+Alt+F11
 
 ## Commandlet Collection
 
-`UEPIIndex` remains as a headless, one-shot collection entry point. It is not a worker and should not run as a queue consumer in the target architecture.
+`UEPIIndex` remains as a headless, one-shot Snapshot collection entry point. It is not a worker and does not run as a queue consumer.
 
 ```powershell
 & "F:\Epic Games\don\UE_5.3\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
@@ -73,11 +71,11 @@ If Unreal reports Live Coding is active, close the editor or press `Ctrl+Alt+F11
   -UEPIOutput="F:\Epic Games\UE5project\GasDemo\Saved\UEProjectIntelligence\l2_character_scan.json"
 ```
 
-During the refactor this still writes legacy scan JSON. The target state is direct Snapshot Store submission.
+The commandlet writes the requested scan JSON and submits the same observations into the Snapshot Store manifest.
 
-## Target MCP Surface
+## MCP Surface
 
-The public MCP surface is being reduced to task-oriented tools:
+The public MCP surface is task-oriented:
 
 - `uepi_status`
 - `uepi_overview`
@@ -95,9 +93,7 @@ Internal maintenance, ingest, worker, queue, HTTP, and recovery tools are not pa
 ## Documentation
 
 - Current v2 plan: `DOCX/Improvement.md`
-- v1 user guide: `Docs/user-guide.md`
+- User guide: `Docs/user-guide.md`
 - Development status: `Docs/DevelopmentStatus.md`
 - Architecture notes: `Docs/developer-architecture.md`
 - Troubleshooting: `Docs/troubleshooting.md`
-
-Docs are being updated in phases. Any document that still describes daemon/worker/web as the default path should be treated as legacy v1 material until rewritten.

@@ -1,26 +1,38 @@
 # UEPI Migration Guide
 
-## Database
+## Snapshot Store
 
-The current SQLite schema uses additive migration helpers for new columns. Before upgrading:
+UEPI 2.0-dev treats `Saved/UEProjectIntelligence/store` as the source of truth. Before replacing the plugin, close the editor and back up:
 
-1. Stop the daemon.
-2. Back up `Saved/UEProjectIntelligence/*.sqlite3*`.
-3. Replace the plugin.
-4. Run `integrity`.
-5. Re-ingest the latest scan if integrity or expected query fields are missing.
+```text
+Saved/UEProjectIntelligence/store/
+Saved/UEProjectIntelligence/cache/
+```
+
+The SQLite cache under `cache/` is rebuildable and may be deleted if it becomes incompatible.
 
 ## Plugin
 
 For source upgrades, replace `Plugins/UEProjectIntelligence`, regenerate project files if needed, and rebuild the editor target.
 
+## Rebuild Derived Cache
+
+After upgrading, rebuild the MCP query cache:
+
+```powershell
+python -B -m uepi sync --project "F:\Epic Games\UE5project\GasDemo\GasDemo.uproject"
+```
+
+Then run `uepi_status` from the MCP client and confirm the Snapshot generation and cache generation match.
+
 ## Scan Artifacts
 
-Scan JSON artifacts are immutable evidence. Keep old scans when comparing revisions or validating migrations. If a schema changes intentionally, update golden summaries and record the change in `CHANGELOG.md`.
+Scan JSON artifacts and Snapshot fragments are immutable evidence. Keep old scans when comparing revisions or validating migrations. If a schema changes intentionally, update golden summaries and record the change in `CHANGELOG.md`.
 
 ## Rollback
 
-1. Stop editor and daemon.
+1. Close the editor.
 2. Restore the previous plugin directory.
-3. Restore the previous SQLite files if the newer daemon ingested data with incompatible schema changes.
-4. Rebuild the editor target.
+3. Restore the backed-up `Saved/UEProjectIntelligence/store/` directory if needed.
+4. Delete `Saved/UEProjectIntelligence/cache/` and rebuild it after the rollback.
+5. Rebuild the editor target.
