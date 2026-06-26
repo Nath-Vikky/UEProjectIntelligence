@@ -212,12 +212,16 @@ class UEPIQueryEngine:
 
     def status(self) -> dict[str, Any]:
         fragment_paths = []
+        fragment_kinds = Counter()
         for fragment in _as_list(self.state.manifest.get("fragments")):
             if isinstance(fragment, dict):
+                fragment_kinds[str(fragment.get("kind") or "unknown")] += 1
                 try:
-                    fragment_paths.append(str(self.store.resolve_fragment_path(fragment)))
+                    if len(fragment_paths) < 20:
+                        fragment_paths.append(str(self.store.resolve_fragment_path(fragment)))
                 except SnapshotStoreError as exc:
-                    fragment_paths.append(f"unreadable: {exc}")
+                    if len(fragment_paths) < 20:
+                        fragment_paths.append(f"unreadable: {exc}")
         return self._envelope(
             {
                 "ok": True,
@@ -228,7 +232,9 @@ class UEPIQueryEngine:
                 "generation": self.state.generation,
                 "counts": self.counts,
                 "manifest_counts": self.state.counts,
-                "fragments": fragment_paths,
+                "fragment_kinds": dict(fragment_kinds),
+                "fragment_count": sum(fragment_kinds.values()),
+                "fragment_path_samples": fragment_paths,
                 "llm_readiness": {
                     "can_query_snapshot": bool(self.entities),
                     "requires_daemon": False,

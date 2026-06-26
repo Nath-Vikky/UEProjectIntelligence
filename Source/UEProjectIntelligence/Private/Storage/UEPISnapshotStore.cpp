@@ -44,6 +44,33 @@ TSharedPtr<FJsonObject> LoadJsonObject(const FString& Path)
 	return Object;
 }
 
+bool SaveJsonAtomicallyInternal(const TSharedRef<FJsonObject>& Object, const FString& OutputPath, FText& OutError)
+{
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutputPath), true);
+
+	const FString Json = JsonObjectToString(Object);
+	const FString TempPath = OutputPath + TEXT(".tmp-") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+	if (!FFileHelper::SaveStringToFile(Json, *TempPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	{
+		OutError = FText::Format(
+			NSLOCTEXT("UEProjectIntelligence", "SnapshotStoreTempWriteFailed", "Failed to write temporary UEPI Snapshot file: {0}."),
+			FText::FromString(TempPath));
+		return false;
+	}
+
+	if (!IFileManager::Get().Move(*OutputPath, *TempPath, true, true))
+	{
+		IFileManager::Get().Delete(*TempPath);
+		OutError = FText::Format(
+			NSLOCTEXT("UEProjectIntelligence", "SnapshotStoreAtomicMoveFailed", "Failed to atomically replace UEPI Snapshot file: {0}."),
+			FText::FromString(OutputPath));
+		return false;
+	}
+
+	OutError = FText::GetEmpty();
+	return true;
+}
+
 TArray<TSharedPtr<FJsonValue>> SnapshotStringArrayToJsonValues(const TArray<FString>& Values)
 {
 	TArray<TSharedPtr<FJsonValue>> Result;
@@ -51,6 +78,39 @@ TArray<TSharedPtr<FJsonValue>> SnapshotStringArrayToJsonValues(const TArray<FStr
 	for (const FString& Value : Values)
 	{
 		Result.Add(MakeShared<FJsonValueString>(Value));
+	}
+	return Result;
+}
+
+TArray<TSharedPtr<FJsonValue>> EntityArrayToJsonValues(const TArray<FEntityRecord>& Values)
+{
+	TArray<TSharedPtr<FJsonValue>> Result;
+	Result.Reserve(Values.Num());
+	for (const FEntityRecord& Value : Values)
+	{
+		Result.Add(MakeShared<FJsonValueObject>(Value.ToJson()));
+	}
+	return Result;
+}
+
+TArray<TSharedPtr<FJsonValue>> RelationArrayToJsonValues(const TArray<FRelationRecord>& Values)
+{
+	TArray<TSharedPtr<FJsonValue>> Result;
+	Result.Reserve(Values.Num());
+	for (const FRelationRecord& Value : Values)
+	{
+		Result.Add(MakeShared<FJsonValueObject>(Value.ToJson()));
+	}
+	return Result;
+}
+
+TArray<TSharedPtr<FJsonValue>> DiagnosticArrayToJsonValues(const TArray<FDiagnostic>& Values)
+{
+	TArray<TSharedPtr<FJsonValue>> Result;
+	Result.Reserve(Values.Num());
+	for (const FDiagnostic& Value : Values)
+	{
+		Result.Add(MakeShared<FJsonValueObject>(Value.ToJson()));
 	}
 	return Result;
 }
@@ -83,6 +143,134 @@ TArray<TSharedPtr<FJsonValue>> CopyObjectArrayField(const TSharedPtr<FJsonObject
 		}
 	}
 	return Result;
+}
+
+bool SaveStoreObject(
+	const FSnapshotStorePaths& Paths,
+	const FString& ProjectId,
+	const FString& FragmentKind,
+	const TSharedRef<FJsonObject>& Object,
+	FString& OutHash,
+	FString& OutPath,
+	FText& OutError)
+{
+	const FString Json = JsonObjectToString(Object);
+	OutHash = MakeStableId(ProjectId, FragmentKind, Json);
+	const FString FragmentPrefix = OutHash.Left(2).IsEmpty() ? TEXT("00") : OutHash.Left(2);
+	const FString FragmentDirectory = FPaths::Combine(Paths.ObjectsDir, FragmentPrefix);
+	if (!IFileManager::Get().MakeDirectory(*FragmentDirectory, true))
+	{
+		OutError = FText::Format(
+			NSLOCTEXT("UEProjectIntelligence", "SnapshotStoreObjectDirectoryFailed", "Failed to create UEPI Snapshot object directory: {0}."),
+			FText::FromString(FragmentDirectory));
+		return false;
+	}
+
+	OutPath = FPaths::Combine(FragmentDirectory, OutHash + TEXT(".json"));
+	if (!FPaths::FileExists(OutPath) && !SaveJsonAtomicallyInternal(Object, OutPath, OutError))
+	{
+		return false;
+	}
+	return true;
+}
+
+bool IsAssetEntityKind(const FString& Kind)
+{
+	return Kind == TEXT("asset") || Kind == TEXT("asset_redirector");
+}
+
+TSharedRef<FJsonObject> MakeAssetFragmentObject(
+	const FProjectScanResult& ScanResult,
+	const FEntityRecord& AssetEntity,
+	const TMap<FString, const FEntityRecord*>& EntityById,
+	const TMultiMap<FString, const FRelationRecord*>& RelationsByEntity)
+{
+	TSet<FString> IncludedEntityIds;
+	IncludedEntityIds.Add(AssetEntity.Id);
+
+	TArray<FString> Queue;
+	Queue.Add(AssetEntity.Id);
+	for (int32 QueueIndex = 0; QueueIndex < Queue.Num(); ++QueueIndex)
+	{
+		TArray<const FRelationRecord*> AdjacentRelations;
+		RelationsByEntity.MultiFind(Queue[QueueIndex], AdjacentRelations);
+		for (const FRelationRecord* Relation : AdjacentRelations)
+		{
+			if (!Relation)
+			{
+				continue;
+			}
+
+			const FString NextId = Relation->FromId == Queue[QueueIndex] ? Relation->ToId : Relation->FromId;
+			if (IncludedEntityIds.Contains(NextId))
+			{
+				continue;
+			}
+
+			const FEntityRecord* const* NextEntity = EntityById.Find(NextId);
+			if (!NextEntity || !*NextEntity)
+			{
+				continue;
+			}
+
+			if (IsAssetEntityKind((*NextEntity)->Kind))
+			{
+				continue;
+			}
+
+			IncludedEntityIds.Add(NextId);
+			Queue.Add(NextId);
+		}
+	}
+
+	TArray<FEntityRecord> FragmentEntities;
+	FragmentEntities.Reserve(IncludedEntityIds.Num());
+	for (const FString& EntityId : IncludedEntityIds)
+	{
+		const FEntityRecord* const* Entity = EntityById.Find(EntityId);
+		if (Entity && *Entity)
+		{
+			FragmentEntities.Add(**Entity);
+		}
+	}
+	FragmentEntities.Sort([](const FEntityRecord& Left, const FEntityRecord& Right)
+	{
+		return Left.Id < Right.Id;
+	});
+
+	TArray<FRelationRecord> FragmentRelations;
+	for (const FRelationRecord& Relation : ScanResult.Relations)
+	{
+		const bool bFromIncluded = IncludedEntityIds.Contains(Relation.FromId);
+		const bool bToIncluded = IncludedEntityIds.Contains(Relation.ToId);
+		if ((bFromIncluded && bToIncluded) || Relation.FromId == AssetEntity.Id || Relation.ToId == AssetEntity.Id)
+		{
+			FragmentRelations.Add(Relation);
+		}
+	}
+	FragmentRelations.Sort([](const FRelationRecord& Left, const FRelationRecord& Right)
+	{
+		return Left.Id < Right.Id;
+	});
+
+	TSharedRef<FJsonObject> AssetObject = MakeShared<FJsonObject>();
+	AssetObject->SetStringField(TEXT("id"), AssetEntity.Id);
+	AssetObject->SetStringField(TEXT("canonical_key"), AssetEntity.CanonicalKey);
+	AssetObject->SetStringField(TEXT("display_name"), AssetEntity.DisplayName);
+	AssetObject->SetStringField(TEXT("kind"), AssetEntity.Kind);
+
+	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetStringField(TEXT("schema_version"), TEXT("uepi.asset-fragment.v2"));
+	Root->SetStringField(TEXT("project_id"), ScanResult.ProjectId);
+	Root->SetStringField(TEXT("project_name"), ScanResult.ProjectName);
+	Root->SetStringField(TEXT("project_file"), ScanResult.ProjectFile);
+	Root->SetStringField(TEXT("engine_version"), ScanResult.EngineVersion);
+	Root->SetStringField(TEXT("source_scan_finished_at_utc"), ScanResult.FinishedAtUtc);
+	Root->SetObjectField(TEXT("asset"), AssetObject);
+	Root->SetArrayField(TEXT("entities"), EntityArrayToJsonValues(FragmentEntities));
+	Root->SetArrayField(TEXT("relations"), RelationArrayToJsonValues(FragmentRelations));
+	Root->SetArrayField(TEXT("diagnostics"), DiagnosticArrayToJsonValues(ScanResult.Diagnostics));
+	return Root;
 }
 }
 
@@ -148,20 +336,9 @@ bool FSnapshotStore::CommitProjectScan(
 	}
 
 	const TSharedRef<FJsonObject> ScanObject = ScanResult.ToJson();
-	const FString ScanJson = JsonObjectToString(ScanObject);
-	const FString FragmentHash = MakeStableId(ScanResult.ProjectId, TEXT("project_scan_fragment"), ScanJson);
-	const FString FragmentPrefix = FragmentHash.Left(2).IsEmpty() ? TEXT("00") : FragmentHash.Left(2);
-	const FString FragmentDirectory = FPaths::Combine(Paths.ObjectsDir, FragmentPrefix);
-	if (!IFileManager::Get().MakeDirectory(*FragmentDirectory, true))
-	{
-		OutError = FText::Format(
-			NSLOCTEXT("UEProjectIntelligence", "SnapshotStoreObjectDirectoryFailed", "Failed to create UEPI Snapshot object directory: {0}."),
-			FText::FromString(FragmentDirectory));
-		return false;
-	}
-
-	const FString FragmentPath = FPaths::Combine(FragmentDirectory, FragmentHash + TEXT(".json"));
-	if (!FPaths::FileExists(FragmentPath) && !SaveJsonAtomically(ScanObject, FragmentPath, OutError))
+	FString FragmentHash;
+	FString FragmentPath;
+	if (!SaveStoreObject(Paths, ScanResult.ProjectId, TEXT("project_scan_fragment"), ScanObject, FragmentHash, FragmentPath, OutError))
 	{
 		return false;
 	}
@@ -210,6 +387,45 @@ bool FSnapshotStore::CommitProjectScan(
 
 	TArray<TSharedPtr<FJsonValue>> FragmentValues = CopyObjectArrayField(ExistingManifest, TEXT("fragments"));
 	FragmentValues.Add(MakeShared<FJsonValueObject>(FragmentObject));
+
+	TMap<FString, const FEntityRecord*> EntityById;
+	for (const FEntityRecord& Entity : ScanResult.Entities)
+	{
+		EntityById.Add(Entity.Id, &Entity);
+	}
+
+	TMultiMap<FString, const FRelationRecord*> RelationsByEntity;
+	for (const FRelationRecord& Relation : ScanResult.Relations)
+	{
+		RelationsByEntity.Add(Relation.FromId, &Relation);
+		RelationsByEntity.Add(Relation.ToId, &Relation);
+	}
+
+	for (const FEntityRecord& Entity : ScanResult.Entities)
+	{
+		if (!IsAssetEntityKind(Entity.Kind))
+		{
+			continue;
+		}
+
+		const TSharedRef<FJsonObject> AssetFragmentObject = MakeAssetFragmentObject(ScanResult, Entity, EntityById, RelationsByEntity);
+		FString AssetFragmentHash;
+		FString AssetFragmentPath;
+		if (!SaveStoreObject(Paths, ScanResult.ProjectId, TEXT("asset_fragment"), AssetFragmentObject, AssetFragmentHash, AssetFragmentPath, OutError))
+		{
+			return false;
+		}
+
+		TSharedRef<FJsonObject> AssetFragmentRef = MakeShared<FJsonObject>();
+		AssetFragmentRef->SetStringField(TEXT("kind"), TEXT("asset_fragment"));
+		AssetFragmentRef->SetStringField(TEXT("schema_version"), TEXT("uepi.asset-fragment.v2"));
+		AssetFragmentRef->SetStringField(TEXT("hash"), AssetFragmentHash);
+		AssetFragmentRef->SetStringField(TEXT("path"), AssetFragmentPath);
+		AssetFragmentRef->SetStringField(TEXT("asset_id"), Entity.Id);
+		AssetFragmentRef->SetStringField(TEXT("asset_key"), Entity.CanonicalKey);
+		AssetFragmentRef->SetStringField(TEXT("asset_name"), Entity.DisplayName);
+		FragmentValues.Add(MakeShared<FJsonValueObject>(AssetFragmentRef));
+	}
 
 	TSharedRef<FJsonObject> CountsObject = MakeShared<FJsonObject>();
 	CountsObject->SetNumberField(TEXT("entities"), ScanResult.Entities.Num());
@@ -271,29 +487,7 @@ bool FSnapshotStore::CommitProjectScan(
 
 bool FSnapshotStore::SaveJsonAtomically(const TSharedRef<FJsonObject>& Object, const FString& OutputPath, FText& OutError)
 {
-	IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutputPath), true);
-
-	const FString Json = JsonObjectToString(Object);
-	const FString TempPath = OutputPath + TEXT(".tmp-") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
-	if (!FFileHelper::SaveStringToFile(Json, *TempPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
-	{
-		OutError = FText::Format(
-			NSLOCTEXT("UEProjectIntelligence", "SnapshotStoreTempWriteFailed", "Failed to write temporary UEPI Snapshot file: {0}."),
-			FText::FromString(TempPath));
-		return false;
-	}
-
-	if (!IFileManager::Get().Move(*OutputPath, *TempPath, true, true))
-	{
-		IFileManager::Get().Delete(*TempPath);
-		OutError = FText::Format(
-			NSLOCTEXT("UEProjectIntelligence", "SnapshotStoreAtomicMoveFailed", "Failed to atomically replace UEPI Snapshot file: {0}."),
-			FText::FromString(OutputPath));
-		return false;
-	}
-
-	OutError = FText::GetEmpty();
-	return true;
+	return SaveJsonAtomicallyInternal(Object, OutputPath, OutError);
 }
 
 int64 FSnapshotStore::ReadCurrentGeneration(const FString& ManifestPath)

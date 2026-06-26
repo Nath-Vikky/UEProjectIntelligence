@@ -7,6 +7,8 @@
 - UE5.3 editor module and `UEPIIndex` commandlet.
 - Read-only Asset Registry, UObject Reflection, Blueprint, Animation, World, Data, UI, AI, GAS, Niagara, PCG, MetaSound, Audio, Cinematics, Render, and Material readers from the v1 line.
 - Snapshot Store v2 layout under `Saved/UEProjectIntelligence/store`.
+- Immutable `asset_fragment` objects are written for each indexed asset and referenced from Snapshot manifests.
+- Full `project_scan` fragments are still written as a compatibility bridge until the query cache no longer needs them.
 - Editor dashboard `Run Snapshot Scan` action that writes `saved.json`.
 - Editor live session heartbeat under `store/sessions/editor-session.json`.
 - Debounced editor invalidation queue for asset added, updated, renamed, and package saved events.
@@ -30,6 +32,6 @@
 
 ## Next
 
-- Per-asset immutable fragments instead of full-scan project fragments.
+- Remove the compatibility full-scan `project_scan` fragment after the SQLite v2 cache and fragment-only tests are complete.
 - Rebuildable SQLite v2 cache for faster large-project queries.
 - Broader v2 fixtures around the new Snapshot store.

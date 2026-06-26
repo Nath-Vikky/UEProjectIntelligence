@@ -130,6 +130,46 @@ def write_fixture(root: Path) -> None:
     object_path = objects / "aabbcc.json"
     object_path.write_text(json.dumps(scan, ensure_ascii=False), encoding="utf-8")
 
+    fragment_node_id = "node-asset-fragment"
+    asset_fragment = {
+        "schema_version": "uepi.asset-fragment.v2",
+        "project_id": "project-fixture",
+        "project_name": "FixtureProject",
+        "project_file": str(root / "FixtureProject.uproject"),
+        "engine_version": "5.3.2",
+        "source_scan_finished_at_utc": "2026-06-26T00:00:01Z",
+        "asset": {"id": asset_id, "canonical_key": "/Game/BP_Hero.BP_Hero", "display_name": "BP_Hero", "kind": "asset"},
+        "entities": [
+            {
+                "id": fragment_node_id,
+                "kind": "blueprint_node",
+                "canonical_key": "/Game/BP_Hero.BP_Hero::EventGraph::FragmentNode",
+                "display_name": "Asset Fragment Node",
+                "source_layer": "editor_source_graph",
+                "attributes": {"node_title": "Asset Fragment Node"},
+                "completeness": {"state": "partial", "covered": ["node"], "omitted": [], "warnings": []},
+                "diagnostics": [],
+                "evidence": [],
+            }
+        ],
+        "relations": [
+            {
+                "id": "rel-asset-fragment-node",
+                "type": "contains_node",
+                "from_id": asset_id,
+                "to_id": fragment_node_id,
+                "source_layer": "editor_source_graph",
+                "derived": False,
+                "confidence": 1.0,
+                "attributes": {},
+                "evidence": [],
+            }
+        ],
+        "diagnostics": [],
+    }
+    asset_fragment_path = objects / "aaassetfragment.json"
+    asset_fragment_path.write_text(json.dumps(asset_fragment, ensure_ascii=False), encoding="utf-8")
+
     manifest = {
         "schema_version": "uepi.snapshot-manifest.v2",
         "data_mode": "saved",
@@ -142,7 +182,10 @@ def write_fixture(root: Path) -> None:
         "source": {},
         "completeness": {"state": "partial", "covered": ["blueprint_graphs"], "omitted": [], "warnings": []},
         "asset_entity_ids": [asset_id],
-        "fragments": [{"kind": "project_scan", "schema_version": "uepi.scan.v1", "hash": "aabbcc", "path": str(object_path)}],
+        "fragments": [
+            {"kind": "project_scan", "schema_version": "uepi.scan.v1", "hash": "aabbcc", "path": str(object_path)},
+            {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aaassetfragment", "path": str(asset_fragment_path), "asset_id": asset_id},
+        ],
     }
     (manifests / "saved.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     (manifests / "saved-1.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
@@ -253,6 +296,7 @@ def main() -> int:
             blueprint = request(process, 5, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_Hero.BP_Hero"}})["structuredContent"]
             blueprint_names = {item["display_name"] for item in blueprint["result"]["blueprint_entities"]}
             assert "Event BeginPlay" in blueprint_names
+            assert "Asset Fragment Node" in blueprint_names
             assert "Live Print String" in blueprint_names
         finally:
             if process.stdin:

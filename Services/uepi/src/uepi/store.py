@@ -176,16 +176,16 @@ class SnapshotStore:
             raise SnapshotStoreError(f"Snapshot fragment is outside the UEPI store: {path}")
         return path
 
-    def _project_scan_fragments(self, state: SnapshotState) -> list[dict[str, Any]]:
+    def _scan_fragments(self, state: SnapshotState) -> list[dict[str, Any]]:
         scans: list[dict[str, Any]] = []
         fragments = state.manifest.get("fragments")
         if not isinstance(fragments, list):
             raise SnapshotStoreError("Snapshot manifest does not include fragments.")
         for fragment in fragments:
-            if isinstance(fragment, dict) and fragment.get("kind") == "project_scan":
+            if isinstance(fragment, dict) and fragment.get("kind") in {"project_scan", "asset_fragment", "project_fragment"}:
                 scans.append(_load_json(self.resolve_fragment_path(fragment)))
         if not scans:
-            raise SnapshotStoreError("Snapshot manifest does not include a project_scan fragment.")
+            raise SnapshotStoreError("Snapshot manifest does not include readable scan fragments.")
         return scans
 
     @staticmethod
@@ -220,10 +220,10 @@ class SnapshotStore:
         scans: list[dict[str, Any]] = []
         if state.data_mode == "live":
             try:
-                scans.extend(self._project_scan_fragments(self.load_state("saved")))
+                scans.extend(self._scan_fragments(self.load_state("saved")))
             except SnapshotStoreError:
                 pass
-        scans.extend(self._project_scan_fragments(state))
+        scans.extend(self._scan_fragments(state))
         return self._merge_project_scans(scans)
 
     def versioned_manifest(self, generation: int, data_mode: str = "saved") -> Path:
