@@ -77,10 +77,44 @@ def write_fixture(root: Path) -> None:
     sessions.mkdir(parents=True)
 
     asset_id = "asset-bp-hero"
+    project_entity_id = "project-root"
     node_id = "node-beginplay"
     relation_id = "rel-contains-node"
-    scan = {
-        "schema_version": "uepi.scan.v1",
+    asset_entity = {
+        "id": asset_id,
+        "kind": "asset",
+        "canonical_key": "/Game/BP_Hero.BP_Hero",
+        "display_name": "BP_Hero",
+        "source_layer": "asset_registry",
+        "attributes": {"object_path": "/Game/BP_Hero.BP_Hero", "asset_name": "BP_Hero"},
+        "completeness": {"state": "partial", "covered": ["asset_registry_metadata"], "omitted": [], "warnings": []},
+        "diagnostics": [],
+        "evidence": [],
+    }
+    node_entity = {
+        "id": node_id,
+        "kind": "blueprint_node",
+        "canonical_key": "/Game/BP_Hero.BP_Hero::EventGraph::BeginPlay",
+        "display_name": "Event BeginPlay",
+        "source_layer": "editor_source_graph",
+        "attributes": {"node_title": "Event BeginPlay"},
+        "completeness": {"state": "partial", "covered": ["node"], "omitted": [], "warnings": []},
+        "diagnostics": [],
+        "evidence": [],
+    }
+    contains_node_relation = {
+        "id": relation_id,
+        "type": "contains_node",
+        "from_id": asset_id,
+        "to_id": node_id,
+        "source_layer": "editor_source_graph",
+        "derived": False,
+        "confidence": 1.0,
+        "attributes": {},
+        "evidence": [],
+    }
+    project_fragment = {
+        "schema_version": "uepi.project-fragment.v2",
         "project_id": "project-fixture",
         "project_name": "FixtureProject",
         "project_file": str(root / "FixtureProject.uproject"),
@@ -90,45 +124,22 @@ def write_fixture(root: Path) -> None:
         "completeness": {"state": "partial", "covered": ["blueprint_graphs"], "omitted": [], "warnings": []},
         "entities": [
             {
-                "id": asset_id,
-                "kind": "asset",
-                "canonical_key": "/Game/BP_Hero.BP_Hero",
-                "display_name": "BP_Hero",
-                "source_layer": "asset_registry",
-                "attributes": {"object_path": "/Game/BP_Hero.BP_Hero", "asset_name": "BP_Hero"},
-                "completeness": {"state": "partial", "covered": ["asset_registry_metadata"], "omitted": [], "warnings": []},
-                "diagnostics": [],
-                "evidence": [],
-            },
-            {
-                "id": node_id,
-                "kind": "blueprint_node",
-                "canonical_key": "/Game/BP_Hero.BP_Hero::EventGraph::BeginPlay",
-                "display_name": "Event BeginPlay",
-                "source_layer": "editor_source_graph",
-                "attributes": {"node_title": "Event BeginPlay"},
-                "completeness": {"state": "partial", "covered": ["node"], "omitted": [], "warnings": []},
+                "id": project_entity_id,
+                "kind": "project",
+                "canonical_key": str(root / "FixtureProject.uproject"),
+                "display_name": "FixtureProject",
+                "source_layer": "filesystem",
+                "attributes": {"project_name": "FixtureProject"},
+                "completeness": {"state": "complete", "covered": ["project_descriptor"], "omitted": [], "warnings": []},
                 "diagnostics": [],
                 "evidence": [],
             },
         ],
-        "relations": [
-            {
-                "id": relation_id,
-                "type": "contains_node",
-                "from_id": asset_id,
-                "to_id": node_id,
-                "source_layer": "editor_source_graph",
-                "derived": False,
-                "confidence": 1.0,
-                "attributes": {},
-                "evidence": [],
-            }
-        ],
+        "relations": [],
         "diagnostics": [],
     }
-    object_path = objects / "aabbcc.json"
-    object_path.write_text(json.dumps(scan, ensure_ascii=False), encoding="utf-8")
+    project_fragment_path = objects / "aaprojectfragment.json"
+    project_fragment_path.write_text(json.dumps(project_fragment, ensure_ascii=False), encoding="utf-8")
 
     fragment_node_id = "node-asset-fragment"
     asset_fragment = {
@@ -140,6 +151,8 @@ def write_fixture(root: Path) -> None:
         "source_scan_finished_at_utc": "2026-06-26T00:00:01Z",
         "asset": {"id": asset_id, "canonical_key": "/Game/BP_Hero.BP_Hero", "display_name": "BP_Hero", "kind": "asset"},
         "entities": [
+            asset_entity,
+            node_entity,
             {
                 "id": fragment_node_id,
                 "kind": "blueprint_node",
@@ -153,6 +166,7 @@ def write_fixture(root: Path) -> None:
             }
         ],
         "relations": [
+            contains_node_relation,
             {
                 "id": "rel-asset-fragment-node",
                 "type": "contains_node",
@@ -183,7 +197,7 @@ def write_fixture(root: Path) -> None:
         "completeness": {"state": "partial", "covered": ["blueprint_graphs"], "omitted": [], "warnings": []},
         "asset_entity_ids": [asset_id],
         "fragments": [
-            {"kind": "project_scan", "schema_version": "uepi.scan.v1", "hash": "aabbcc", "path": str(object_path)},
+            {"kind": "project_fragment", "schema_version": "uepi.project-fragment.v2", "hash": "aaprojectfragment", "path": str(project_fragment_path)},
             {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aaassetfragment", "path": str(asset_fragment_path), "asset_id": asset_id},
         ],
     }
@@ -192,46 +206,47 @@ def write_fixture(root: Path) -> None:
 
     live_node_id = "node-live-print"
     live_relation_id = "rel-live-contains-node"
-    live_scan = dict(scan)
-    live_scan["entities"] = [
-        {
-            "id": asset_id,
-            "kind": "asset",
-            "canonical_key": "/Game/BP_Hero.BP_Hero",
-            "display_name": "BP_Hero",
-            "source_layer": "asset_registry",
-            "attributes": {"object_path": "/Game/BP_Hero.BP_Hero", "asset_name": "BP_Hero", "live_marker": "true"},
-            "completeness": {"state": "partial", "covered": ["asset_registry_metadata"], "omitted": [], "warnings": []},
-            "diagnostics": [],
-            "evidence": [],
-        },
-        {
-            "id": live_node_id,
-            "kind": "blueprint_node",
-            "canonical_key": "/Game/BP_Hero.BP_Hero::EventGraph::PrintString",
-            "display_name": "Live Print String",
-            "source_layer": "editor_source_graph",
-            "attributes": {"node_title": "Live Print String"},
-            "completeness": {"state": "partial", "covered": ["node"], "omitted": [], "warnings": []},
-            "diagnostics": [],
-            "evidence": [],
-        },
-    ]
-    live_scan["relations"] = [
-        {
-            "id": live_relation_id,
-            "type": "contains_node",
-            "from_id": asset_id,
-            "to_id": live_node_id,
-            "source_layer": "editor_source_graph",
-            "derived": False,
-            "confidence": 1.0,
-            "attributes": {},
-            "evidence": [],
-        }
-    ]
-    live_object_path = objects / "aalive.json"
-    live_object_path.write_text(json.dumps(live_scan, ensure_ascii=False), encoding="utf-8")
+    live_asset_entity = dict(asset_entity)
+    live_asset_entity["attributes"] = {"object_path": "/Game/BP_Hero.BP_Hero", "asset_name": "BP_Hero", "live_marker": "true"}
+    live_asset_fragment = {
+        "schema_version": "uepi.asset-fragment.v2",
+        "project_id": "project-fixture",
+        "project_name": "FixtureProject",
+        "project_file": str(root / "FixtureProject.uproject"),
+        "engine_version": "5.3.2",
+        "source_scan_finished_at_utc": "2026-06-26T00:00:03Z",
+        "asset": {"id": asset_id, "canonical_key": "/Game/BP_Hero.BP_Hero", "display_name": "BP_Hero", "kind": "asset"},
+        "entities": [
+            live_asset_entity,
+            {
+                "id": live_node_id,
+                "kind": "blueprint_node",
+                "canonical_key": "/Game/BP_Hero.BP_Hero::EventGraph::PrintString",
+                "display_name": "Live Print String",
+                "source_layer": "editor_source_graph",
+                "attributes": {"node_title": "Live Print String"},
+                "completeness": {"state": "partial", "covered": ["node"], "omitted": [], "warnings": []},
+                "diagnostics": [],
+                "evidence": [],
+            },
+        ],
+        "relations": [
+            {
+                "id": live_relation_id,
+                "type": "contains_node",
+                "from_id": asset_id,
+                "to_id": live_node_id,
+                "source_layer": "editor_source_graph",
+                "derived": False,
+                "confidence": 1.0,
+                "attributes": {},
+                "evidence": [],
+            }
+        ],
+        "diagnostics": [],
+    }
+    live_object_path = objects / "aaliveassetfragment.json"
+    live_object_path.write_text(json.dumps(live_asset_fragment, ensure_ascii=False), encoding="utf-8")
     live_manifest = dict(manifest)
     live_manifest.update(
         {
@@ -243,7 +258,7 @@ def write_fixture(root: Path) -> None:
             "is_overlay": True,
             "merge_strategy": "replace",
             "target_object_paths": ["/Game/BP_Hero.BP_Hero"],
-            "fragments": [{"kind": "project_scan", "schema_version": "uepi.scan.v1", "hash": "aalive", "path": str(live_object_path)}],
+            "fragments": [{"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aaliveassetfragment", "path": str(live_object_path), "asset_id": asset_id}],
         }
     )
     (manifests / "live.json").write_text(json.dumps(live_manifest, ensure_ascii=False), encoding="utf-8")

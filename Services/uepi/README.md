@@ -2,7 +2,7 @@
 
 This package is the v2 read-only path for UE Project Intelligence.
 
-It reads `Saved/UEProjectIntelligence/store/manifests/saved.json` and immutable Snapshot objects directly. It does not start a daemon, expose HTTP, register workers, or mutate Unreal assets.
+It reads `Saved/UEProjectIntelligence/store/manifests/saved.json` plus immutable `project_fragment` and `asset_fragment` Snapshot objects directly. It does not start a daemon, expose HTTP, register workers, or mutate Unreal assets.
 
 ## Codex Example
 

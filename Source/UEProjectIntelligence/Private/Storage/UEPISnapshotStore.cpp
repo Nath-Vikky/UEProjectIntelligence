@@ -272,6 +272,52 @@ TSharedRef<FJsonObject> MakeAssetFragmentObject(
 	Root->SetArrayField(TEXT("diagnostics"), DiagnosticArrayToJsonValues(ScanResult.Diagnostics));
 	return Root;
 }
+
+TSharedRef<FJsonObject> MakeProjectFragmentObject(const FProjectScanResult& ScanResult)
+{
+	TSet<FString> ProjectEntityIds;
+	TArray<FEntityRecord> FragmentEntities;
+	for (const FEntityRecord& Entity : ScanResult.Entities)
+	{
+		if (IsAssetEntityKind(Entity.Kind))
+		{
+			continue;
+		}
+		ProjectEntityIds.Add(Entity.Id);
+		FragmentEntities.Add(Entity);
+	}
+	FragmentEntities.Sort([](const FEntityRecord& Left, const FEntityRecord& Right)
+	{
+		return Left.Id < Right.Id;
+	});
+
+	TArray<FRelationRecord> FragmentRelations;
+	for (const FRelationRecord& Relation : ScanResult.Relations)
+	{
+		if (ProjectEntityIds.Contains(Relation.FromId) && ProjectEntityIds.Contains(Relation.ToId))
+		{
+			FragmentRelations.Add(Relation);
+		}
+	}
+	FragmentRelations.Sort([](const FRelationRecord& Left, const FRelationRecord& Right)
+	{
+		return Left.Id < Right.Id;
+	});
+
+	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetStringField(TEXT("schema_version"), TEXT("uepi.project-fragment.v2"));
+	Root->SetStringField(TEXT("project_id"), ScanResult.ProjectId);
+	Root->SetStringField(TEXT("project_name"), ScanResult.ProjectName);
+	Root->SetStringField(TEXT("project_file"), ScanResult.ProjectFile);
+	Root->SetStringField(TEXT("engine_version"), ScanResult.EngineVersion);
+	Root->SetStringField(TEXT("source_scan_started_at_utc"), ScanResult.StartedAtUtc);
+	Root->SetStringField(TEXT("source_scan_finished_at_utc"), ScanResult.FinishedAtUtc);
+	Root->SetObjectField(TEXT("completeness"), ScanResult.Completeness.ToJson());
+	Root->SetArrayField(TEXT("entities"), EntityArrayToJsonValues(FragmentEntities));
+	Root->SetArrayField(TEXT("relations"), RelationArrayToJsonValues(FragmentRelations));
+	Root->SetArrayField(TEXT("diagnostics"), DiagnosticArrayToJsonValues(ScanResult.Diagnostics));
+	return Root;
+}
 }
 
 FString FSnapshotStore::DefaultRootDir()
@@ -335,10 +381,10 @@ bool FSnapshotStore::CommitProjectScan(
 		return false;
 	}
 
-	const TSharedRef<FJsonObject> ScanObject = ScanResult.ToJson();
-	FString FragmentHash;
-	FString FragmentPath;
-	if (!SaveStoreObject(Paths, ScanResult.ProjectId, TEXT("project_scan_fragment"), ScanObject, FragmentHash, FragmentPath, OutError))
+	const TSharedRef<FJsonObject> ProjectFragmentObject = MakeProjectFragmentObject(ScanResult);
+	FString ProjectFragmentHash;
+	FString ProjectFragmentPath;
+	if (!SaveStoreObject(Paths, ScanResult.ProjectId, TEXT("project_fragment"), ProjectFragmentObject, ProjectFragmentHash, ProjectFragmentPath, OutError))
 	{
 		return false;
 	}
@@ -377,12 +423,12 @@ bool FSnapshotStore::CommitProjectScan(
 	ProjectObject->SetStringField(TEXT("engine_version"), ScanResult.EngineVersion);
 
 	TSharedRef<FJsonObject> FragmentObject = MakeShared<FJsonObject>();
-	FragmentObject->SetStringField(TEXT("kind"), TEXT("project_scan"));
-	FragmentObject->SetStringField(TEXT("schema_version"), ScanResult.SchemaVersion);
-	FragmentObject->SetStringField(TEXT("hash"), FragmentHash);
-	FragmentObject->SetStringField(TEXT("path"), FragmentPath);
-	FragmentObject->SetNumberField(TEXT("entity_count"), ScanResult.Entities.Num());
-	FragmentObject->SetNumberField(TEXT("relation_count"), ScanResult.Relations.Num());
+	FragmentObject->SetStringField(TEXT("kind"), TEXT("project_fragment"));
+	FragmentObject->SetStringField(TEXT("schema_version"), TEXT("uepi.project-fragment.v2"));
+	FragmentObject->SetStringField(TEXT("hash"), ProjectFragmentHash);
+	FragmentObject->SetStringField(TEXT("path"), ProjectFragmentPath);
+	FragmentObject->SetNumberField(TEXT("entity_count"), ProjectFragmentObject->GetArrayField(TEXT("entities")).Num());
+	FragmentObject->SetNumberField(TEXT("relation_count"), ProjectFragmentObject->GetArrayField(TEXT("relations")).Num());
 	FragmentObject->SetNumberField(TEXT("diagnostic_count"), ScanResult.Diagnostics.Num());
 
 	TArray<TSharedPtr<FJsonValue>> FragmentValues = CopyObjectArrayField(ExistingManifest, TEXT("fragments"));
@@ -457,7 +503,7 @@ bool FSnapshotStore::CommitProjectScan(
 	}
 	Manifest->SetStringField(TEXT("created_at_utc"), FDateTime::UtcNow().ToIso8601());
 	Manifest->SetBoolField(TEXT("is_overlay"), Options.TargetObjectPaths.Num() > 0 || bLiveMode);
-	Manifest->SetStringField(TEXT("merge_strategy"), Options.bMergeWithExisting ? TEXT("append_project_scan_fragments") : TEXT("replace"));
+	Manifest->SetStringField(TEXT("merge_strategy"), Options.bMergeWithExisting ? TEXT("append_snapshot_fragments") : TEXT("replace"));
 	Manifest->SetStringField(TEXT("counts_scope"), Options.bMergeWithExisting ? TEXT("latest_fragment") : TEXT("manifest"));
 	Manifest->SetArrayField(TEXT("target_object_paths"), SnapshotStringArrayToJsonValues(Options.TargetObjectPaths));
 	Manifest->SetObjectField(TEXT("project"), ProjectObject);
@@ -479,8 +525,8 @@ bool FSnapshotStore::CommitProjectScan(
 
 	OutResult.ManifestPath = ManifestPath;
 	OutResult.VersionedManifestPath = VersionedManifestPath;
-	OutResult.ObjectPath = FragmentPath;
-	OutResult.FragmentHash = FragmentHash;
+	OutResult.ObjectPath = ProjectFragmentPath;
+	OutResult.FragmentHash = ProjectFragmentHash;
 	OutResult.Generation = Generation;
 	OutError = FText::GetEmpty();
 	return true;
