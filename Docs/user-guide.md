@@ -16,10 +16,10 @@ No daemon, HTTP server, Web UI, worker queue, or global proxy exception is requi
 
 Existing saved Snapshot queries do not require Unreal Editor to be open.
 
-Open the editor and enable the UEPI panel only when you want realtime targeted refreshes. When assets are saved, renamed, or removed, UEPI records incremental events. If Codex later reads an asset whose event is newer than the Snapshot, the MCP tool queues a targeted refresh request under:
+Open the editor and enable the UEPI panel only when you want realtime targeted refreshes. When assets are saved, renamed, compiled, or removed, UEPI records incremental events. If Codex later reads an asset whose event is newer than the Snapshot, the MCP tool queues a targeted refresh request under:
 
 ```text
-Saved/UEProjectIntelligence/store/requests
+<PROJECT_ROOT>/Saved/UEProjectIntelligence/store/requests
 ```
 
 The editor plugin polls that directory and scans only the requested asset. The agent can then retry the same read.
@@ -31,36 +31,44 @@ In Unreal Editor, open `Tools > UE Project Intelligence` and click `Run Snapshot
 For a targeted commandlet scan with the editor closed:
 
 ```powershell
-& "F:\Epic Games\don\UE_5.3\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
-  "F:\Epic Games\UE5project\GasDemo\GasDemo.uproject" `
+& "<UE_ROOT>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  "<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
   -run=UEPIIndex `
   -UEPILevel=L2 `
-  -UEPIAsset="/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter" `
+  -UEPIAsset="/Game/Path/To/BP_Player.BP_Player" `
   -unattended -nop4 -nosplash -NullRHI
 ```
 
 After collection, these paths should exist:
 
 ```text
-Saved/UEProjectIntelligence/store/manifests/saved.json
-Saved/UEProjectIntelligence/store/objects/**
+<PROJECT_ROOT>/Saved/UEProjectIntelligence/store/manifests/saved.json
+<PROJECT_ROOT>/Saved/UEProjectIntelligence/store/objects/**
 ```
 
 ## Codex MCP Setup
 
+Use `Resources/codex-config.template.toml` and replace:
+
+```text
+<PYTHON_EXE>
+<PROJECT_ROOT>
+<PROJECT_NAME>
+```
+
 Command:
 
 ```text
-C:/Users/renne/AppData/Local/Programs/Python/Python313/python.exe
+<PYTHON_EXE>
 ```
 
 Arguments, one item per row:
 
 ```text
 -B
-F:/Epic Games/UE5project/GasDemo/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py
+<PROJECT_ROOT>/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py
 --project
-F:/Epic Games/UE5project/GasDemo/GasDemo.uproject
+<PROJECT_ROOT>/<PROJECT_NAME>.uproject
 --tool-profile
 codex
 ```
@@ -68,10 +76,16 @@ codex
 Working directory:
 
 ```text
-F:/Epic Games/UE5project/GasDemo/Plugins/UEProjectIntelligence
+<PROJECT_ROOT>
 ```
 
-A TOML-style example is provided at `Resources/codex-config.template.toml`.
+## Recommended Codex Prompt
+
+After connecting UEPI MCP, start with:
+
+```text
+Use UEPI first. Call uepi_status, then uepi_overview. When answering project-specific Unreal questions, use uepi_context or uepi_search before guessing asset paths. Treat all results as static read-only snapshot evidence unless UEPI says data_mode is live.
+```
 
 ## Recommended Agent Flow
 
@@ -97,7 +111,7 @@ A TOML-style example is provided at `Resources/codex-config.template.toml`.
 ## Verify
 
 ```powershell
-$env:PYTHONPATH="F:\Epic Games\UE5project\GasDemo\Plugins\UEProjectIntelligence\Services\uepi\src"
-python -m uepi status --project "F:\Epic Games\UE5project\GasDemo\GasDemo.uproject"
-python Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py
+$env:PYTHONPATH="<PROJECT_ROOT>\Plugins\UEProjectIntelligence\Services\uepi\src"
+python -m uepi status --project "<PROJECT_ROOT>\<PROJECT_NAME>.uproject"
+python "<PROJECT_ROOT>\Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py"
 ```

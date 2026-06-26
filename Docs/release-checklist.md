@@ -1,22 +1,47 @@
 # Release Checklist
 
-## Required Checks
+## Repository
 
-- `python -B -m compileall Services/uepi/src/uepi Tools/test_snapshot_mcp_v2.py`
-- `python -B Tools/test_snapshot_mcp_v2.py`
-- `GasDemoEditor Win64 Development` builds with UnrealBuildTool.
-- `uepi_status` returns the expected Snapshot generation and cache state.
-- Codex can list exactly the ten public UEPI tools.
+- [ ] `LICENSE` exists.
+- [ ] `README.md` has no local absolute paths.
+- [ ] `Docs/user-guide.md` has no local absolute paths.
+- [ ] `Resources/codex-config.template.toml` uses placeholders.
+- [ ] `UEProjectIntelligence.uplugin` `VersionName` is updated.
+- [ ] `CHANGELOG.md` is updated.
 
-## Manual Smoke
+## Python
 
-- Generate a saved Snapshot from the editor panel.
-- Query a Blueprint with `uepi_blueprint`.
-- Query an animation with `uepi_animation`.
-- Rename or remove a test asset and confirm old paths return tombstone data.
-- Save or update a test asset, call the relevant read tool, and confirm `UEPI_REFRESH_REQUESTED` appears when the editor is active.
+- [ ] `python -B -m compileall Services/uepi/src/uepi Tools/test_snapshot_mcp_v2.py` passes.
+- [ ] `python -B Tools/test_snapshot_mcp_v2.py` passes.
+- [ ] Cache can be deleted and rebuilt with `python -m uepi sync`.
 
-## Packaging
+## Unreal
 
-- Include `README.md`, `Docs/user-guide.md`, `Docs/troubleshooting.md`, `Resources/codex-config.template.toml`, `LICENSE`, `SECURITY.md`, and `THIRD_PARTY_NOTICES.md`.
-- Exclude generated `Intermediate`, `Binaries`, `Saved`, `DerivedDataCache`, and Python `__pycache__`.
+- [ ] UE5.3.2 blank project builds.
+- [ ] UE5.3.2 Third Person project builds.
+- [ ] Plugin enables successfully without optional plugins.
+- [ ] `Run Snapshot Scan` writes `saved.json`.
+- [ ] `UEPIIndex` commandlet writes Snapshot data.
+
+## Codex
+
+- [ ] `.codex/config.toml` template works.
+- [ ] Codex shows UEPI MCP.
+- [ ] `uepi_status` works.
+- [ ] Exactly ten public tools are listed under `--tool-profile codex`.
+- [ ] Example question set in `Docs/codex-example-questions.md` passes.
+
+## Snapshot Correctness
+
+- [ ] Live overlay works.
+- [ ] Package save promotes saved Snapshot.
+- [ ] Rename old path is tombstoned.
+- [ ] Delete path is tombstoned.
+- [ ] Offline saved query works.
+
+## Package
+
+- [ ] `python Tools/package_release.py --version <VERSION> --out Dist` generates a zip.
+- [ ] Zip extracts to `UEProjectIntelligence/`.
+- [ ] Zip excludes `Saved`, `Intermediate`, `Binaries`, generated cache files, and `__pycache__`.
+- [ ] Zip install tested in a clean project.

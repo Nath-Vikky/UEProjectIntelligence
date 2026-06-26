@@ -1,14 +1,29 @@
-# UE Project Intelligence MCP template for Codex-style TOML configuration.
-# Replace PROJECT_ROOT and PYTHON_EXE for your machine.
+# Copy this block into .codex/config.toml in a trusted Unreal project.
+# Replace the placeholders before running Codex.
 
 [mcp_servers.uepi]
-command = "C:/Users/renne/AppData/Local/Programs/Python/Python313/python.exe"
+command = "<PYTHON_EXE>"
 args = [
   "-B",
-  "F:/Epic Games/UE5project/GasDemo/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py",
+  "<PROJECT_ROOT>/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py",
   "--project",
-  "F:/Epic Games/UE5project/GasDemo/GasDemo.uproject",
+  "<PROJECT_ROOT>/<PROJECT_NAME>.uproject",
   "--tool-profile",
   "codex",
 ]
-cwd = "F:/Epic Games/UE5project/GasDemo/Plugins/UEProjectIntelligence"
+cwd = "<PROJECT_ROOT>"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+default_tools_approval_mode = "auto"
+enabled = true
+
+# Optional: restrict tools during early testing.
+# enabled_tools = [
+#   "uepi_status",
+#   "uepi_overview",
+#   "uepi_search",
+#   "uepi_context",
+#   "uepi_asset",
+#   "uepi_blueprint",
+#   "uepi_impact",
+# ]

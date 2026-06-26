@@ -22,10 +22,10 @@ python Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py
 For C++ changes, close Unreal Editor and build the editor target:
 
 ```powershell
-& "F:\Epic Games\don\UE_5.3\Engine\Build\BatchFiles\Build.bat" `
-  GasDemoEditor Win64 Development `
-  "-Project=F:\Epic Games\UE5project\GasDemo\GasDemo.uproject" `
-  -WaitMutex -NoHotReload
+& "<UE_ROOT>\Engine\Build\BatchFiles\Build.bat" `
+  <PROJECT_NAME>Editor Win64 Development `
+  "-Project=<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
+  -WaitMutex -NoHotReloadFromIDE
 ```
 
 ## Commit Style

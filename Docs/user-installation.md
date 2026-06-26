@@ -3,17 +3,25 @@
 ## Requirements
 
 - Unreal Engine 5.3.2 editor or commandlet.
-- Python 3.10+ for the stdio MCP server.
+- Python 3.11+ for the stdio MCP server.
 
 No daemon, HTTP server, Web UI, worker, or database service is required.
 
 ## Unreal Plugin
 
-Place `UEProjectIntelligence` under the project's `Plugins` directory and enable it in the editor. Build the project:
+Place `UEProjectIntelligence` under the project's `Plugins` directory:
+
+```text
+<PROJECT_ROOT>/Plugins/UEProjectIntelligence
+```
+
+Build the project:
 
 ```powershell
-& "F:\Epic Games\don\UE_5.3\Engine\Build\BatchFiles\Build.bat" GasDemoEditor Win64 Development `
-  "-Project=F:\Epic Games\UE5project\GasDemo\GasDemo.uproject" -WaitMutex -NoHotReload
+& "<UE_ROOT>\Engine\Build\BatchFiles\Build.bat" `
+  <PROJECT_NAME>Editor Win64 Development `
+  "-Project=<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
+  -WaitMutex -NoHotReloadFromIDE
 ```
 
 ## Create A Snapshot
@@ -21,7 +29,7 @@ Place `UEProjectIntelligence` under the project's `Plugins` directory and enable
 Use the editor dashboard button `Run Snapshot Scan`, or run the `UEPIIndex` commandlet. The source of truth is written under:
 
 ```text
-Saved/UEProjectIntelligence/store/
+<PROJECT_ROOT>/Saved/UEProjectIntelligence/store/
 ```
 
 ## Optional Domain Readers
@@ -35,7 +43,7 @@ When an optional reader is disabled, UEPI still reports basic Asset Registry and
 Configure Codex to launch:
 
 ```text
-python -B Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py --project <YourProject.uproject> --tool-profile codex
+<PYTHON_EXE> -B <PROJECT_ROOT>/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py --project <PROJECT_ROOT>/<PROJECT_NAME>.uproject --tool-profile codex
 ```
 
 Run `uepi_status` first after connecting.

@@ -2,6 +2,7 @@ Binaries/
 Intermediate/
 Saved/
 DerivedDataCache/
+Dist/
 
 __pycache__/
 *.py[cod]

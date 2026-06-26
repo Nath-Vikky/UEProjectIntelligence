@@ -1,93 +1,98 @@
 # UE Project Intelligence
 
-UE Project Intelligence is a read-only, project-aware MCP server for helping AI agents understand, navigate, and explain Unreal Engine projects.
+UE Project Intelligence is a self-contained, read-only, Codex-first MCP server and Unreal Editor plugin for helping AI agents understand, navigate, and explain Unreal Engine 5.3.2 projects from UEPI snapshots.
 
-This repository is currently on the `2.0-dev` Snapshot-first line described in `DOCX/Improvement.md`. The previous daemon/worker/web based stable point is preserved only as the historical `v1.0.0` tag.
+UEPI does not depend on Epic's UE5.8 ModelContextProtocol plugin. The official UE5.8 MCP implementation is only used as a design reference.
 
-## Product Shape
+## What It Is
 
-UEPI is organized around three components:
+- An Unreal Editor plugin that reads project assets, Blueprints, animations, worlds, data, UI, AI, audio, render, and material metadata.
+- A Snapshot Store under `Saved/UEProjectIntelligence` that keeps saved and live project observations.
+- A Python stdio MCP server under `Services/uepi` for Codex.
+- A rebuildable SQLite query cache derived from Snapshot fragments.
 
-- **UEPI Editor Plugin**: authoritative Unreal-side read-only collection, change observation, targeted refresh request polling, and snapshot writing.
-- **UEPI Snapshot Store**: saved snapshots, live overlay state, history manifests, and large read-only artifacts under `Saved/UEProjectIntelligence`.
-- **UEPI MCP Process**: stdio MCP entry point, snapshot sync, rebuildable SQLite query cache, and AI context construction.
+## What It Does Not Do
 
-The default user path should be:
+UEPI is read-only. It does not provide tools to save, delete, rename, move, create, compile, run PIE, execute arbitrary code, or mutate Unreal assets.
 
-```text
-Install and enable the UEPI plugin
-  -> generate a saved baseline Snapshot from the editor panel or commandlet
-  -> Codex / Claude Code / Cursor starts UEPI MCP over stdio
-  -> the AI chooses the narrow read tools needed for the user's question
-  -> if a watched asset changed, MCP queues a targeted editor refresh request
-```
+The default product path does not use a daemon, HTTP API, worker queue, Web UI, or remote service registration.
 
-The default product no longer treats a local daemon, HTTP API, worker registration, job queue, or Web UI as part of the main workflow.
+## Requirements
 
-## Current Stability
+- Unreal Engine 5.3.2.
+- Python 3.11+ for the stdio MCP server.
+- Codex as the primary supported MCP client for the current read-only line.
+- A project-local install at `<PROJECT_ROOT>/Plugins/UEProjectIntelligence`.
 
-- `main`: active `2.0-dev` Snapshot-first read-only MCP line.
-- `v1.0.0`: historical tag for the previous daemon-compatible implementation.
+Optional Unreal plugins such as EnhancedInput, GameplayAbilities, Niagara, PCG, CommonUI, StateTree, IKRig, ControlRig, and MetaSound are compile-gated and are not required for ordinary projects.
 
-## Read-Only Contract
+## Install As Project Plugin
 
-UEPI does not provide tools to:
-
-- save, delete, rename, move, or create Unreal assets;
-- compile Blueprints;
-- edit Blueprint pins, graphs, actors, levels, animations, or config;
-- execute shell commands or arbitrary Python/C++;
-- launch PIE or evaluate runtime gameplay state.
-
-UEPI writes only its own observations, snapshots, indexes, logs, and artifacts under:
+Copy or extract the plugin to:
 
 ```text
-Saved/UEProjectIntelligence
+<PROJECT_ROOT>/Plugins/UEProjectIntelligence
 ```
 
-## On-Demand Refresh Model
-
-UEPI does not scan the whole project simply because the editor opens. Editor startup records a live session heartbeat and incremental events. Saved baselines remain queryable while the editor is closed.
-
-When an MCP read targets an asset, the query layer compares the current Snapshot with incremental editor events. If the target has changed and the editor session is active, the tool writes a small refresh request to:
-
-```text
-Saved/UEProjectIntelligence/store/requests
-```
-
-The editor plugin polls that directory and runs a targeted scan only for the requested asset. The original MCP response includes `UEPI_REFRESH_REQUESTED`, so the agent can retry the same read after the request completes.
-
-## Build
-
-Close Unreal Editor before compiling C++ changes.
+Regenerate project files if needed, then build the editor target:
 
 ```powershell
-& "F:\Epic Games\don\UE_5.3\Engine\Build\BatchFiles\Build.bat" `
-  GasDemoEditor Win64 Development `
-  "-Project=F:\Epic Games\UE5project\GasDemo\GasDemo.uproject" `
-  -WaitMutex -NoHotReload
+& "<UE_ROOT>\Engine\Build\BatchFiles\Build.bat" `
+  <PROJECT_NAME>Editor Win64 Development `
+  "-Project=<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
+  -WaitMutex -NoHotReloadFromIDE
 ```
 
-If Unreal reports Live Coding is active, close the editor or press `Ctrl+Alt+F11` in the editor before rebuilding.
+Open the editor and enable `UEProjectIntelligence` if Unreal asks.
 
-## Commandlet Collection
+## Generate A Snapshot
 
-`UEPIIndex` remains as a headless, one-shot Snapshot collection entry point. It is not a worker and does not run as a queue consumer.
+In the editor, open `Tools > UE Project Intelligence` and click `Run Snapshot Scan`.
+
+For a targeted commandlet scan with the editor closed:
 
 ```powershell
-& "F:\Epic Games\don\UE_5.3\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
-  "F:\Epic Games\UE5project\GasDemo\GasDemo.uproject" `
+& "<UE_ROOT>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  "<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
   -run=UEPIIndex -unattended -nop4 -nosplash -NullRHI `
   -UEPILevel=L2 `
-  -UEPIAsset="/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter" `
-  -UEPIOutput="F:\Epic Games\UE5project\GasDemo\Saved\UEProjectIntelligence\l2_character_scan.json"
+  -UEPIAsset="/Game/Path/To/BP_Player.BP_Player" `
+  -UEPIOutput="<PROJECT_ROOT>\Saved\UEProjectIntelligence\l2_scan.json"
 ```
 
-The commandlet writes the requested scan JSON and submits the same observations into the Snapshot Store manifest.
+Snapshot data is written under:
 
-## MCP Surface
+```text
+<PROJECT_ROOT>/Saved/UEProjectIntelligence/store
+```
 
-The public MCP surface is task-oriented:
+## Connect Codex
+
+Copy `Resources/codex-config.template.toml` into the appropriate Codex configuration file and replace the placeholders:
+
+```text
+<PYTHON_EXE>
+<PROJECT_ROOT>
+<PROJECT_NAME>
+```
+
+The MCP command should point to:
+
+```text
+<PROJECT_ROOT>/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py
+```
+
+## Ask Questions
+
+Recommended Codex flow:
+
+1. Call `uepi_status`.
+2. Use `uepi_overview`, `uepi_search`, or `uepi_context` to identify evidence.
+3. Use the narrow domain tool for the question.
+4. If diagnostics include `UEPI_REFRESH_REQUESTED`, wait for the editor plugin to process the targeted request and retry.
+5. If diagnostics include `UEPI_SNAPSHOT_STALE`, open the editor/plugin or run a commandlet scan for realtime freshness.
+
+## MCP Tools
 
 - `uepi_status`
 - `uepi_overview`
@@ -100,13 +105,30 @@ The public MCP surface is task-oriented:
 - `uepi_impact`
 - `uepi_diff`
 
-Internal maintenance, ingest, worker, queue, HTTP, and recovery tools are not part of the target public MCP interface.
+Codex profile exposes only these ten read-only tools.
 
-## Documentation
+## Snapshot Modes
 
-- Current v2 plan: `DOCX/Improvement.md`
-- Next improvement plan: `DOCX/NextImprove.md`
-- User guide: `Docs/user-guide.md`
-- Development status: `Docs/DevelopmentStatus.md`
-- Architecture notes: `Docs/developer-architecture.md`
-- Troubleshooting: `Docs/troubleshooting.md`
+- `saved`: editor can be closed; tools read the latest saved Snapshot.
+- `live`: editor is active; tools merge live overlay observations over the saved baseline.
+- `refresh_requested`: a target changed after the latest Snapshot and UEPI queued a targeted editor refresh request.
+- `stale`: a target changed after the latest Snapshot, but the editor is not active to service a refresh.
+
+SQLite cache files are derived data and can be deleted. UEPI can rebuild them from Snapshot fragments.
+
+## Limitations
+
+- Current primary target is UE5.3.2.
+- Current version is read-only and Codex-first.
+- Animation data is static summary and sampled context, not a full per-frame dump.
+- Animation Blueprint final runtime pose is not available.
+- Editor or commandlet collection is required to refresh Snapshots.
+- Editor-closed mode uses the latest saved Snapshot only.
+
+## Troubleshooting
+
+See `Docs/troubleshooting.md`.
+
+## License
+
+UE Project Intelligence is licensed under the MIT License. See `LICENSE`.

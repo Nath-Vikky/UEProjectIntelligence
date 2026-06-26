@@ -3,28 +3,30 @@
 ## Build
 
 ```powershell
-& "F:\Epic Games\don\UE_5.3\Engine\Build\BatchFiles\Build.bat" GasDemoEditor Win64 Development `
-  "-Project=F:\Epic Games\UE5project\GasDemo\GasDemo.uproject" -WaitMutex -NoHotReload
+& "<UE_ROOT>\Engine\Build\BatchFiles\Build.bat" `
+  <PROJECT_NAME>Editor Win64 Development `
+  "-Project=<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
+  -WaitMutex -NoHotReloadFromIDE
 ```
 
 ## Generate Snapshot
 
 ```powershell
-& "F:\Epic Games\don\UE_5.3\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
-  "F:\Epic Games\UE5project\GasDemo\GasDemo.uproject" `
-  -run=UEPIIndex -UEPILevel=L2 -unattended -nop4 -nosplash
+& "<UE_ROOT>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  "<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
+  -run=UEPIIndex -UEPILevel=L2 -unattended -nop4 -nosplash -NullRHI
 ```
 
 ## Validate MCP
 
 ```powershell
-python -m compileall Plugins\UEProjectIntelligence\Services\uepi\src
-python Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py
+python -m compileall "<PROJECT_ROOT>\Plugins\UEProjectIntelligence\Services\uepi\src"
+python "<PROJECT_ROOT>\Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py"
 ```
 
 ## Inspect Snapshot
 
 ```powershell
-$env:PYTHONPATH="F:\Epic Games\UE5project\GasDemo\Plugins\UEProjectIntelligence\Services\uepi\src"
-python -m uepi status --project "F:\Epic Games\UE5project\GasDemo\GasDemo.uproject"
+$env:PYTHONPATH="<PROJECT_ROOT>\Plugins\UEProjectIntelligence\Services\uepi\src"
+python -m uepi status --project "<PROJECT_ROOT>\<PROJECT_NAME>.uproject"
 ```
