@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0-dev
+
+- Started the snapshot-first read-only MCP convergence line.
+- Reframed `main` around UE plugin collection, Snapshot Store, and stdio MCP as the only default AI entry point.
+- Marked daemon, worker, HTTP API, job queue, and Web UI flows as legacy v1 architecture to be removed from the default product.
+- Preserved the previous stable daemon-compatible loop as tag `v1.0.0`.
+
 ## 1.0.0
 
 - Stabilized the read-only MCP loop for LLM project understanding.

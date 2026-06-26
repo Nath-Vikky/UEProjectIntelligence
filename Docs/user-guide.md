@@ -1,5 +1,7 @@
 # UE Project Intelligence 用户指南
 
+> 本文记录 `v1.0.0` 稳定版的 daemon-compatible 使用路径。`main` 分支正在按 `DOCX/Improvement.md` 收敛到 `2.0-dev`：默认路径将不再要求用户启动 daemon、worker、HTTP 或 Web UI，而是由 UE 插件写 Snapshot，MCP 进程通过 stdio 直接读取 Snapshot/SQLite 缓存。
+
 本文面向想让 LLM 通过 MCP 读取 Unreal Engine 工程信息的用户。当前稳定版目标是只读工程理解：LLM 可以查询资产索引、蓝图事件图、动画序列、DataTable、Sequencer、材质等结构化信息；不会保存、删除、重命名、编译或修改 UE 资产。
 
 ## 当前稳定版能力
