@@ -219,6 +219,7 @@ def write_fixture(root: Path) -> None:
     deleted_node_id = "node-deleted"
     renamed_old_asset_id = "asset-bp-old-name"
     renamed_new_asset_id = "asset-bp-new-name"
+    metadata_only_asset_id = "asset-bp-metadata-only"
     live_asset_entity = dict(asset_entity)
     live_asset_entity["attributes"] = {"object_path": "/Game/BP_Hero.BP_Hero", "asset_name": "BP_Hero", "live_marker": "true"}
     live_asset_fragment = {
@@ -402,6 +403,32 @@ def write_fixture(root: Path) -> None:
     }
     renamed_new_path = objects / "aarenamednewfragment.json"
     renamed_new_path.write_text(json.dumps(renamed_new_fragment, ensure_ascii=False), encoding="utf-8")
+    metadata_only_fragment = {
+        "schema_version": "uepi.asset-fragment.v2",
+        "project_id": "project-fixture",
+        "project_name": "FixtureProject",
+        "project_file": str(root / "FixtureProject.uproject"),
+        "engine_version": "5.3.2",
+        "source_scan_finished_at_utc": "2026-06-26T00:00:01Z",
+        "asset": {"id": metadata_only_asset_id, "canonical_key": "/Game/BP_MetadataOnly.BP_MetadataOnly", "display_name": "BP_MetadataOnly", "kind": "asset"},
+        "entities": [
+            {
+                "id": metadata_only_asset_id,
+                "kind": "asset",
+                "canonical_key": "/Game/BP_MetadataOnly.BP_MetadataOnly",
+                "display_name": "BP_MetadataOnly",
+                "source_layer": "asset_registry",
+                "attributes": {"object_path": "/Game/BP_MetadataOnly.BP_MetadataOnly", "asset_name": "BP_MetadataOnly"},
+                "completeness": {"state": "metadata_only", "covered": ["asset_registry_metadata"], "omitted": ["loaded_uobject_properties"], "warnings": []},
+                "diagnostics": [],
+                "evidence": [],
+            }
+        ],
+        "relations": [],
+        "diagnostics": [],
+    }
+    metadata_only_path = objects / "aametadataonlyfragment.json"
+    metadata_only_path.write_text(json.dumps(metadata_only_fragment, ensure_ascii=False), encoding="utf-8")
     live_manifest = dict(manifest)
     manifest["fragments"].extend(
         [
@@ -410,6 +437,7 @@ def write_fixture(root: Path) -> None:
             {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aarenamedoldfragment", "path": str(renamed_old_path), "asset_id": renamed_old_asset_id},
             {"kind": "asset_tombstone", "schema_version": "uepi.asset-tombstone.v2", "hash": "aarenamedtombstone", "path": str(renamed_tombstone_path), "asset_id": renamed_old_asset_id, "asset_key": "/Game/BP_OldName.BP_OldName"},
             {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aarenamednewfragment", "path": str(renamed_new_path), "asset_id": renamed_new_asset_id},
+            {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aametadataonlyfragment", "path": str(metadata_only_path), "asset_id": metadata_only_asset_id},
         ]
     )
     (manifests / "saved.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
@@ -534,6 +562,17 @@ def main() -> int:
             assert "Asset Fragment Node" in blueprint_names
             assert "Live Print String" in blueprint_names
             assert any((root / "store" / "requests").glob("refresh-*.json"))
+            metadata_blueprint = request(process, 50, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "BP_MetadataOnly"}})["structuredContent"]
+            assert_envelope(metadata_blueprint)
+            assert metadata_blueprint["state"]["freshness"] == "refresh_requested"
+            assert metadata_blueprint["diagnostics"][0]["code"] == "UEPI_REFRESH_REQUESTED"
+            assert metadata_blueprint["diagnostics"][0]["target_object_path"] == "/Game/BP_MetadataOnly.BP_MetadataOnly"
+            assert "blueprint_graph_entities_not_present_in_snapshot" in metadata_blueprint["omissions"]
+            metadata_requests = [
+                json.loads(path.read_text(encoding="utf-8"))
+                for path in (root / "store" / "requests").glob("refresh-*.json")
+            ]
+            assert any("/Game/BP_MetadataOnly.BP_MetadataOnly" in request.get("target_object_paths", []) for request in metadata_requests)
             unknown = request(process, 6, "tools/call", {"name": "uepi_missing", "arguments": {}})["structuredContent"]
             assert unknown["error"]["code"] == "UEPI_UNKNOWN_TOOL"
         finally:

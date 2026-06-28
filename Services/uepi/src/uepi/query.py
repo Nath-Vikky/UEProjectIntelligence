@@ -320,6 +320,59 @@ class UEPIQueryEngine:
             }
         ]
 
+    def _asset_refresh_target(self, entity: dict[str, Any], fallback: str = "") -> str:
+        attributes = _as_dict(entity.get("attributes"))
+        for value in (
+            entity.get("canonical_key"),
+            attributes.get("object_path"),
+            attributes.get("package_name"),
+            entity.get("display_name"),
+            fallback,
+        ):
+            text = str(value or "").strip()
+            if text:
+                return text
+        return ""
+
+    def _domain_refresh_for_missing_snapshot(
+        self,
+        entity: dict[str, Any],
+        *,
+        fallback: str,
+        tool_name: str,
+        reason: str,
+        domain: str,
+        freshness: str | None,
+        diagnostics: list[dict[str, Any]],
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        if freshness == "refresh_requested" or any(item.get("code") == "UEPI_REFRESH_REQUESTED" for item in diagnostics):
+            return freshness, diagnostics
+
+        target = self._asset_refresh_target(entity, fallback)
+        if not target:
+            return freshness, diagnostics
+
+        request_path = self.store.request_refresh(
+            [target],
+            reason=reason,
+            tool_name=tool_name,
+            data_mode="live",
+        )
+        session = self.store.active_editor_session()
+        message = f"{domain} details are not present in the current snapshot. A targeted editor refresh request was queued; retry the same read after the editor processes it."
+        if not session:
+            message = f"{domain} details are not present in the current snapshot. A targeted editor refresh request was queued, but no active editor session is available yet; open the editor/plugin and retry after it processes the request."
+        return "refresh_requested", diagnostics + [
+            {
+                "severity": "warning",
+                "code": "UEPI_REFRESH_REQUESTED",
+                "message": message,
+                "target_object_path": target,
+                "request_path": str(request_path),
+                "editor_session_id": session.get("session_id") if session else None,
+            }
+        ]
+
     def _domain_entities_for_asset(self, asset: dict[str, Any], domain_kinds: set[str], limit: int) -> list[dict[str, Any]]:
         asset_id = str(asset.get("id") or "")
         if self.cache:
@@ -506,6 +559,15 @@ class UEPIQueryEngine:
         omissions: list[str] = []
         if not domain_entities:
             omissions.append("blueprint_graph_entities_not_present_in_snapshot")
+            freshness, diagnostics = self._domain_refresh_for_missing_snapshot(
+                entity,
+                fallback=asset,
+                tool_name="uepi_blueprint",
+                reason="blueprint_graph_missing_from_snapshot",
+                domain="Blueprint graph",
+                freshness=freshness,
+                diagnostics=diagnostics,
+            )
         return self._envelope(
             {
                 "asset": _short_entity(entity, include_snapshot=True),
@@ -531,6 +593,15 @@ class UEPIQueryEngine:
         blueprint_entities = self._domain_entities_for_asset(entity, BLUEPRINT_KINDS, 1000)
         domain_ids = {str(item.get("id")) for item in blueprint_entities if item.get("id")}
         if not domain_ids:
+            freshness, diagnostics = self._domain_refresh_for_missing_snapshot(
+                entity,
+                fallback=asset,
+                tool_name="uepi_blueprint_trace",
+                reason="blueprint_trace_missing_from_snapshot",
+                domain="Blueprint graph",
+                freshness=freshness,
+                diagnostics=diagnostics,
+            )
             return self._envelope(
                 {"paths": [], "resolution_candidates": candidates},
                 diagnostics=diagnostics,
@@ -619,6 +690,15 @@ class UEPIQueryEngine:
         omissions: list[str] = []
         if not domain_entities and not snapshot:
             omissions.append("animation_details_not_present_in_snapshot")
+            freshness, diagnostics = self._domain_refresh_for_missing_snapshot(
+                entity,
+                fallback=asset,
+                tool_name="uepi_animation",
+                reason="animation_details_missing_from_snapshot",
+                domain="Animation",
+                freshness=freshness,
+                diagnostics=diagnostics,
+            )
         if "pose_samples" in requested and not result["sequence"]:
             omissions.append("pose_samples_require_animation_sequence_snapshot")
         return self._envelope(result, diagnostics=diagnostics, omissions=omissions, freshness=freshness)

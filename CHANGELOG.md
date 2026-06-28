@@ -14,6 +14,7 @@
 - Added on-demand targeted refresh requests from MCP reads, editor-side request polling, incremental-event freshness diagnostics, and `asset_tombstone` current-view handling.
 - Added cache auto-sync, MCP initialize instructions, Codex config template, release checklist, and refreshed user documentation.
 - Added Blueprint compile targeted live refresh, rename tombstone fixture coverage, compact CLI, release packaging checks, and placeholder-only public docs.
+- Queued targeted refresh requests when Blueprint/animation domain data is missing from an otherwise current L0 Snapshot, including offline request handoff for the next editor session.
 - Removed legacy daemon, HTTP/Web UI, worker/queue tooling, and extension SDK files from the mainline.
 - Marked daemon, worker, HTTP API, job queue, and Web UI flows as legacy v1 architecture to be removed from the default product.
 - Preserved the previous stable daemon-compatible loop as tag `v1.0.0`.
