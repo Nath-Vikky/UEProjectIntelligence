@@ -31,10 +31,18 @@
 - Relation identity no longer includes descriptive attributes; IDs are based on project, relation type, from ID, and to ID.
 - Blueprint derived projections now report `confidence_basis` and use sub-1.0 confidence for static derived flows.
 - Ten-tool stdio MCP server: status, overview, search, context, asset, blueprint, blueprint trace, animation, impact, diff.
+- Unified MCP envelope fields: `ok`, `tool`, `operation`, `data_mode`, `project`, `snapshot`, `result`, `evidence`, `diagnostics`, and `next_actions`, while retaining legacy-compatible `state`, `omissions`, `truncation`, and `continuation`.
+- `uepi_status` reports optional live bridge readiness fields without requiring a bridge to exist.
+- `uepi_context` routes natural-language questions through project overview, input-to-gameplay, Blueprint behavior, animation playback, UI, dependency impact, data-driven, GAS, AI, and networking routes.
+- `uepi_blueprint` includes a semantic summary, call graph grouping, data mutation summary, side effects, and static flow hints derived from Snapshot relations.
+- Experimental `codex_write_alpha` profile exposes edit discover/preview/apply/validate/rollback tools; apply rejects by default and no Unreal asset is modified.
+- Disabled-by-default UE settings now reserve live bridge and write safety gates.
 - v2 MCP smoke test without daemon, worker, HTTP, Web UI, or SQLite service, including saved+live overlay merge, tombstones, cache sync, initialize instructions, and targeted refresh request creation.
+- MCP smoke test now also covers context routes, Blueprint semantic summary, bridge readiness fields, and write-alpha rejection behavior.
 - Synthetic Snapshot MCP fixture now covers deleted assets and renamed old-path tombstones with a valid new-path fragment.
 - Release packaging script supports `--version` and `--out`, validates required files, scans docs for local paths, writes commit SHA, and packages under a `UEProjectIntelligence/` zip root.
-- Public docs and Codex configuration template use `<UE_ROOT>`, `<PROJECT_ROOT>`, `<PROJECT_NAME>`, and `<PYTHON_EXE>` placeholders instead of local machine paths.
+- Public docs and Codex configuration template use `__UE_ROOT__`, `__PROJECT_ROOT__`, `__PROJECT_NAME__`, and `__PYTHON_EXE__` placeholders instead of local machine paths.
+- Added Codex setup, read workflow, context routes, optional live bridge, write-alpha design, write safety, operation schema, real-machine test log, and AGENTS template docs.
 - Reader Gate build validation with optional domain modules disabled by default and Blueprint L2 commandlet smoke coverage.
 
 ## Removed From Mainline
@@ -51,3 +59,5 @@
 
 - Broader real-project verification across blank, template, and feature sample projects.
 - Future write-operation work should remain separate from the current read-only MCP contract.
+- Optional live editor TCP bridge implementation remains future work; current code only exposes bridge readiness/status shape and disabled settings.
+- Write apply/validate/rollback execution remains future work behind `codex_write_alpha`; current implementation is dry-run planning plus safe rejection.

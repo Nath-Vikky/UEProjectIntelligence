@@ -20,7 +20,7 @@ For source upgrades, replace `Plugins/UEProjectIntelligence`, regenerate project
 After upgrading, rebuild the MCP query cache:
 
 ```powershell
-python -B -m uepi sync --project "<PROJECT_ROOT>\<PROJECT_NAME>.uproject"
+python -B -m uepi sync --project "__PROJECT_ROOT__\__PROJECT_NAME__.uproject"
 ```
 
 Then run `uepi_status` from the MCP client and confirm the Snapshot generation and cache generation match.

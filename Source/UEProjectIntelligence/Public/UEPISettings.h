@@ -32,4 +32,19 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, Category="Budgets", meta=(ClampMin="1"))
 	int32 MaxInlineCollectionItems;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Live Bridge")
+	bool bEnableLiveEditorBridge;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Live Bridge", meta=(ClampMin="0", ClampMax="65535"))
+	int32 LiveEditorBridgePort;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	bool bEnableWriteTools;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	bool bRequirePreviewBeforeApply;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	bool bRequireSnapshotDiffAfterApply;
 };

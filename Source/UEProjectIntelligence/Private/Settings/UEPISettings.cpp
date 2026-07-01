@@ -6,6 +6,11 @@ UUEPISettings::UUEPISettings()
 	, bIncludeEngineContent(false)
 	, MaxAssetsPerBatch(50)
 	, MaxInlineCollectionItems(1000)
+	, bEnableLiveEditorBridge(false)
+	, LiveEditorBridgePort(0)
+	, bEnableWriteTools(false)
+	, bRequirePreviewBeforeApply(true)
+	, bRequireSnapshotDiffAfterApply(true)
 {
 }
 
@@ -31,5 +36,5 @@ FText UUEPISettings::GetSectionText() const
 
 FText UUEPISettings::GetSectionDescription() const
 {
-	return NSLOCTEXT("UEProjectIntelligence", "SettingsSectionDescription", "Read-only project scan settings for UE Project Intelligence.");
+	return NSLOCTEXT("UEProjectIntelligence", "SettingsSectionDescription", "Snapshot read settings plus disabled-by-default experimental bridge/write safety gates for UE Project Intelligence.");
 }

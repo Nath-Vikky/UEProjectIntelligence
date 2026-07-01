@@ -19,7 +19,7 @@ Existing saved Snapshot queries do not require Unreal Editor to be open.
 Open the editor and enable the UEPI panel only when you want realtime targeted refreshes. When assets are saved, renamed, compiled, or removed, UEPI records incremental events. If Codex later reads an asset whose event is newer than the Snapshot, the MCP tool queues a targeted refresh request under:
 
 ```text
-<PROJECT_ROOT>/Saved/UEProjectIntelligence/store/requests
+__PROJECT_ROOT__/Saved/UEProjectIntelligence/store/requests
 ```
 
 The editor plugin polls that directory and scans only the requested asset. The agent can then retry the same read.
@@ -31,8 +31,8 @@ In Unreal Editor, open `Tools > UE Project Intelligence` and click `Run Snapshot
 For a targeted commandlet scan with the editor closed:
 
 ```powershell
-& "<UE_ROOT>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
-  "<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
+& "__UE_ROOT__\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  "__PROJECT_ROOT__\__PROJECT_NAME__.uproject" `
   -run=UEPIIndex `
   -UEPILevel=L2 `
   -UEPIAsset="/Game/Path/To/BP_Player.BP_Player" `
@@ -42,8 +42,8 @@ For a targeted commandlet scan with the editor closed:
 After collection, these paths should exist:
 
 ```text
-<PROJECT_ROOT>/Saved/UEProjectIntelligence/store/manifests/saved.json
-<PROJECT_ROOT>/Saved/UEProjectIntelligence/store/objects/**
+__PROJECT_ROOT__/Saved/UEProjectIntelligence/store/manifests/saved.json
+__PROJECT_ROOT__/Saved/UEProjectIntelligence/store/objects/**
 ```
 
 ## Codex MCP Setup
@@ -51,24 +51,24 @@ After collection, these paths should exist:
 Use `Resources/codex-config.template.toml` and replace:
 
 ```text
-<PYTHON_EXE>
-<PROJECT_ROOT>
-<PROJECT_NAME>
+__PYTHON_EXE__
+__PROJECT_ROOT__
+__PROJECT_NAME__
 ```
 
 Command:
 
 ```text
-<PYTHON_EXE>
+__PYTHON_EXE__
 ```
 
 Arguments, one item per row:
 
 ```text
 -B
-<PROJECT_ROOT>/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py
+__PROJECT_ROOT__/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py
 --project
-<PROJECT_ROOT>/<PROJECT_NAME>.uproject
+__PROJECT_ROOT__/__PROJECT_NAME__.uproject
 --tool-profile
 codex
 ```
@@ -76,7 +76,7 @@ codex
 Working directory:
 
 ```text
-<PROJECT_ROOT>
+__PROJECT_ROOT__
 ```
 
 ## Recommended Codex Prompt
@@ -111,7 +111,7 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 ## Verify
 
 ```powershell
-$env:PYTHONPATH="<PROJECT_ROOT>\Plugins\UEProjectIntelligence\Services\uepi\src"
-python -m uepi status --project "<PROJECT_ROOT>\<PROJECT_NAME>.uproject"
-python "<PROJECT_ROOT>\Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py"
+$env:PYTHONPATH="__PROJECT_ROOT__\Plugins\UEProjectIntelligence\Services\uepi\src"
+python -m uepi status --project "__PROJECT_ROOT__\__PROJECT_NAME__.uproject"
+python "__PROJECT_ROOT__\Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py"
 ```

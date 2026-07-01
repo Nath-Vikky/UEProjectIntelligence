@@ -3,30 +3,30 @@
 ## Build
 
 ```powershell
-& "<UE_ROOT>\Engine\Build\BatchFiles\Build.bat" `
-  <PROJECT_NAME>Editor Win64 Development `
-  "-Project=<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
+& "__UE_ROOT__\Engine\Build\BatchFiles\Build.bat" `
+  __PROJECT_NAME__Editor Win64 Development `
+  "-Project=__PROJECT_ROOT__\__PROJECT_NAME__.uproject" `
   -WaitMutex -NoHotReloadFromIDE
 ```
 
 ## Generate Snapshot
 
 ```powershell
-& "<UE_ROOT>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
-  "<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
+& "__UE_ROOT__\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  "__PROJECT_ROOT__\__PROJECT_NAME__.uproject" `
   -run=UEPIIndex -UEPILevel=L2 -unattended -nop4 -nosplash -NullRHI
 ```
 
 ## Validate MCP
 
 ```powershell
-python -m compileall "<PROJECT_ROOT>\Plugins\UEProjectIntelligence\Services\uepi\src"
-python "<PROJECT_ROOT>\Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py"
+python -m compileall "__PROJECT_ROOT__\Plugins\UEProjectIntelligence\Services\uepi\src"
+python "__PROJECT_ROOT__\Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py"
 ```
 
 ## Inspect Snapshot
 
 ```powershell
-$env:PYTHONPATH="<PROJECT_ROOT>\Plugins\UEProjectIntelligence\Services\uepi\src"
-python -m uepi status --project "<PROJECT_ROOT>\<PROJECT_NAME>.uproject"
+$env:PYTHONPATH="__PROJECT_ROOT__\Plugins\UEProjectIntelligence\Services\uepi\src"
+python -m uepi status --project "__PROJECT_ROOT__\__PROJECT_NAME__.uproject"
 ```

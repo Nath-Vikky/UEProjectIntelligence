@@ -22,7 +22,7 @@ The default product path does not use a daemon, HTTP API, worker queue, Web UI, 
 - Unreal Engine 5.3.2.
 - Python 3.11+ for the stdio MCP server.
 - Codex as the primary supported MCP client for the current read-only line.
-- A project-local install at `<PROJECT_ROOT>/Plugins/UEProjectIntelligence`.
+- A project-local install at `__PROJECT_ROOT__/Plugins/UEProjectIntelligence`.
 
 Optional Unreal plugins such as EnhancedInput, GameplayAbilities, Niagara, PCG, CommonUI, StateTree, IKRig, ControlRig, and MetaSound are compile-gated and are not required for ordinary projects.
 
@@ -31,15 +31,15 @@ Optional Unreal plugins such as EnhancedInput, GameplayAbilities, Niagara, PCG, 
 Copy or extract the plugin to:
 
 ```text
-<PROJECT_ROOT>/Plugins/UEProjectIntelligence
+__PROJECT_ROOT__/Plugins/UEProjectIntelligence
 ```
 
 Regenerate project files if needed, then build the editor target:
 
 ```powershell
-& "<UE_ROOT>\Engine\Build\BatchFiles\Build.bat" `
-  <PROJECT_NAME>Editor Win64 Development `
-  "-Project=<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
+& "__UE_ROOT__\Engine\Build\BatchFiles\Build.bat" `
+  __PROJECT_NAME__Editor Win64 Development `
+  "-Project=__PROJECT_ROOT__\__PROJECT_NAME__.uproject" `
   -WaitMutex -NoHotReloadFromIDE
 ```
 
@@ -52,18 +52,18 @@ In the editor, open `Tools > UE Project Intelligence` and click `Run Snapshot Sc
 For a targeted commandlet scan with the editor closed:
 
 ```powershell
-& "<UE_ROOT>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
-  "<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
+& "__UE_ROOT__\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  "__PROJECT_ROOT__\__PROJECT_NAME__.uproject" `
   -run=UEPIIndex -unattended -nop4 -nosplash -NullRHI `
   -UEPILevel=L2 `
   -UEPIAsset="/Game/Path/To/BP_Player.BP_Player" `
-  -UEPIOutput="<PROJECT_ROOT>\Saved\UEProjectIntelligence\l2_scan.json"
+  -UEPIOutput="__PROJECT_ROOT__\Saved\UEProjectIntelligence\l2_scan.json"
 ```
 
 Snapshot data is written under:
 
 ```text
-<PROJECT_ROOT>/Saved/UEProjectIntelligence/store
+__PROJECT_ROOT__/Saved/UEProjectIntelligence/store
 ```
 
 ## Connect Codex
@@ -71,15 +71,15 @@ Snapshot data is written under:
 Copy `Resources/codex-config.template.toml` into the appropriate Codex configuration file and replace the placeholders:
 
 ```text
-<PYTHON_EXE>
-<PROJECT_ROOT>
-<PROJECT_NAME>
+__PYTHON_EXE__
+__PROJECT_ROOT__
+__PROJECT_NAME__
 ```
 
 The MCP command should point to:
 
 ```text
-<PROJECT_ROOT>/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py
+__PROJECT_ROOT__/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py
 ```
 
 ## Ask Questions
@@ -107,6 +107,21 @@ Recommended Codex flow:
 
 Codex profile exposes only these ten read-only tools.
 
+`uepi_context` can route questions through:
+
+- `project_overview`
+- `input_to_gameplay`
+- `blueprint_behavior`
+- `animation_playback`
+- `ui_flow`
+- `asset_dependency_impact`
+- `data_driven_behavior`
+- `gas_ability_flow`
+- `ai_behavior_flow`
+- `network_replication_flow`
+
+The experimental `codex_write_alpha` profile exposes five additional edit tools for discovery and dry-run planning. In this foundation build, `uepi_edit_apply` rejects by default and no Unreal asset is modified.
+
 ## Snapshot Modes
 
 - `saved`: editor can be closed; tools read the latest saved Snapshot.
@@ -124,6 +139,13 @@ SQLite cache files are derived data and can be deleted. UEPI can rebuild them fr
 - Animation Blueprint final runtime pose is not available.
 - Editor or commandlet collection is required to refresh Snapshots.
 - Editor-closed mode uses the latest saved Snapshot only.
+- Optional live editor bridge and write tools are disabled by default.
+
+## Validation Status
+
+- Real-machine Codex MCP read loop validated on UE5.3.2 project `GasDemo`.
+- Snapshot/live/cache/tombstone smoke tests pass through `Tools/test_snapshot_mcp_v2.py`.
+- The stable `codex` profile remains exactly ten read-only tools.
 
 ## Troubleshooting
 

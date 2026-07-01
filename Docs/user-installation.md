@@ -12,15 +12,15 @@ No daemon, HTTP server, Web UI, worker, or database service is required.
 Place `UEProjectIntelligence` under the project's `Plugins` directory:
 
 ```text
-<PROJECT_ROOT>/Plugins/UEProjectIntelligence
+__PROJECT_ROOT__/Plugins/UEProjectIntelligence
 ```
 
 Build the project:
 
 ```powershell
-& "<UE_ROOT>\Engine\Build\BatchFiles\Build.bat" `
-  <PROJECT_NAME>Editor Win64 Development `
-  "-Project=<PROJECT_ROOT>\<PROJECT_NAME>.uproject" `
+& "__UE_ROOT__\Engine\Build\BatchFiles\Build.bat" `
+  __PROJECT_NAME__Editor Win64 Development `
+  "-Project=__PROJECT_ROOT__\__PROJECT_NAME__.uproject" `
   -WaitMutex -NoHotReloadFromIDE
 ```
 
@@ -29,7 +29,7 @@ Build the project:
 Use the editor dashboard button `Run Snapshot Scan`, or run the `UEPIIndex` commandlet. The source of truth is written under:
 
 ```text
-<PROJECT_ROOT>/Saved/UEProjectIntelligence/store/
+__PROJECT_ROOT__/Saved/UEProjectIntelligence/store/
 ```
 
 ## Optional Domain Readers
@@ -43,7 +43,7 @@ When an optional reader is disabled, UEPI still reports basic Asset Registry and
 Configure Codex to launch:
 
 ```text
-<PYTHON_EXE> -B <PROJECT_ROOT>/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py --project <PROJECT_ROOT>/<PROJECT_NAME>.uproject --tool-profile codex
+__PYTHON_EXE__ -B __PROJECT_ROOT__/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py --project __PROJECT_ROOT__/__PROJECT_NAME__.uproject --tool-profile codex
 ```
 
 Run `uepi_status` first after connecting.

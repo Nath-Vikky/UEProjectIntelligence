@@ -30,7 +30,15 @@ EXPECTED_TOOLS = {
 
 def assert_envelope(value: dict[str, Any]) -> None:
     assert value["schema_version"] == "uepi.mcp-envelope.v1"
+    assert "ok" in value
+    assert "tool" in value
+    assert "operation" in value
+    assert "data_mode" in value
+    assert isinstance(value.get("project"), dict)
+    assert isinstance(value.get("snapshot"), dict)
     assert isinstance(value.get("diagnostics"), list)
+    assert isinstance(value.get("evidence"), list)
+    assert isinstance(value.get("next_actions"), list)
     assert "state" in value
     assert "data_mode" in value["state"]
     assert "freshness" in value["state"]
@@ -534,6 +542,8 @@ def main() -> int:
             assert status["state"]["data_mode"] == "live"
             assert status["state"]["editor_connected"] is True
             assert status["result"]["llm_readiness"]["requires_daemon"] is False
+            assert status["result"]["llm_readiness"]["bridge_ready"] is False
+            assert status["result"]["bridge"]["session_path"].endswith("editor-bridge.json")
             assert status["result"]["cache"]["synced"] is True
             assert status["result"]["cache"]["schema_version"] == "uepi.sqlite-cache.v2.1"
             search = request(process, 4, "tools/call", {"name": "uepi_search", "arguments": {"query": "BP_Hero"}})["structuredContent"]
@@ -541,10 +551,25 @@ def main() -> int:
             assert search["result"]["match_count"] >= 1
             assert search["result"]["query_source"] == "sqlite_cache"
             assert "typed_attributes" in search["result"]["matches"][0]
+            context = request(
+                process,
+                44,
+                "tools/call",
+                {
+                    "name": "uepi_context",
+                    "arguments": {"question": "What does BP_Hero BeginPlay blueprint node do?", "route": "blueprint_behavior", "max_items": 20},
+                },
+            )["structuredContent"]
+            assert_envelope(context)
+            assert context["tool"] == "uepi_context"
+            assert context["operation"] == "context_route:blueprint_behavior"
+            assert context["result"]["route"] == "blueprint_behavior"
+            assert "blueprint_semantic_summary" in context["result"]["sections"]
             deleted_search = request(process, 40, "tools/call", {"name": "uepi_search", "arguments": {"query": "BP_Deleted"}})["structuredContent"]
             assert deleted_search["result"]["match_count"] == 0
             deleted_asset = request(process, 41, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "BP_Deleted"}})["structuredContent"]
             assert_envelope(deleted_asset)
+            assert deleted_asset["ok"] is False
             assert deleted_asset["error"]["code"] == "UEPI_ASSET_TOMBSTONED"
             renamed_old = request(process, 42, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "BP_OldName"}})["structuredContent"]
             assert_envelope(renamed_old)
@@ -562,6 +587,8 @@ def main() -> int:
             assert "Asset Fragment Node" in blueprint_names
             assert "Live Print String" in blueprint_names
             assert any((root / "store" / "requests").glob("refresh-*.json"))
+            assert "semantic_summary" in blueprint["result"]
+            assert blueprint["result"]["semantic_summary"]["schema_version"] == "uepi.blueprint-semantic-summary.v1"
             metadata_blueprint = request(process, 50, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "BP_MetadataOnly"}})["structuredContent"]
             assert_envelope(metadata_blueprint)
             assert metadata_blueprint["state"]["freshness"] == "refresh_requested"
@@ -583,6 +610,61 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+
+        write_process = subprocess.Popen(
+            [sys.executable, "-B", str(SERVER), "--store", str(root), "--tool-profile", "codex_write_alpha"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        try:
+            write_init = request(
+                write_process,
+                60,
+                "initialize",
+                {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "snapshot-test", "version": "1"}},
+            )
+            assert "resources" not in write_init["capabilities"]
+            write_tools = request(write_process, 61, "tools/list")["tools"]
+            write_names = {tool["name"] for tool in write_tools}
+            assert EXPECTED_TOOLS.issubset(write_names)
+            assert {
+                "uepi_edit_discover",
+                "uepi_edit_preview",
+                "uepi_edit_apply",
+                "uepi_edit_validate",
+                "uepi_edit_rollback",
+            }.issubset(write_names)
+            discover = request(write_process, 62, "tools/call", {"name": "uepi_edit_discover", "arguments": {}})["structuredContent"]
+            assert_envelope(discover)
+            assert discover["tool"] == "uepi_edit_discover"
+            assert discover["result"]["apply_enabled"] is False
+            preview = request(
+                write_process,
+                63,
+                "tools/call",
+                {"name": "uepi_edit_preview", "arguments": {"intent": "Add a safe test variable", "operations": []}},
+            )["structuredContent"]
+            assert_envelope(preview)
+            assert preview["result"]["plan"]["status"] == "preview_only"
+            rejected = request(
+                write_process,
+                64,
+                "tools/call",
+                {"name": "uepi_edit_apply", "arguments": {"transaction_id": preview["result"]["plan"]["transaction_id"], "approved": True}},
+            )["structuredContent"]
+            assert_envelope(rejected)
+            assert rejected["ok"] is False
+            assert rejected["error"]["code"] == "UEPI_EDIT_APPLY_DISABLED"
+        finally:
+            if write_process.stdin:
+                write_process.stdin.close()
+            try:
+                write_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                write_process.kill()
+                write_process.wait(timeout=5)
     print("snapshot MCP v2 assertions ok")
     return 0
 

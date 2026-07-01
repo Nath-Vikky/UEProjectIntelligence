@@ -1,20 +1,20 @@
 # Copy this block into .codex/config.toml in a trusted Unreal project.
-# Replace the placeholders before running Codex.
+# Replace every __PLACEHOLDER__ before running Codex.
 
 [mcp_servers.uepi]
-command = "<PYTHON_EXE>"
+command = "__PYTHON_EXE__"
 args = [
   "-B",
-  "<PROJECT_ROOT>/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py",
+  "__PROJECT_ROOT__/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py",
   "--project",
-  "<PROJECT_ROOT>/<PROJECT_NAME>.uproject",
+  "__PROJECT_ROOT__/__PROJECT_NAME__.uproject",
   "--tool-profile",
   "codex",
 ]
-cwd = "<PROJECT_ROOT>"
+cwd = "__PROJECT_ROOT__"
 startup_timeout_sec = 20
 tool_timeout_sec = 60
-default_tools_approval_mode = "auto"
+required = false
 enabled = true
 
 # Optional: restrict tools during early testing.
@@ -27,3 +27,23 @@ enabled = true
 #   "uepi_blueprint",
 #   "uepi_impact",
 # ]
+
+# Experimental write-planning profile.
+# This exposes the ten read-only tools plus five edit tools.
+# edit_apply rejects by default in this foundation build.
+#
+# [mcp_servers.uepi_write_alpha]
+# command = "__PYTHON_EXE__"
+# args = [
+#   "-B",
+#   "__PROJECT_ROOT__/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py",
+#   "--project",
+#   "__PROJECT_ROOT__/__PROJECT_NAME__.uproject",
+#   "--tool-profile",
+#   "codex_write_alpha",
+# ]
+# cwd = "__PROJECT_ROOT__"
+# startup_timeout_sec = 20
+# tool_timeout_sec = 60
+# required = false
+# enabled = false

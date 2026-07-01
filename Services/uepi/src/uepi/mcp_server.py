@@ -9,11 +9,15 @@ from typing import Any, BinaryIO
 
 try:
     from . import __version__
+    from . import edit
     from .query import make_engine
+    from .result import tool_response
 except ImportError:  # Allows direct execution as a script from Codex config.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from uepi import __version__  # type: ignore
+    from uepi import edit  # type: ignore
     from uepi.query import make_engine  # type: ignore
+    from uepi.result import tool_response  # type: ignore
 
 
 def object_schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -51,6 +55,7 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": object_schema(
             {
                 "question": {"type": "string"},
+                "route": {"type": "string"},
                 "scope": {"type": "array", "items": {"type": "string"}},
                 "max_items": {"type": "integer"},
             },
@@ -129,10 +134,45 @@ TOOLS: list[dict[str, Any]] = [
     },
 ]
 
-SERVER_INSTRUCTIONS = """UE Project Intelligence is a read-only Unreal Engine project-understanding server.
-Start with uepi_status to inspect snapshot freshness, cache state, and editor availability.
+WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "uepi_edit_discover",
+        "description": "Discover the experimental codex_write_alpha operation catalog without modifying Unreal assets.",
+        "inputSchema": object_schema({}),
+    },
+    {
+        "name": "uepi_edit_preview",
+        "description": "Create a dry-run UEPI edit operation plan. This foundation build does not apply edits.",
+        "inputSchema": object_schema(
+            {
+                "intent": {"type": "string"},
+                "operations": {"type": "array", "items": {"type": "object"}},
+                "evidence": {"type": "array", "items": {"type": "object"}},
+            }
+        ),
+    },
+    {
+        "name": "uepi_edit_apply",
+        "description": "Reject edit apply by default until safe write execution is enabled in a later build.",
+        "inputSchema": object_schema({"transaction_id": {"type": "string"}, "approved": {"type": "boolean"}}),
+    },
+    {
+        "name": "uepi_edit_validate",
+        "description": "Validate an applied UEPI edit transaction. Currently reports that no apply path is enabled.",
+        "inputSchema": object_schema({"transaction_id": {"type": "string"}}),
+    },
+    {
+        "name": "uepi_edit_rollback",
+        "description": "Rollback an applied UEPI edit transaction. Currently reports that no apply path is enabled.",
+        "inputSchema": object_schema({"transaction_id": {"type": "string"}}),
+    },
+]
+
+SERVER_INSTRUCTIONS = """UEPI is a project-local Unreal Engine 5.3.2 MCP. Always call uepi_status before other tools. Prefer uepi_context to build bounded evidence before answering project questions. Treat Blueprint pin links and evidence as the source of truth. Distinguish live, saved, stale, and refresh_requested data. In read-only profile, never claim you can edit assets. In write profile, never apply edits without edit_preview, user approval, validate, and post-edit diff. Never guess Blueprint pin names; use returned pins and GUIDs.
+
 Use uepi_search or uepi_context to identify the minimum set of assets needed for the user's question.
-Then call the narrow domain tool: uepi_asset for local context, uepi_blueprint for Blueprint graph/node/pin data, uepi_blueprint_trace for static flow paths, uepi_animation for animation/skeleton/track summaries, and uepi_impact for dependency impact.
+uepi_context supports routes such as auto, project_overview, input_to_gameplay, blueprint_behavior, animation_playback, ui_flow, asset_dependency_impact, data_driven_behavior, gas_ability_flow, ai_behavior_flow, and network_replication_flow.
+Then call the narrow domain tool: uepi_asset for local context, uepi_blueprint for Blueprint graph/node/pin semantic summaries, uepi_blueprint_trace for static flow paths, uepi_animation for animation/skeleton/track summaries, and uepi_impact for dependency impact.
 Reads never require the Unreal Editor when the snapshot/cache is current. If a read response includes diagnostic code UEPI_REFRESH_REQUESTED, a targeted editor refresh request has been queued under the Snapshot Store; retry the same read after the editor processes it. If UEPI_SNAPSHOT_STALE appears, ask the user to open the editor/plugin before expecting realtime data.
 Treat uepi_diff as a generation-level saved snapshot comparison, not a live editor diff."""
 
@@ -177,14 +217,6 @@ def write_message(stdout: BinaryIO, payload: dict[str, Any], framing: str = "con
     stdout.flush()
 
 
-def tool_response(value: dict[str, Any]) -> dict[str, Any]:
-    text = json.dumps(value, ensure_ascii=False, indent=2)
-    return {
-        "content": [{"type": "text", "text": text}],
-        "structuredContent": value,
-    }
-
-
 class UEPIMCPServer:
     def __init__(self, args: argparse.Namespace):
         self.args = args
@@ -194,7 +226,7 @@ class UEPIMCPServer:
 
     def initialize(self) -> dict[str, Any]:
         capabilities: dict[str, Any] = {"tools": {"listChanged": False}}
-        if self.args.tool_profile != "codex":
+        if self.args.tool_profile == "full":
             capabilities["resources"] = {"listChanged": False}
         return {
             "protocolVersion": "2024-11-05",
@@ -204,10 +236,11 @@ class UEPIMCPServer:
         }
 
     def tools(self) -> list[dict[str, Any]]:
+        exposed_tools = TOOLS + (WRITE_ALPHA_TOOLS if self.args.tool_profile == "codex_write_alpha" else [])
         if not self.args.include_output_schema:
-            return TOOLS
+            return exposed_tools
         tools: list[dict[str, Any]] = []
-        for tool in TOOLS:
+        for tool in exposed_tools:
             enriched = dict(tool)
             enriched["outputSchema"] = object_schema({"schema_version": {"type": "string"}})
             tools.append(enriched)
@@ -233,6 +266,7 @@ class UEPIMCPServer:
                 return tool_response(
                     engine.context(
                         question=str(arguments.get("question") or ""),
+                        route=str(arguments.get("route") or "auto"),
                         scope=scope if isinstance(scope, list) else None,
                         max_items=int(arguments.get("max_items") or 40),
                     )
@@ -284,6 +318,26 @@ class UEPIMCPServer:
                         to_generation=arguments.get("to_generation") if isinstance(arguments.get("to_generation"), int) else None,
                     )
                 )
+            if self.args.tool_profile == "codex_write_alpha":
+                if name == "uepi_edit_discover":
+                    return tool_response(edit.discover(engine.store))
+                if name == "uepi_edit_preview":
+                    operations = arguments.get("operations")
+                    evidence = arguments.get("evidence")
+                    return tool_response(
+                        edit.preview(
+                            engine.store,
+                            intent=str(arguments.get("intent") or ""),
+                            operations=operations if isinstance(operations, list) else [],
+                            evidence=evidence if isinstance(evidence, list) else [],
+                        )
+                    )
+                if name == "uepi_edit_apply":
+                    return tool_response(edit.reject_apply(engine.store, transaction_id=str(arguments.get("transaction_id") or "")))
+                if name == "uepi_edit_validate":
+                    return tool_response(edit.validate(engine.store, transaction_id=str(arguments.get("transaction_id") or "")))
+                if name == "uepi_edit_rollback":
+                    return tool_response(edit.rollback(engine.store, transaction_id=str(arguments.get("transaction_id") or "")))
             return tool_response(
                 {
                     "schema_version": "uepi.mcp-envelope.v1",
@@ -393,7 +447,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--store", type=Path, help="Path to Saved/UEProjectIntelligence or its store directory.")
     parser.add_argument("--db", type=Path, help="Legacy compatibility: derive Saved/UEProjectIntelligence from this DB path's parent.")
     parser.add_argument("--token-budget", type=int, default=4000, help="Accepted for compatibility; v2 tools are bounded by tool arguments.")
-    parser.add_argument("--tool-profile", choices=["full", "codex"], default="full")
+    parser.add_argument("--tool-profile", choices=["full", "codex", "codex_write_alpha"], default="full")
     parser.add_argument("--include-output-schema", action="store_true")
     parser.add_argument("--trace-file", type=Path, help="Accepted for compatibility; currently unused.")
     return parser
