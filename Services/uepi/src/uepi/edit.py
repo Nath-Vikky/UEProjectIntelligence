@@ -395,7 +395,7 @@ def discover(store: SnapshotStore) -> dict[str, Any]:
         },
         next_actions=[
             {
-                "reason": "Generate a dry-run operation plan from a user intent before any future apply.",
+                "reason": "Generate a dry-run operation plan from a user intent before requesting approval.",
                 "tool": "uepi_edit_preview",
                 "arguments": {"intent": "<user requested edit>", "operations": []},
             }

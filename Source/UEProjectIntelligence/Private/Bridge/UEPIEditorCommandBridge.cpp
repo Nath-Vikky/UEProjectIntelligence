@@ -1,9 +1,18 @@
 #include "Bridge/UEPIEditorCommandBridge.h"
 
 #include "Bridge/UEPIBridgeProtocol.h"
+#include "AssetImportTask.h"
+#include "AssetToolsModule.h"
 #include "Components/ActorComponent.h"
+#include "Components/Button.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
+#include "Components/ContentWidget.h"
+#include "Components/PanelWidget.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/TextBlock.h"
 #include "Common/TcpListener.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -15,13 +24,17 @@
 #include "Engine/SCS_Node.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/Texture.h"
+#include "Engine/World.h"
 #include "Engine/Blueprint.h"
+#include "Factories/MaterialInstanceConstantFactoryNew.h"
 #include "GameFramework/Actor.h"
 #include "HAL/FileManager.h"
+#include "IAssetTools.h"
 #include "Interfaces/IPv4/IPv4Address.h"
 #include "Interfaces/IPv4/IPv4Endpoint.h"
 #include "ImageUtils.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_VariableGet.h"
@@ -39,6 +52,7 @@
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeLock.h"
 #include "Misc/SecureHash.h"
@@ -52,8 +66,20 @@
 #include "UEPISettings.h"
 #include "UEPISnapshotStore.h"
 #include "UnrealClient.h"
+#include "WidgetBlueprint.h"
+#include "WidgetBlueprintFactory.h"
+#include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetTree.h"
 #include "UObject/UnrealType.h"
 #include "UObject/UObjectIterator.h"
+
+#if UEPI_WITH_ENHANCED_INPUT
+#include "InputAction.h"
+#include "InputActionValue.h"
+#include "InputCoreTypes.h"
+#include "InputEditorModule.h"
+#include "InputMappingContext.h"
+#endif
 
 namespace UE::ProjectIntelligence
 {
@@ -967,6 +993,502 @@ namespace UE::ProjectIntelligence
 			return Instance;
 		}
 
+		UMaterialInterface* LoadMaterialInterfaceForEdit(const TSharedPtr<FJsonObject>& Params, FString& OutAssetPath, FString& OutError)
+		{
+			OutAssetPath = JsonString(Params, TEXT("asset"), JsonString(Params, TEXT("material")));
+			if (OutAssetPath.IsEmpty())
+			{
+				OutError = TEXT("Material operation requires params.asset or params.material.");
+				return nullptr;
+			}
+			UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *OutAssetPath);
+			if (!Material)
+			{
+				OutError = FString::Printf(TEXT("Failed to load material interface: %s"), *OutAssetPath);
+				return nullptr;
+			}
+			return Material;
+		}
+
+		TSharedRef<FJsonObject> ObjectToJson(UObject* Object)
+		{
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			if (!Object)
+			{
+				return Result;
+			}
+			Result->SetStringField(TEXT("name"), Object->GetName());
+			Result->SetStringField(TEXT("path"), Object->GetPathName());
+			Result->SetStringField(TEXT("class"), Object->GetClass() ? Object->GetClass()->GetPathName() : FString());
+			Result->SetStringField(TEXT("package"), Object->GetOutermost() ? Object->GetOutermost()->GetName() : FString());
+			return Result;
+		}
+
+		FString NormalizedContentPath(const FString& RawPath)
+		{
+			FString Path = RawPath.TrimStartAndEnd();
+			Path.ReplaceInline(TEXT("\\"), TEXT("/"));
+			while (Path.EndsWith(TEXT("/")) && Path.Len() > 5)
+			{
+				Path.LeftChopInline(1);
+			}
+			return Path;
+		}
+
+		bool ValidateGameContentPath(const FString& Path, FString& OutError)
+		{
+			if (Path.IsEmpty() || (!Path.Equals(TEXT("/Game"), ESearchCase::IgnoreCase) && !Path.StartsWith(TEXT("/Game/"))))
+			{
+				OutError = FString::Printf(TEXT("Write alpha content paths must be under /Game: %s"), *Path);
+				return false;
+			}
+			if (Path.Contains(TEXT("..")) || Path.Contains(TEXT("\\")))
+			{
+				OutError = FString::Printf(TEXT("Content path contains unsupported traversal or separator characters: %s"), *Path);
+				return false;
+			}
+			return true;
+		}
+
+		bool SplitDestinationPath(const TSharedPtr<FJsonObject>& Params, const FString& DefaultAssetName, FString& OutPackagePath, FString& OutAssetName, FString& OutError)
+		{
+			FString Destination = JsonString(Params, TEXT("destination"), JsonString(Params, TEXT("destination_asset")));
+			if (!Destination.IsEmpty())
+			{
+				Destination = NormalizedContentPath(Destination);
+				FString PackageName = Destination;
+				int32 DotIndex = INDEX_NONE;
+				if (Destination.FindChar(TEXT('.'), DotIndex))
+				{
+					PackageName = Destination.Left(DotIndex);
+				}
+				OutPackagePath = FPackageName::GetLongPackagePath(PackageName);
+				OutAssetName = FPackageName::GetLongPackageAssetName(PackageName);
+			}
+
+			OutPackagePath = NormalizedContentPath(JsonString(Params, TEXT("destination_path"), JsonString(Params, TEXT("folder"), OutPackagePath)));
+			OutAssetName = JsonString(Params, TEXT("name"), JsonString(Params, TEXT("asset_name"), OutAssetName.IsEmpty() ? DefaultAssetName : OutAssetName)).TrimStartAndEnd();
+			if (OutPackagePath.IsEmpty() || OutAssetName.IsEmpty())
+			{
+				OutError = TEXT("Destination requires destination/destination_path plus name.");
+				return false;
+			}
+			if (!ValidateGameContentPath(OutPackagePath, OutError))
+			{
+				return false;
+			}
+			if (OutAssetName.Contains(TEXT("/")) || OutAssetName.Contains(TEXT(".")) || OutAssetName.Contains(TEXT("\\")))
+			{
+				OutError = FString::Printf(TEXT("Asset name must not contain path separators or dots: %s"), *OutAssetName);
+				return false;
+			}
+			return true;
+		}
+
+		UObject* LoadContentObject(const TSharedPtr<FJsonObject>& Params, FString& OutAssetPath, FString& OutError)
+		{
+			OutAssetPath = JsonString(Params, TEXT("asset"), JsonString(Params, TEXT("source")));
+			if (OutAssetPath.IsEmpty())
+			{
+				OutError = TEXT("Content operation requires params.asset or params.source.");
+				return nullptr;
+			}
+			UObject* Object = LoadObject<UObject>(nullptr, *OutAssetPath);
+			if (!Object)
+			{
+				OutError = FString::Printf(TEXT("Failed to load asset: %s"), *OutAssetPath);
+				return nullptr;
+			}
+			return Object;
+		}
+
+		UClass* ResolveActorClassForSpawn(const TSharedPtr<FJsonObject>& Params, FString& OutError)
+		{
+			const FString ClassPath = JsonString(Params, TEXT("actor_class"), JsonString(Params, TEXT("class"), JsonString(Params, TEXT("asset"))));
+			if (ClassPath.IsEmpty())
+			{
+				OutError = TEXT("actor.spawn requires actor_class, class, or asset.");
+				return nullptr;
+			}
+
+			if (UClass* Class = ResolveClassByPathOrName(ClassPath))
+			{
+				if (!Class->IsChildOf(AActor::StaticClass()))
+				{
+					OutError = FString::Printf(TEXT("Resolved class is not an AActor: %s"), *Class->GetPathName());
+					return nullptr;
+				}
+				return Class;
+			}
+			if (UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *NormalizeBlueprintObjectPath(ClassPath)))
+			{
+				UClass* GeneratedClass = Blueprint->GeneratedClass ? Blueprint->GeneratedClass : Blueprint->SkeletonGeneratedClass;
+				if (GeneratedClass && GeneratedClass->IsChildOf(AActor::StaticClass()))
+				{
+					return GeneratedClass;
+				}
+			}
+
+			OutError = FString::Printf(TEXT("Failed to resolve actor class for spawn: %s"), *ClassPath);
+			return nullptr;
+		}
+
+		FTransform JsonTransformFromParams(const TSharedPtr<FJsonObject>& Params)
+		{
+			TSharedPtr<FJsonObject> TransformObject = JsonObjectField(Params, TEXT("transform"));
+			if (!TransformObject.IsValid())
+			{
+				TransformObject = Params;
+			}
+
+			FVector Location = FVector::ZeroVector;
+			FRotator Rotation = FRotator::ZeroRotator;
+			FVector Scale = FVector::OneVector;
+			JsonVector(JsonObjectField(TransformObject, TEXT("location")), Location);
+			JsonRotator(JsonObjectField(TransformObject, TEXT("rotation")), Rotation);
+			JsonVector(JsonObjectField(TransformObject, TEXT("scale")), Scale);
+			return FTransform(Rotation, Location, Scale);
+		}
+
+		UWorld* EditorWorld()
+		{
+			return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+		}
+
+		UPrimitiveComponent* FindPrimitiveComponentForMaterial(AActor* Actor, const FString& ComponentName)
+		{
+			if (!Actor)
+			{
+				return nullptr;
+			}
+			TArray<UPrimitiveComponent*> Components;
+			Actor->GetComponents<UPrimitiveComponent>(Components);
+			for (UPrimitiveComponent* Component : Components)
+			{
+				if (!Component)
+				{
+					continue;
+				}
+				if (ComponentName.IsEmpty() || Component->GetName().Equals(ComponentName, ESearchCase::IgnoreCase))
+				{
+					return Component;
+				}
+			}
+			return nullptr;
+		}
+
+		bool JsonVector2D(const TSharedPtr<FJsonObject>& Object, FVector2D& OutVector)
+		{
+			if (!Object.IsValid())
+			{
+				return false;
+			}
+			double X = 0.0;
+			double Y = 0.0;
+			if (!Object->TryGetNumberField(TEXT("x"), X) || !Object->TryGetNumberField(TEXT("y"), Y))
+			{
+				return false;
+			}
+			OutVector = FVector2D(X, Y);
+			return true;
+		}
+
+		bool JsonMargin(const TSharedPtr<FJsonObject>& Object, FMargin& OutMargin)
+		{
+			if (!Object.IsValid())
+			{
+				return false;
+			}
+			double Left = 0.0;
+			double Top = 0.0;
+			double Right = 0.0;
+			double Bottom = 0.0;
+			if (!Object->TryGetNumberField(TEXT("left"), Left) || !Object->TryGetNumberField(TEXT("top"), Top) ||
+				!Object->TryGetNumberField(TEXT("right"), Right) || !Object->TryGetNumberField(TEXT("bottom"), Bottom))
+			{
+				return false;
+			}
+			OutMargin = FMargin(Left, Top, Right, Bottom);
+			return true;
+		}
+
+		UWidgetBlueprint* LoadWidgetBlueprintForEdit(const TSharedPtr<FJsonObject>& Params, FString& OutAssetPath, FString& OutError)
+		{
+			OutAssetPath = NormalizeBlueprintObjectPath(JsonString(Params, TEXT("asset"), JsonString(Params, TEXT("widget"))));
+			if (OutAssetPath.IsEmpty())
+			{
+				OutError = TEXT("Widget operation requires params.asset or params.widget.");
+				return nullptr;
+			}
+			UWidgetBlueprint* WidgetBlueprint = LoadObject<UWidgetBlueprint>(nullptr, *OutAssetPath);
+			if (!WidgetBlueprint)
+			{
+				OutError = FString::Printf(TEXT("Failed to load Widget Blueprint asset: %s"), *OutAssetPath);
+				return nullptr;
+			}
+			return WidgetBlueprint;
+		}
+
+		UCanvasPanel* EnsureCanvasRoot(UWidgetBlueprint* WidgetBlueprint)
+		{
+			if (!WidgetBlueprint)
+			{
+				return nullptr;
+			}
+			if (!WidgetBlueprint->WidgetTree)
+			{
+				WidgetBlueprint->WidgetTree = NewObject<UWidgetTree>(WidgetBlueprint, UWidgetTree::StaticClass(), TEXT("WidgetTree"), RF_Transactional);
+			}
+			if (!WidgetBlueprint->WidgetTree)
+			{
+				return nullptr;
+			}
+			if (UCanvasPanel* ExistingCanvas = Cast<UCanvasPanel>(WidgetBlueprint->WidgetTree->RootWidget))
+			{
+				return ExistingCanvas;
+			}
+			if (WidgetBlueprint->WidgetTree->RootWidget)
+			{
+				return nullptr;
+			}
+			UCanvasPanel* Canvas = WidgetBlueprint->WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("RootCanvas"));
+			WidgetBlueprint->WidgetTree->RootWidget = Canvas;
+			return Canvas;
+		}
+
+		UPanelWidget* ResolveWidgetParent(UWidgetBlueprint* WidgetBlueprint, const TSharedPtr<FJsonObject>& Params, FString& OutError)
+		{
+			if (!WidgetBlueprint || !WidgetBlueprint->WidgetTree)
+			{
+				OutError = TEXT("Widget Blueprint has no WidgetTree.");
+				return nullptr;
+			}
+			const FString ParentName = JsonString(Params, TEXT("parent"), JsonString(Params, TEXT("parent_widget")));
+			if (!ParentName.IsEmpty())
+			{
+				UPanelWidget* Parent = WidgetBlueprint->WidgetTree->FindWidget<UPanelWidget>(FName(*ParentName));
+				if (!Parent)
+				{
+					OutError = FString::Printf(TEXT("Widget parent panel was not found: %s"), *ParentName);
+					return nullptr;
+				}
+				return Parent;
+			}
+			if (UPanelWidget* RootPanel = Cast<UPanelWidget>(WidgetBlueprint->WidgetTree->RootWidget))
+			{
+				return RootPanel;
+			}
+			OutError = TEXT("Widget Blueprint root is not a panel widget.");
+			return nullptr;
+		}
+
+		TSharedRef<FJsonObject> WidgetToJson(UWidget* Widget)
+		{
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			if (!Widget)
+			{
+				return Result;
+			}
+			Result->SetStringField(TEXT("name"), Widget->GetName());
+			Result->SetStringField(TEXT("path"), Widget->GetPathName());
+			Result->SetStringField(TEXT("class"), Widget->GetClass() ? Widget->GetClass()->GetPathName() : FString());
+			if (UPanelSlot* Slot = Widget->Slot)
+			{
+				Result->SetStringField(TEXT("slot_class"), Slot->GetClass() ? Slot->GetClass()->GetPathName() : FString());
+				if (UWidget* ParentWidget = Slot->Parent)
+				{
+					Result->SetStringField(TEXT("parent"), ParentWidget->GetName());
+				}
+				if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Slot))
+				{
+					TSharedRef<FJsonObject> SlotObject = MakeShared<FJsonObject>();
+					const FVector2D Position = CanvasSlot->GetPosition();
+					const FVector2D Size = CanvasSlot->GetSize();
+					const FVector2D Alignment = CanvasSlot->GetAlignment();
+					TSharedRef<FJsonObject> PositionObject = MakeShared<FJsonObject>();
+					PositionObject->SetNumberField(TEXT("x"), Position.X);
+					PositionObject->SetNumberField(TEXT("y"), Position.Y);
+					TSharedRef<FJsonObject> SizeObject = MakeShared<FJsonObject>();
+					SizeObject->SetNumberField(TEXT("x"), Size.X);
+					SizeObject->SetNumberField(TEXT("y"), Size.Y);
+					TSharedRef<FJsonObject> AlignmentObject = MakeShared<FJsonObject>();
+					AlignmentObject->SetNumberField(TEXT("x"), Alignment.X);
+					AlignmentObject->SetNumberField(TEXT("y"), Alignment.Y);
+					SlotObject->SetObjectField(TEXT("position"), PositionObject);
+					SlotObject->SetObjectField(TEXT("size"), SizeObject);
+					SlotObject->SetObjectField(TEXT("alignment"), AlignmentObject);
+					SlotObject->SetBoolField(TEXT("auto_size"), CanvasSlot->GetAutoSize());
+					SlotObject->SetNumberField(TEXT("z_order"), CanvasSlot->GetZOrder());
+					Result->SetObjectField(TEXT("slot"), SlotObject);
+				}
+			}
+			return Result;
+		}
+
+		UPanelSlot* AddWidgetToParent(UPanelWidget* Parent, UWidget* Widget)
+		{
+			if (!Parent || !Widget)
+			{
+				return nullptr;
+			}
+			if (UCanvasPanel* Canvas = Cast<UCanvasPanel>(Parent))
+			{
+				return Canvas->AddChildToCanvas(Widget);
+			}
+			return Parent->AddChild(Widget);
+		}
+
+		void ApplyCanvasSlotParams(UWidget* Widget, const TSharedPtr<FJsonObject>& Params)
+		{
+			if (!Widget || !Params.IsValid())
+			{
+				return;
+			}
+			UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Widget->Slot);
+			if (!CanvasSlot)
+			{
+				return;
+			}
+			FVector2D VectorValue;
+			if (JsonVector2D(JsonObjectField(Params, TEXT("position")), VectorValue))
+			{
+				CanvasSlot->SetPosition(VectorValue);
+			}
+			if (JsonVector2D(JsonObjectField(Params, TEXT("size")), VectorValue))
+			{
+				CanvasSlot->SetSize(VectorValue);
+			}
+			if (JsonVector2D(JsonObjectField(Params, TEXT("alignment")), VectorValue))
+			{
+				CanvasSlot->SetAlignment(VectorValue);
+			}
+			if (const TSharedPtr<FJsonObject> AnchorsObject = JsonObjectField(Params, TEXT("anchors")))
+			{
+				FVector2D Minimum;
+				FVector2D Maximum;
+				if (JsonVector2D(JsonObjectField(AnchorsObject, TEXT("minimum")), Minimum) || JsonVector2D(JsonObjectField(AnchorsObject, TEXT("min")), Minimum))
+				{
+					if (!JsonVector2D(JsonObjectField(AnchorsObject, TEXT("maximum")), Maximum) && !JsonVector2D(JsonObjectField(AnchorsObject, TEXT("max")), Maximum))
+					{
+						Maximum = Minimum;
+					}
+					CanvasSlot->SetAnchors(FAnchors(Minimum.X, Minimum.Y, Maximum.X, Maximum.Y));
+				}
+			}
+			FMargin MarginValue;
+			if (JsonMargin(JsonObjectField(Params, TEXT("offsets")), MarginValue))
+			{
+				CanvasSlot->SetOffsets(MarginValue);
+			}
+			if (Params->HasField(TEXT("auto_size")))
+			{
+				CanvasSlot->SetAutoSize(JsonBool(Params, TEXT("auto_size"), false));
+			}
+			if (Params->HasField(TEXT("z_order")))
+			{
+				CanvasSlot->SetZOrder(JsonInt(Params, TEXT("z_order"), 0));
+			}
+		}
+
+		FObjectProperty* FindWidgetObjectProperty(UWidgetBlueprint* WidgetBlueprint, const UWidget* Widget)
+		{
+			if (!WidgetBlueprint || !Widget)
+			{
+				return nullptr;
+			}
+			const FName WidgetName = Widget->GetFName();
+			UClass* ClassesToCheck[] = {
+				WidgetBlueprint->GeneratedClass,
+				WidgetBlueprint->SkeletonGeneratedClass
+			};
+			for (UClass* Class : ClassesToCheck)
+			{
+				if (!Class)
+				{
+					continue;
+				}
+				FObjectProperty* Property = FindFProperty<FObjectProperty>(Class, WidgetName);
+				if (Property && Property->PropertyClass && Property->PropertyClass->IsChildOf(Widget->GetClass()))
+				{
+					return Property;
+				}
+			}
+			return nullptr;
+		}
+
+#if UEPI_WITH_ENHANCED_INPUT
+		bool ParseInputActionValueType(const FString& RawType, EInputActionValueType& OutValueType, FString& OutError)
+		{
+			const FString Type = RawType.TrimStartAndEnd().ToLower();
+			if (Type.IsEmpty() || Type == TEXT("bool") || Type == TEXT("boolean") || Type == TEXT("digital"))
+			{
+				OutValueType = EInputActionValueType::Boolean;
+				return true;
+			}
+			if (Type == TEXT("axis1d") || Type == TEXT("float") || Type == TEXT("1d"))
+			{
+				OutValueType = EInputActionValueType::Axis1D;
+				return true;
+			}
+			if (Type == TEXT("axis2d") || Type == TEXT("vector2d") || Type == TEXT("2d"))
+			{
+				OutValueType = EInputActionValueType::Axis2D;
+				return true;
+			}
+			if (Type == TEXT("axis3d") || Type == TEXT("vector") || Type == TEXT("vector3d") || Type == TEXT("3d"))
+			{
+				OutValueType = EInputActionValueType::Axis3D;
+				return true;
+			}
+			OutError = FString::Printf(TEXT("Unsupported Enhanced Input action value type: %s"), *RawType);
+			return false;
+		}
+
+		UInputAction* LoadInputActionForEdit(const TSharedPtr<FJsonObject>& Params, FString& OutAssetPath, FString& OutError)
+		{
+			OutAssetPath = JsonString(Params, TEXT("action"), JsonString(Params, TEXT("input_action")));
+			if (OutAssetPath.IsEmpty())
+			{
+				OutError = TEXT("Enhanced Input operation requires params.action or params.input_action.");
+				return nullptr;
+			}
+			UInputAction* Action = LoadObject<UInputAction>(nullptr, *OutAssetPath);
+			if (!Action)
+			{
+				OutError = FString::Printf(TEXT("Failed to load InputAction: %s"), *OutAssetPath);
+				return nullptr;
+			}
+			return Action;
+		}
+
+		UInputMappingContext* LoadInputMappingContextForEdit(const TSharedPtr<FJsonObject>& Params, FString& OutAssetPath, FString& OutError)
+		{
+			OutAssetPath = JsonString(Params, TEXT("context"), JsonString(Params, TEXT("mapping_context"), JsonString(Params, TEXT("asset"))));
+			if (OutAssetPath.IsEmpty())
+			{
+				OutError = TEXT("Enhanced Input operation requires params.context, params.mapping_context, or params.asset.");
+				return nullptr;
+			}
+			UInputMappingContext* Context = LoadObject<UInputMappingContext>(nullptr, *OutAssetPath);
+			if (!Context)
+			{
+				OutError = FString::Printf(TEXT("Failed to load InputMappingContext: %s"), *OutAssetPath);
+				return nullptr;
+			}
+			return Context;
+		}
+
+		TSharedRef<FJsonObject> InputMappingToJson(const FEnhancedActionKeyMapping& Mapping)
+		{
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetStringField(TEXT("action"), Mapping.Action ? Mapping.Action->GetPathName() : FString());
+			Result->SetStringField(TEXT("key"), Mapping.Key.ToString());
+			Result->SetNumberField(TEXT("trigger_count"), Mapping.Triggers.Num());
+			Result->SetNumberField(TEXT("modifier_count"), Mapping.Modifiers.Num());
+			return Result;
+		}
+#endif
+
 		void AddOperationResult(TArray<TSharedPtr<FJsonValue>>& OperationResults, int32 Index, const FString& Type, bool bOk, const FString& Message, const TSharedPtr<FJsonObject>& Detail = nullptr)
 		{
 			TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
@@ -1521,7 +2043,15 @@ namespace UE::ProjectIntelligence
 		const bool bWriteEnabled = Settings && Settings->bEnableWriteTools;
 		const bool bBlueprintApplyEnabled = bWriteEnabled && Settings->bAllowBlueprintEdits;
 		const bool bActorApplyEnabled = bWriteEnabled && Settings->bAllowActorEdits;
+		const bool bContentApplyEnabled = bWriteEnabled && Settings->bAllowContentEdits;
 		const bool bMaterialApplyEnabled = bWriteEnabled && Settings->bAllowMaterialEdits;
+		const bool bMaterialBlueprintApplyEnabled = bMaterialApplyEnabled && Settings->bAllowBlueprintEdits;
+		const bool bUMGApplyEnabled = bWriteEnabled && Settings->bAllowUMGEdits;
+#if UEPI_WITH_ENHANCED_INPUT
+		const bool bInputApplyEnabled = bWriteEnabled && Settings->bAllowInputEdits;
+#else
+		const bool bInputApplyEnabled = false;
+#endif
 
 		auto MakeOperation = [](const FString& Name, const FString& Domain, const FString& Status, bool bApplySupported)
 		{
@@ -1548,27 +2078,30 @@ namespace UE::ProjectIntelligence
 		Operations.Add(MakeOperation(TEXT("blueprint.add_print_string_node"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
 		Operations.Add(MakeOperation(TEXT("blueprint.connect_pins"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
 		Operations.Add(MakeOperation(TEXT("blueprint.compile"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("actor.spawn"), TEXT("actor"), TEXT("alpha_apply"), bActorApplyEnabled));
 		Operations.Add(MakeOperation(TEXT("actor.set_transform"), TEXT("actor"), TEXT("alpha_apply"), bActorApplyEnabled));
 		Operations.Add(MakeOperation(TEXT("actor.set_property"), TEXT("actor"), TEXT("alpha_apply"), bActorApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("material.create_instance"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
 		Operations.Add(MakeOperation(TEXT("material.set_scalar_parameter"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
 		Operations.Add(MakeOperation(TEXT("material.set_vector_parameter"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
 		Operations.Add(MakeOperation(TEXT("material.set_texture_parameter"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("material.apply_to_actor"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("material.apply_to_blueprint_component"), TEXT("material"), TEXT("alpha_apply"), bMaterialBlueprintApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("content.import"), TEXT("content"), TEXT("alpha_apply"), bContentApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("content.create_folder"), TEXT("content"), TEXT("alpha_apply"), bContentApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("content.duplicate_asset"), TEXT("content"), TEXT("alpha_apply"), bContentApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("content.rename_asset"), TEXT("content"), TEXT("alpha_apply"), bContentApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("widget.create"), TEXT("umg"), TEXT("alpha_apply"), bUMGApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("widget.add_text"), TEXT("umg"), TEXT("alpha_apply"), bUMGApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("widget.add_button"), TEXT("umg"), TEXT("alpha_apply"), bUMGApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("widget.set_slot"), TEXT("umg"), TEXT("alpha_apply"), bUMGApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("widget.bind_button_to_custom_event"), TEXT("umg"), TEXT("alpha_apply"), bUMGApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("input.create_action"), TEXT("input"), TEXT("alpha_apply"), bInputApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("input.create_mapping_context"), TEXT("input"), TEXT("alpha_apply"), bInputApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("input.add_key_mapping"), TEXT("input"), TEXT("alpha_apply"), bInputApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("input.remove_key_mapping"), TEXT("input"), TEXT("alpha_apply"), bInputApplyEnabled));
 
-		const TArray<FString> UnsupportedContentOps = {
-			TEXT("content.import"),
-			TEXT("content.create_folder"),
-			TEXT("content.duplicate_asset"),
-			TEXT("content.rename_asset"),
-			TEXT("widget.create"),
-			TEXT("widget.add_text"),
-			TEXT("widget.add_button"),
-			TEXT("widget.set_slot"),
-			TEXT("widget.bind_button_to_custom_event"),
-			TEXT("input.create_action"),
-			TEXT("input.create_mapping_context"),
-			TEXT("input.add_key_mapping"),
-			TEXT("input.remove_key_mapping")
-		};
+		const TArray<FString> UnsupportedContentOps;
 		for (const FString& Name : UnsupportedContentOps)
 		{
 			const FString Domain = Name.StartsWith(TEXT("widget.")) ? TEXT("umg") : (Name.StartsWith(TEXT("input.")) ? TEXT("input") : TEXT("content"));
@@ -1583,6 +2116,7 @@ namespace UE::ProjectIntelligence
 		SettingsObject->SetBoolField(TEXT("material_edits_enabled"), Settings && Settings->bAllowMaterialEdits);
 		SettingsObject->SetBoolField(TEXT("umg_edits_enabled"), Settings && Settings->bAllowUMGEdits);
 		SettingsObject->SetBoolField(TEXT("input_edits_enabled"), Settings && Settings->bAllowInputEdits);
+		SettingsObject->SetBoolField(TEXT("enhanced_input_compiled"), UEPI_WITH_ENHANCED_INPUT != 0);
 		SettingsObject->SetBoolField(TEXT("saving_enabled"), Settings && Settings->bAllowSavingPackages);
 		SettingsObject->SetNumberField(TEXT("max_operations_per_transaction"), Settings ? Settings->MaxWriteOperationsPerTransaction : 0);
 		SettingsObject->SetNumberField(TEXT("max_assets_per_transaction"), Settings ? Settings->MaxWriteAssetsPerTransaction : 0);
@@ -2280,6 +2814,54 @@ namespace UE::ProjectIntelligence
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("Actor transform updated."), Detail);
 				bMutated = true;
 			}
+			else if (Type == TEXT("actor.spawn"))
+			{
+				if (!Settings->bAllowActorEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Actor write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				UWorld* World = EditorWorld();
+				if (!World)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("No editor world is available for actor.spawn.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				UClass* ActorClass = ResolveActorClassForSpawn(OpParams, Error);
+				if (!ActorClass)
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				FActorSpawnParameters SpawnParameters;
+				SpawnParameters.Name = FName(*JsonString(OpParams, TEXT("name")));
+				SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+				AActor* Actor = World->SpawnActor<AActor>(ActorClass, JsonTransformFromParams(OpParams), SpawnParameters);
+				if (!Actor)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Failed to spawn actor of class %s."), *ActorClass->GetPathName());
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				const FString Label = JsonString(OpParams, TEXT("label"));
+				if (!Label.IsEmpty())
+				{
+					Actor->SetActorLabel(Label);
+				}
+				Actor->Modify();
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetObjectField(TEXT("actor"), ActorObject(Actor));
+				Detail->SetStringField(TEXT("actor_class"), ActorClass->GetPathName());
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Actor spawned in the editor world."), Detail);
+				bMutated = true;
+			}
 			else if (Type == TEXT("actor.set_property"))
 			{
 				if (!Settings->bAllowActorEdits)
@@ -2319,6 +2901,158 @@ namespace UE::ProjectIntelligence
 				Detail->SetArrayField(TEXT("actors"), StringArrayToJsonValues(ActorPaths));
 				Detail->SetStringField(TEXT("property"), PropertyName);
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("Actor property updated."), Detail);
+				bMutated = true;
+			}
+			else if (Type == TEXT("material.create_instance"))
+			{
+				if (!Settings->bAllowMaterialEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Material write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				const FString ParentPath = JsonString(OpParams, TEXT("parent"), JsonString(OpParams, TEXT("parent_material")));
+				UMaterialInterface* ParentMaterial = ParentPath.IsEmpty() ? nullptr : LoadObject<UMaterialInterface>(nullptr, *ParentPath);
+				if (!ParentMaterial)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("material.create_instance requires a valid parent material: %s"), *ParentPath);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				FString PackagePath;
+				FString AssetName;
+				if (!SplitDestinationPath(OpParams, ParentMaterial->GetName() + TEXT("_Inst"), PackagePath, AssetName, Error))
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>();
+				Factory->InitialParent = ParentMaterial;
+				UObject* NewAsset = FAssetToolsModule::GetModule().Get().CreateAsset(AssetName, PackagePath, UMaterialInstanceConstant::StaticClass(), Factory, TEXT("UEPI"));
+				UMaterialInstanceConstant* NewInstance = Cast<UMaterialInstanceConstant>(NewAsset);
+				if (!NewInstance)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Failed to create MaterialInstanceConstant %s/%s."), *PackagePath, *AssetName);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				AffectedAssets.AddUnique(NewInstance->GetPathName());
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetObjectField(TEXT("asset"), ObjectToJson(NewInstance));
+				Detail->SetStringField(TEXT("parent"), ParentMaterial->GetPathName());
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Material instance created."), Detail);
+				bMutated = true;
+			}
+			else if (Type == TEXT("material.apply_to_actor"))
+			{
+				if (!Settings->bAllowMaterialEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Material write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				UMaterialInterface* Material = LoadMaterialInterfaceForEdit(OpParams, AssetPath, Error);
+				if (!Material)
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				TArray<AActor*> Actors = ResolveActorTargets(OpParams);
+				if (Actors.Num() == 0)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("material.apply_to_actor did not resolve any target actors.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				const FString ComponentName = JsonString(OpParams, TEXT("component"), JsonString(OpParams, TEXT("component_name")));
+				const int32 MaterialIndex = JsonInt(OpParams, TEXT("material_index"), 0);
+				TArray<TSharedPtr<FJsonValue>> Applied;
+				for (AActor* Actor : Actors)
+				{
+					UPrimitiveComponent* Component = FindPrimitiveComponentForMaterial(Actor, ComponentName);
+					if (!Component)
+					{
+						bAllOk = false;
+						FailureMessage = FString::Printf(TEXT("Primitive component not found on actor %s."), Actor ? *Actor->GetPathName() : TEXT("<null>"));
+						break;
+					}
+					Actor->Modify();
+					Component->Modify();
+					Component->SetMaterial(MaterialIndex, Material);
+					TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
+					Item->SetStringField(TEXT("actor"), Actor->GetPathName());
+					Item->SetStringField(TEXT("component"), Component->GetName());
+					Item->SetNumberField(TEXT("material_index"), MaterialIndex);
+					Applied.Add(MakeShared<FJsonValueObject>(Item));
+				}
+				if (!bAllOk)
+				{
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetStringField(TEXT("material"), Material->GetPathName());
+				Detail->SetArrayField(TEXT("applied"), Applied);
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Material applied to actor component(s)."), Detail);
+				bMutated = true;
+			}
+			else if (Type == TEXT("material.apply_to_blueprint_component"))
+			{
+				if (!Settings->bAllowMaterialEdits || !Settings->bAllowBlueprintEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Material and Blueprint write alpha must both be enabled for material.apply_to_blueprint_component.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				UMaterialInterface* Material = LoadMaterialInterfaceForEdit(OpParams, AssetPath, Error);
+				if (!Material)
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				FString BlueprintAssetPath;
+				UBlueprint* TargetBlueprint = LoadBlueprintForEdit(OpParams, BlueprintAssetPath, Error);
+				if (!TargetBlueprint)
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				const FString ComponentName = JsonString(OpParams, TEXT("component"), JsonString(OpParams, TEXT("component_name")));
+				const int32 MaterialIndex = JsonInt(OpParams, TEXT("material_index"), 0);
+				USCS_Node* Node = TargetBlueprint->SimpleConstructionScript ? TargetBlueprint->SimpleConstructionScript->FindSCSNode(FName(*ComponentName)) : nullptr;
+				UPrimitiveComponent* Template = Node ? Cast<UPrimitiveComponent>(Node->ComponentTemplate) : nullptr;
+				if (!Template)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Primitive component template not found on Blueprint: %s"), *ComponentName);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				Template->Modify();
+				Template->SetMaterial(MaterialIndex, Material);
+				FBlueprintEditorUtils::MarkBlueprintAsModified(TargetBlueprint);
+				AffectedAssets.AddUnique(BlueprintAssetPath);
+				TouchedBlueprints.Add(TargetBlueprint);
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetStringField(TEXT("blueprint"), TargetBlueprint->GetPathName());
+				Detail->SetStringField(TEXT("component"), ComponentName);
+				Detail->SetStringField(TEXT("material"), Material->GetPathName());
+				Detail->SetNumberField(TEXT("material_index"), MaterialIndex);
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Material applied to Blueprint component template."), Detail);
 				bMutated = true;
 			}
 			else if (Type == TEXT("material.set_scalar_parameter") || Type == TEXT("material.set_vector_parameter") || Type == TEXT("material.set_texture_parameter"))
@@ -2398,6 +3132,673 @@ namespace UE::ProjectIntelligence
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("Material instance parameter updated."), Detail);
 				bMutated = true;
 			}
+			else if (Type == TEXT("content.create_folder"))
+			{
+				if (!Settings->bAllowContentEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Content write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				const FString FolderPath = NormalizedContentPath(JsonString(OpParams, TEXT("path"), JsonString(OpParams, TEXT("folder"))));
+				if (!ValidateGameContentPath(FolderPath, Error))
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				const FString Directory = FPackageName::LongPackageNameToFilename(FolderPath);
+				const bool bCreated = IFileManager::Get().MakeDirectory(*Directory, true);
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetStringField(TEXT("folder"), FolderPath);
+				Detail->SetStringField(TEXT("directory"), Directory);
+				AddOperationResult(OperationResults, Index, Type, bCreated, bCreated ? TEXT("Content folder created.") : TEXT("Failed to create content folder."), Detail);
+				bAllOk &= bCreated;
+				if (!bCreated)
+				{
+					FailureMessage = TEXT("Failed to create content folder.");
+					break;
+				}
+				bMutated = true;
+			}
+			else if (Type == TEXT("content.duplicate_asset"))
+			{
+				if (!Settings->bAllowContentEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Content write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				UObject* SourceObject = LoadContentObject(OpParams, AssetPath, Error);
+				if (!SourceObject)
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				FString PackagePath;
+				FString AssetName;
+				if (!SplitDestinationPath(OpParams, SourceObject->GetName() + TEXT("_Copy"), PackagePath, AssetName, Error))
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				UObject* NewObject = FAssetToolsModule::GetModule().Get().DuplicateAsset(AssetName, PackagePath, SourceObject);
+				if (!NewObject)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Failed to duplicate asset to %s/%s."), *PackagePath, *AssetName);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				AffectedAssets.AddUnique(NewObject->GetPathName());
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetObjectField(TEXT("source"), ObjectToJson(SourceObject));
+				Detail->SetObjectField(TEXT("asset"), ObjectToJson(NewObject));
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Asset duplicated."), Detail);
+				bMutated = true;
+			}
+			else if (Type == TEXT("content.rename_asset"))
+			{
+				if (!Settings->bAllowContentEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Content write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				UObject* SourceObject = LoadContentObject(OpParams, AssetPath, Error);
+				if (!SourceObject)
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				FString PackagePath;
+				FString AssetName;
+				if (!SplitDestinationPath(OpParams, SourceObject->GetName(), PackagePath, AssetName, Error))
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				TArray<FAssetRenameData> RenameData;
+				RenameData.Add(FAssetRenameData(SourceObject, PackagePath, AssetName));
+				const bool bRenamed = FAssetToolsModule::GetModule().Get().RenameAssets(RenameData);
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetStringField(TEXT("old_asset"), AssetPath);
+				Detail->SetStringField(TEXT("new_asset"), PackagePath / AssetName + TEXT(".") + AssetName);
+				AddOperationResult(OperationResults, Index, Type, bRenamed, bRenamed ? TEXT("Asset renamed.") : TEXT("Asset rename failed."), Detail);
+				bAllOk &= bRenamed;
+				if (!bRenamed)
+				{
+					FailureMessage = TEXT("Asset rename failed.");
+					break;
+				}
+				AffectedAssets.AddUnique(PackagePath / AssetName + TEXT(".") + AssetName);
+				bMutated = true;
+			}
+			else if (Type == TEXT("content.import"))
+			{
+				if (!Settings->bAllowContentEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Content write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				const FString Filename = JsonString(OpParams, TEXT("file"), JsonString(OpParams, TEXT("filename")));
+				if (Filename.IsEmpty() || !FPaths::FileExists(Filename))
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Import file does not exist: %s"), *Filename);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				const FString Extension = FPaths::GetExtension(Filename).ToLower();
+				if (!(Extension == TEXT("fbx") || Extension == TEXT("obj") || Extension == TEXT("png") || Extension == TEXT("jpg") || Extension == TEXT("jpeg") || Extension == TEXT("wav") || Extension == TEXT("uasset")))
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Import extension is not allowlisted for write alpha: %s"), *Extension);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				FString DestinationPath = NormalizedContentPath(JsonString(OpParams, TEXT("destination_path"), JsonString(OpParams, TEXT("folder"))));
+				if (!ValidateGameContentPath(DestinationPath, Error))
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				UAssetImportTask* Task = NewObject<UAssetImportTask>();
+				Task->Filename = Filename;
+				Task->DestinationPath = DestinationPath;
+				Task->DestinationName = JsonString(OpParams, TEXT("name"), JsonString(OpParams, TEXT("asset_name")));
+				Task->bAutomated = true;
+				Task->bAsync = false;
+				Task->bSave = false;
+				Task->bReplaceExisting = JsonBool(OpParams, TEXT("replace_existing"), false);
+				TArray<UAssetImportTask*> Tasks;
+				Tasks.Add(Task);
+				FAssetToolsModule::GetModule().Get().ImportAssetTasks(Tasks);
+				const TArray<UObject*>& ImportedObjects = Task->GetObjects();
+				TArray<TSharedPtr<FJsonValue>> Imported;
+				for (UObject* ImportedObject : ImportedObjects)
+				{
+					if (ImportedObject)
+					{
+						Imported.Add(MakeShared<FJsonValueObject>(ObjectToJson(ImportedObject)));
+						AffectedAssets.AddUnique(ImportedObject->GetPathName());
+					}
+				}
+				const bool bImported = ImportedObjects.Num() > 0;
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetStringField(TEXT("file"), Filename);
+				Detail->SetStringField(TEXT("destination_path"), DestinationPath);
+				Detail->SetArrayField(TEXT("assets"), Imported);
+				AddOperationResult(OperationResults, Index, Type, bImported, bImported ? TEXT("Asset imported.") : TEXT("Import produced no assets."), Detail);
+				bAllOk &= bImported;
+				if (!bImported)
+				{
+					FailureMessage = TEXT("Import produced no assets.");
+					break;
+				}
+				bMutated = true;
+			}
+			else if (Type == TEXT("widget.create"))
+			{
+				if (!Settings->bAllowUMGEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("UMG write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				FString PackagePath;
+				FString AssetName;
+				if (!SplitDestinationPath(OpParams, TEXT("WBP_UEPIWidget"), PackagePath, AssetName, Error))
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				UWidgetBlueprintFactory* Factory = NewObject<UWidgetBlueprintFactory>();
+				Factory->BlueprintType = BPTYPE_Normal;
+				Factory->ParentClass = UUserWidget::StaticClass();
+				UObject* NewAsset = FAssetToolsModule::GetModule().Get().CreateAsset(AssetName, PackagePath, UWidgetBlueprint::StaticClass(), Factory, TEXT("UEPI"));
+				UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(NewAsset);
+				if (!WidgetBlueprint)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Failed to create Widget Blueprint %s/%s."), *PackagePath, *AssetName);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				UCanvasPanel* RootCanvas = EnsureCanvasRoot(WidgetBlueprint);
+				if (!RootCanvas)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Widget Blueprint was created but a CanvasPanel root could not be initialized.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+				AffectedAssets.AddUnique(WidgetBlueprint->GetPathName());
+				TouchedBlueprints.Add(WidgetBlueprint);
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetObjectField(TEXT("asset"), ObjectToJson(WidgetBlueprint));
+				Detail->SetObjectField(TEXT("root_widget"), WidgetToJson(RootCanvas));
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Widget Blueprint created with a CanvasPanel root."), Detail);
+				bMutated = true;
+			}
+			else if (Type == TEXT("widget.add_text") || Type == TEXT("widget.add_button"))
+			{
+				if (!Settings->bAllowUMGEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("UMG write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				UWidgetBlueprint* WidgetBlueprint = LoadWidgetBlueprintForEdit(OpParams, AssetPath, Error);
+				if (!WidgetBlueprint)
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				if (!WidgetBlueprint->WidgetTree || !WidgetBlueprint->WidgetTree->RootWidget)
+				{
+					if (!EnsureCanvasRoot(WidgetBlueprint))
+					{
+						bAllOk = false;
+						FailureMessage = TEXT("Widget Blueprint has no root widget and a CanvasPanel root could not be initialized.");
+						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+						break;
+					}
+				}
+				UPanelWidget* Parent = ResolveWidgetParent(WidgetBlueprint, OpParams, Error);
+				if (!Parent)
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				const FString WidgetName = JsonString(OpParams, TEXT("name"), Type == TEXT("widget.add_text") ? TEXT("UEPIText") : TEXT("UEPIButton"));
+				if (WidgetBlueprint->WidgetTree->FindWidget(FName(*WidgetName)))
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Widget already exists in WidgetTree: %s"), *WidgetName);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+
+				WidgetBlueprint->Modify();
+				WidgetBlueprint->WidgetTree->Modify();
+				Parent->Modify();
+				if (Type == TEXT("widget.add_text"))
+				{
+					UTextBlock* TextBlock = WidgetBlueprint->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), FName(*WidgetName));
+					if (!TextBlock)
+					{
+						bAllOk = false;
+						FailureMessage = TEXT("Failed to construct UTextBlock.");
+						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+						break;
+					}
+					TextBlock->SetText(FText::FromString(JsonString(OpParams, TEXT("text"), TEXT("Text"))));
+					UPanelSlot* Slot = AddWidgetToParent(Parent, TextBlock);
+					if (!Slot)
+					{
+						bAllOk = false;
+						FailureMessage = TEXT("Failed to add TextBlock to parent panel.");
+						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+						break;
+					}
+					ApplyCanvasSlotParams(TextBlock, OpParams);
+					FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+					AffectedAssets.AddUnique(AssetPath);
+					TouchedBlueprints.Add(WidgetBlueprint);
+					TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+					Detail->SetStringField(TEXT("asset"), WidgetBlueprint->GetPathName());
+					Detail->SetObjectField(TEXT("widget"), WidgetToJson(TextBlock));
+					AddOperationResult(OperationResults, Index, Type, true, TEXT("TextBlock widget added."), Detail);
+				}
+				else
+				{
+					UButton* Button = WidgetBlueprint->WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), FName(*WidgetName));
+					if (!Button)
+					{
+						bAllOk = false;
+						FailureMessage = TEXT("Failed to construct UButton.");
+						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+						break;
+					}
+					UPanelSlot* Slot = AddWidgetToParent(Parent, Button);
+					if (!Slot)
+					{
+						bAllOk = false;
+						FailureMessage = TEXT("Failed to add Button to parent panel.");
+						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+						break;
+					}
+					UTextBlock* LabelBlock = nullptr;
+					const FString LabelText = JsonString(OpParams, TEXT("text"), JsonString(OpParams, TEXT("label")));
+					if (!LabelText.IsEmpty())
+					{
+						const FString LabelName = WidgetName + TEXT("_Label");
+						LabelBlock = WidgetBlueprint->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), FName(*LabelName));
+						if (LabelBlock)
+						{
+							LabelBlock->SetText(FText::FromString(LabelText));
+							Button->SetContent(LabelBlock);
+						}
+					}
+					ApplyCanvasSlotParams(Button, OpParams);
+					FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+					AffectedAssets.AddUnique(AssetPath);
+					TouchedBlueprints.Add(WidgetBlueprint);
+					TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+					Detail->SetStringField(TEXT("asset"), WidgetBlueprint->GetPathName());
+					Detail->SetObjectField(TEXT("widget"), WidgetToJson(Button));
+					if (LabelBlock)
+					{
+						Detail->SetObjectField(TEXT("label_widget"), WidgetToJson(LabelBlock));
+					}
+					AddOperationResult(OperationResults, Index, Type, true, TEXT("Button widget added."), Detail);
+				}
+				bMutated = true;
+			}
+			else if (Type == TEXT("widget.set_slot"))
+			{
+				if (!Settings->bAllowUMGEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("UMG write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				UWidgetBlueprint* WidgetBlueprint = LoadWidgetBlueprintForEdit(OpParams, AssetPath, Error);
+				if (!WidgetBlueprint || !WidgetBlueprint->WidgetTree)
+				{
+					bAllOk = false;
+					FailureMessage = WidgetBlueprint ? TEXT("Widget Blueprint has no WidgetTree.") : Error;
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				const FString WidgetName = JsonString(OpParams, TEXT("widget_name"), JsonString(OpParams, TEXT("name")));
+				UWidget* Widget = WidgetName.IsEmpty() ? nullptr : WidgetBlueprint->WidgetTree->FindWidget(FName(*WidgetName));
+				if (!Widget)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Widget was not found in WidgetTree: %s"), *WidgetName);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				if (!Cast<UCanvasPanelSlot>(Widget->Slot))
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("widget.set_slot currently supports CanvasPanelSlot only: %s"), *WidgetName);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				WidgetBlueprint->Modify();
+				Widget->Modify();
+				Widget->Slot->Modify();
+				ApplyCanvasSlotParams(Widget, OpParams);
+				FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+				AffectedAssets.AddUnique(AssetPath);
+				TouchedBlueprints.Add(WidgetBlueprint);
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetStringField(TEXT("asset"), WidgetBlueprint->GetPathName());
+				Detail->SetObjectField(TEXT("widget"), WidgetToJson(Widget));
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Widget CanvasPanelSlot updated."), Detail);
+				bMutated = true;
+			}
+			else if (Type == TEXT("widget.bind_button_to_custom_event"))
+			{
+				if (!Settings->bAllowUMGEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("UMG write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				UWidgetBlueprint* WidgetBlueprint = LoadWidgetBlueprintForEdit(OpParams, AssetPath, Error);
+				if (!WidgetBlueprint || !WidgetBlueprint->WidgetTree)
+				{
+					bAllOk = false;
+					FailureMessage = WidgetBlueprint ? TEXT("Widget Blueprint has no WidgetTree.") : Error;
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				const FString ButtonName = JsonString(OpParams, TEXT("button"), JsonString(OpParams, TEXT("button_name"), JsonString(OpParams, TEXT("widget_name"), JsonString(OpParams, TEXT("name")))));
+				UButton* Button = ButtonName.IsEmpty() ? nullptr : WidgetBlueprint->WidgetTree->FindWidget<UButton>(FName(*ButtonName));
+				if (!Button)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Button widget was not found in WidgetTree: %s"), *ButtonName);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				const FName DelegateName(*JsonString(OpParams, TEXT("delegate"), JsonString(OpParams, TEXT("event"), TEXT("OnClicked"))));
+				if (DelegateName.IsNone() || !FindFProperty<FMulticastDelegateProperty>(Button->GetClass(), DelegateName))
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Button delegate was not found: %s"), *DelegateName.ToString());
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+
+				WidgetBlueprint->Modify();
+				Button->Modify();
+				Button->bIsVariable = true;
+				FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+
+				FObjectProperty* ComponentProperty = FindWidgetObjectProperty(WidgetBlueprint, Button);
+				if (!ComponentProperty)
+				{
+					TSharedRef<FJsonObject> CompileResult = CompileBlueprintToJson(WidgetBlueprint);
+					CompileResults.Add(MakeShared<FJsonValueObject>(CompileResult));
+					if (!CompileResult->GetBoolField(TEXT("ok")))
+					{
+						bAllOk = false;
+						FailureMessage = FString::Printf(TEXT("Widget Blueprint compile failed before binding %s.%s."), *ButtonName, *DelegateName.ToString());
+						AddOperationResult(OperationResults, Index, Type, false, FailureMessage, CompileResult);
+						break;
+					}
+					ComponentProperty = FindWidgetObjectProperty(WidgetBlueprint, Button);
+				}
+				if (!ComponentProperty)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Generated widget variable property was not found for button: %s"), *ButtonName);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+
+				const UK2Node_ComponentBoundEvent* ExistingNode = FKismetEditorUtilities::FindBoundEventForComponent(WidgetBlueprint, DelegateName, ComponentProperty->GetFName());
+				const bool bAlreadyBound = ExistingNode != nullptr;
+				if (!ExistingNode)
+				{
+					FKismetEditorUtilities::CreateNewBoundEventForClass(Button->GetClass(), DelegateName, WidgetBlueprint, ComponentProperty);
+					ExistingNode = FKismetEditorUtilities::FindBoundEventForComponent(WidgetBlueprint, DelegateName, ComponentProperty->GetFName());
+				}
+				if (!ExistingNode)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Failed to create bound event node for %s.%s."), *ButtonName, *DelegateName.ToString());
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+
+				FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+				AffectedAssets.AddUnique(AssetPath);
+				TouchedBlueprints.Add(WidgetBlueprint);
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetStringField(TEXT("asset"), WidgetBlueprint->GetPathName());
+				Detail->SetStringField(TEXT("button"), ButtonName);
+				Detail->SetStringField(TEXT("delegate"), DelegateName.ToString());
+				Detail->SetBoolField(TEXT("already_bound"), bAlreadyBound);
+				Detail->SetObjectField(TEXT("node"), NodeToJson(ExistingNode, ExistingNode->GetGraph()));
+				AddOperationResult(OperationResults, Index, Type, true, bAlreadyBound ? TEXT("Button delegate was already bound.") : TEXT("Button delegate bound to a ComponentBoundEvent node."), Detail);
+				bMutated = true;
+			}
+#if UEPI_WITH_ENHANCED_INPUT
+			else if (Type == TEXT("input.create_action"))
+			{
+				if (!Settings->bAllowInputEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Enhanced Input write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				FString PackagePath;
+				FString AssetName;
+				if (!SplitDestinationPath(OpParams, TEXT("IA_UEPIAction"), PackagePath, AssetName, Error))
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				UInputAction_Factory* Factory = NewObject<UInputAction_Factory>();
+				Factory->InputActionClass = UInputAction::StaticClass();
+				UObject* NewAsset = FAssetToolsModule::GetModule().Get().CreateAsset(AssetName, PackagePath, UInputAction::StaticClass(), Factory, TEXT("UEPI"));
+				UInputAction* Action = Cast<UInputAction>(NewAsset);
+				if (!Action)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Failed to create InputAction %s/%s."), *PackagePath, *AssetName);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				EInputActionValueType ValueType = EInputActionValueType::Boolean;
+				if (!ParseInputActionValueType(JsonString(OpParams, TEXT("value_type"), TEXT("bool")), ValueType, Error))
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				Action->Modify();
+				Action->ValueType = ValueType;
+				const FString Description = JsonString(OpParams, TEXT("description"));
+				if (!Description.IsEmpty())
+				{
+					Action->ActionDescription = FText::FromString(Description);
+				}
+				Action->PostEditChange();
+				Action->MarkPackageDirty();
+				AffectedAssets.AddUnique(Action->GetPathName());
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetObjectField(TEXT("asset"), ObjectToJson(Action));
+				Detail->SetStringField(TEXT("value_type"), StaticEnum<EInputActionValueType>()->GetNameStringByValue(static_cast<int64>(Action->ValueType)));
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("InputAction created."), Detail);
+				bMutated = true;
+			}
+			else if (Type == TEXT("input.create_mapping_context"))
+			{
+				if (!Settings->bAllowInputEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Enhanced Input write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				FString PackagePath;
+				FString AssetName;
+				if (!SplitDestinationPath(OpParams, TEXT("IMC_UEPIContext"), PackagePath, AssetName, Error))
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				UInputMappingContext_Factory* Factory = NewObject<UInputMappingContext_Factory>();
+				Factory->InputMappingContextClass = UInputMappingContext::StaticClass();
+				UObject* NewAsset = FAssetToolsModule::GetModule().Get().CreateAsset(AssetName, PackagePath, UInputMappingContext::StaticClass(), Factory, TEXT("UEPI"));
+				UInputMappingContext* Context = Cast<UInputMappingContext>(NewAsset);
+				if (!Context)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Failed to create InputMappingContext %s/%s."), *PackagePath, *AssetName);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				Context->Modify();
+				const FString Description = JsonString(OpParams, TEXT("description"));
+				if (!Description.IsEmpty())
+				{
+					Context->ContextDescription = FText::FromString(Description);
+				}
+				Context->PostEditChange();
+				Context->MarkPackageDirty();
+				AffectedAssets.AddUnique(Context->GetPathName());
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetObjectField(TEXT("asset"), ObjectToJson(Context));
+				Detail->SetNumberField(TEXT("mapping_count"), Context->GetMappings().Num());
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("InputMappingContext created."), Detail);
+				bMutated = true;
+			}
+			else if (Type == TEXT("input.add_key_mapping") || Type == TEXT("input.remove_key_mapping"))
+			{
+				if (!Settings->bAllowInputEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Enhanced Input write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				FString ContextPath;
+				UInputMappingContext* Context = LoadInputMappingContextForEdit(OpParams, ContextPath, Error);
+				if (!Context)
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				FString ActionPath;
+				UInputAction* Action = LoadInputActionForEdit(OpParams, ActionPath, Error);
+				if (!Action)
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				const FString KeyName = JsonString(OpParams, TEXT("key"));
+				FKey Key(FName(*KeyName));
+				if (KeyName.IsEmpty() || !Key.IsValid())
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("Enhanced Input key is invalid: %s"), *KeyName);
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				const int32 BeforeCount = Context->GetMappings().Num();
+				Context->Modify();
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetStringField(TEXT("context"), Context->GetPathName());
+				Detail->SetStringField(TEXT("action"), Action->GetPathName());
+				Detail->SetStringField(TEXT("key"), Key.ToString());
+				Detail->SetNumberField(TEXT("mapping_count_before"), BeforeCount);
+				if (Type == TEXT("input.add_key_mapping"))
+				{
+					FEnhancedActionKeyMapping& Mapping = Context->MapKey(Action, Key);
+					Detail->SetObjectField(TEXT("mapping"), InputMappingToJson(Mapping));
+					Context->PostEditChange();
+					Context->MarkPackageDirty();
+					Detail->SetNumberField(TEXT("mapping_count_after"), Context->GetMappings().Num());
+					AddOperationResult(OperationResults, Index, Type, true, TEXT("Enhanced Input key mapping added."), Detail);
+					AffectedAssets.AddUnique(ContextPath);
+					bMutated = true;
+				}
+				else
+				{
+					Context->UnmapKey(Action, Key);
+					const int32 AfterCount = Context->GetMappings().Num();
+					const bool bRemoved = AfterCount < BeforeCount;
+					if (bRemoved)
+					{
+						Context->PostEditChange();
+						Context->MarkPackageDirty();
+						AffectedAssets.AddUnique(ContextPath);
+						bMutated = true;
+					}
+					Detail->SetNumberField(TEXT("mapping_count_after"), AfterCount);
+					AddOperationResult(OperationResults, Index, Type, bRemoved, bRemoved ? TEXT("Enhanced Input key mapping removed.") : TEXT("No matching Enhanced Input key mapping was removed."), Detail);
+					if (!bRemoved)
+					{
+						bAllOk = false;
+						FailureMessage = TEXT("No matching Enhanced Input key mapping was removed.");
+						break;
+					}
+				}
+			}
+#else
+			else if (Type.StartsWith(TEXT("input.")))
+			{
+				bAllOk = false;
+				FailureMessage = TEXT("Enhanced Input is not enabled for this project build.");
+				AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+				break;
+			}
+#endif
 			else
 			{
 				bAllOk = false;

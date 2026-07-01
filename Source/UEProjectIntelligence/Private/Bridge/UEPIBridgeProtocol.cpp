@@ -43,11 +43,15 @@ namespace UE::ProjectIntelligence
 			TEXT("blueprint.add_print_string_node"),
 			TEXT("blueprint.connect_pins"),
 			TEXT("blueprint.compile"),
+			TEXT("actor.spawn"),
 			TEXT("actor.set_transform"),
 			TEXT("actor.set_property"),
+			TEXT("material.create_instance"),
 			TEXT("material.set_scalar_parameter"),
 			TEXT("material.set_vector_parameter"),
 			TEXT("material.set_texture_parameter"),
+			TEXT("material.apply_to_actor"),
+			TEXT("material.apply_to_blueprint_component"),
 			TEXT("content.import"),
 			TEXT("content.create_folder"),
 			TEXT("content.duplicate_asset"),
@@ -55,9 +59,12 @@ namespace UE::ProjectIntelligence
 			TEXT("widget.create"),
 			TEXT("widget.add_text"),
 			TEXT("widget.add_button"),
+			TEXT("widget.set_slot"),
+			TEXT("widget.bind_button_to_custom_event"),
 			TEXT("input.create_action"),
 			TEXT("input.create_mapping_context"),
-			TEXT("input.add_key_mapping")
+			TEXT("input.add_key_mapping"),
+			TEXT("input.remove_key_mapping")
 		};
 	}
 }

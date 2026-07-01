@@ -14,7 +14,7 @@ No low-level tools such as `add_node`, `connect_pin`, `save_asset`, `run_python`
 
 ## Current Alpha Behavior
 
-`codex_write_alpha` is available for operation catalog, dry-run plan testing, and explicitly enabled live-bridge Blueprint alpha edits.
+`codex_write_alpha` is available for operation catalog, dry-run plan testing, and explicitly enabled live-bridge alpha edits.
 
 `uepi_edit_apply` is settings-gated by default:
 
@@ -40,18 +40,37 @@ blueprint.add_branch_node
 blueprint.add_print_string_node
 blueprint.connect_pins
 blueprint.compile
+actor.spawn
 actor.set_transform
 actor.set_property
+material.create_instance
 material.set_scalar_parameter
 material.set_vector_parameter
 material.set_texture_parameter
+material.apply_to_actor
+material.apply_to_blueprint_component
+content.import
+content.create_folder
+content.duplicate_asset
+content.rename_asset
+widget.create
+widget.add_text
+widget.add_button
+widget.set_slot
+widget.bind_button_to_custom_event
+input.create_action
+input.create_mapping_context
+input.add_key_mapping
+input.remove_key_mapping
 ```
 
 Blueprint graph operations return the created node GUIDs, pin IDs, pin names, directions, and links so the Agent can connect pins without guessing UI labels.
 `blueprint.add_event_node` is intentionally limited to custom events in this alpha.
 
-Package saving remains disabled by default. Unsupported or out-of-scope graph operations return structured diagnostics instead of partially editing graphs.
-Content import/rename, UMG, and Enhanced Input operations are discoverable for preview planning but remain apply-unsupported in this alpha.
+Package saving remains disabled by default. Content operations are limited to `/Game` paths, automated imports use an extension allowlist, and broad deletes/save-all operations remain blocked.
+UMG operations are limited to Widget Blueprint creation, TextBlock/Button insertion, CanvasPanel slot edits, and Button delegate binding through UE's ComponentBoundEvent path.
+Enhanced Input operations are available only when the project enables the EnhancedInput plugin; otherwise discover reports them as apply-unsupported and apply returns a safe unsupported diagnostic.
+Unsupported or out-of-scope operations return structured diagnostics instead of partially editing assets.
 
 ## Future Transaction Flow
 

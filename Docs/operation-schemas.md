@@ -130,6 +130,126 @@ Connect pins using returned node GUIDs and pin names or pin IDs:
 
 Successful node operations return a `detail.node` object with `node_guid`, `graph`, `class`, `title`, and a `pins` array containing `pin_id`, `name`, `direction`, `category`, `default_value`, and `linked_to`.
 
+## Editor Content Write Operations
+
+Spawn an actor in the editor world:
+
+```json
+{
+  "type": "actor.spawn",
+  "params": {
+    "actor_class": "/Script/Engine.StaticMeshActor",
+    "label": "UEPI_TestActor",
+    "location": {"x": 0, "y": 0, "z": 120}
+  }
+}
+```
+
+Create a Material Instance:
+
+```json
+{
+  "type": "material.create_instance",
+  "params": {
+    "parent": "/Game/Materials/M_Base.M_Base",
+    "destination_path": "/Game/UEPIWriteSandbox",
+    "name": "MI_UEPI_Test"
+  }
+}
+```
+
+Apply a material to an actor component:
+
+```json
+{
+  "type": "material.apply_to_actor",
+  "params": {
+    "material": "/Game/UEPIWriteSandbox/MI_UEPI_Test.MI_UEPI_Test",
+    "targets": {"paths": ["MapName:PersistentLevel.Actor_1"]},
+    "component": "StaticMeshComponent0",
+    "material_index": 0
+  }
+}
+```
+
+Content operations are scoped to `/Game` paths:
+
+```json
+{
+  "type": "content.duplicate_asset",
+  "params": {
+    "source": "/Game/Blueprints/BP_Test.BP_Test",
+    "destination_path": "/Game/UEPIWriteSandbox",
+    "name": "BP_Test_Copy"
+  }
+}
+```
+
+Create a Widget Blueprint with a CanvasPanel root:
+
+```json
+{
+  "type": "widget.create",
+  "params": {
+    "destination_path": "/Game/UEPIWriteSandbox",
+    "name": "WBP_UEPI_Test"
+  }
+}
+```
+
+Add a button to a Widget Blueprint and set its CanvasPanel slot:
+
+```json
+{
+  "type": "widget.add_button",
+  "params": {
+    "asset": "/Game/UEPIWriteSandbox/WBP_UEPI_Test.WBP_UEPI_Test",
+    "name": "StartButton",
+    "text": "Start",
+    "position": {"x": 120, "y": 80},
+    "size": {"x": 220, "y": 64},
+    "z_order": 1
+  }
+}
+```
+
+Bind a Button's `OnClicked` delegate to a generated ComponentBoundEvent node:
+
+```json
+{
+  "type": "widget.bind_button_to_custom_event",
+  "params": {
+    "asset": "/Game/UEPIWriteSandbox/WBP_UEPI_Test.WBP_UEPI_Test",
+    "button": "StartButton",
+    "delegate": "OnClicked"
+  }
+}
+```
+
+Create Enhanced Input assets and add a key mapping:
+
+```json
+{
+  "type": "input.create_action",
+  "params": {
+    "destination_path": "/Game/UEPIWriteSandbox/Input",
+    "name": "IA_UEPI_Jump",
+    "value_type": "bool"
+  }
+}
+```
+
+```json
+{
+  "type": "input.add_key_mapping",
+  "params": {
+    "context": "/Game/UEPIWriteSandbox/Input/IMC_UEPI_Test.IMC_UEPI_Test",
+    "action": "/Game/UEPIWriteSandbox/Input/IA_UEPI_Jump.IA_UEPI_Jump",
+    "key": "SpaceBar"
+  }
+}
+```
+
 ## Edit Audit
 
 Edit preview/apply/validate/rollback records are appended to:

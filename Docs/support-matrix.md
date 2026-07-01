@@ -23,12 +23,15 @@
 
 - Blueprint write alpha can add variables, set variable defaults, add simple components, set simple component properties, and compile through the live bridge when write settings are explicitly enabled.
 - Blueprint graph write alpha can create function graphs, add custom events, add function-call, variable get/set, branch, and PrintString nodes, and connect pins by node GUID plus pin name/id.
-- Actor write alpha can set transforms and simple reflected actor properties when explicitly enabled.
-- Material write alpha can set scalar, vector, and texture parameters on `UMaterialInstanceConstant` assets when explicitly enabled.
+- Actor write alpha can spawn actors, set transforms, and set simple reflected actor properties when explicitly enabled.
+- Material write alpha can create `UMaterialInstanceConstant` assets, set scalar/vector/texture parameters, and apply materials to actor or Blueprint component targets when explicitly enabled.
+- Content write alpha can create `/Game` folders, duplicate assets, rename assets, and run automated allowlisted imports when explicitly enabled.
+- UMG write alpha can create Widget Blueprints, add TextBlock/Button widgets, update CanvasPanel slot properties, and bind Button delegates to ComponentBoundEvent nodes when explicitly enabled.
+- Enhanced Input write alpha can create Input Action and Input Mapping Context assets and add/remove key mappings when the project has EnhancedInput enabled.
 
 ## Not Supported In 2.0-dev
 
-- General asset saves, deletes, broad arbitrary Blueprint graph rewriting, Content Browser import/rename, UMG creation, and Enhanced Input writes.
+- General asset saves, deletes, and broad arbitrary Blueprint graph rewriting.
 - Runtime pose evaluation.
 - Daemon, HTTP, Web UI, worker queue, or remote service deployment.
 - Third-party extension SDK.

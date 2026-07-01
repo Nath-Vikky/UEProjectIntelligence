@@ -25,6 +25,7 @@ public class UEProjectIntelligence : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"AssetTools",
 				"AssetRegistry",
 				"AIModule",
 				"AnimGraph",
@@ -51,7 +52,7 @@ public class UEProjectIntelligence : ModuleRules
 			}
 			);
 
-		AddOptionalReader(Target, "EnhancedInput", "UEPI_WITH_ENHANCED_INPUT", "EnhancedInput");
+		AddOptionalReader(Target, "EnhancedInput", "UEPI_WITH_ENHANCED_INPUT", "EnhancedInput", "InputEditor");
 		AddOptionalReader(Target, "CommonUI", "UEPI_WITH_COMMON_UI", "CommonInput", "CommonUI", "EnhancedInput");
 		AddOptionalReader(Target, "GameplayAbilities", "UEPI_WITH_GAMEPLAY_ABILITIES", "GameplayAbilities", "GameplayTags", "GameplayTasks");
 		AddOptionalReader(Target, "StateTree", "UEPI_WITH_STATE_TREE", "StateTreeEditorModule", "StateTreeModule", "StructUtils", "StructUtilsEngine");
