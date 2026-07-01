@@ -21,8 +21,10 @@
 
 ## Not Supported In 2.0-dev
 
-- General asset writes, saves, deletes, renames, and broad Blueprint graph edits.
+- General asset saves, deletes, broad Blueprint graph edits, Content Browser import/rename, UMG creation, and Enhanced Input writes.
 - Blueprint write alpha can add variables, set variable defaults, add simple components, set simple component properties, and compile through the live bridge when write settings are explicitly enabled.
+- Actor write alpha can set transforms and simple reflected actor properties when explicitly enabled.
+- Material write alpha can set scalar, vector, and texture parameters on `UMaterialInstanceConstant` assets when explicitly enabled.
 - Runtime pose evaluation.
 - Daemon, HTTP, Web UI, worker queue, or remote service deployment.
 - Third-party extension SDK.

@@ -32,9 +32,15 @@ blueprint.set_variable_default
 blueprint.add_component
 blueprint.set_component_property
 blueprint.compile
+actor.set_transform
+actor.set_property
+material.set_scalar_parameter
+material.set_vector_parameter
+material.set_texture_parameter
 ```
 
 Package saving remains disabled by default. Unsupported graph operations return structured diagnostics instead of partially editing graphs.
+Content import/rename, UMG, and Enhanced Input operations are discoverable for preview planning but remain apply-unsupported in this alpha.
 
 ## Future Transaction Flow
 

@@ -11,7 +11,9 @@
 #include "Engine/Selection.h"
 #include "Engine/SCS_Node.h"
 #include "Engine/SimpleConstructionScript.h"
+#include "Engine/Texture.h"
 #include "Engine/Blueprint.h"
+#include "GameFramework/Actor.h"
 #include "HAL/FileManager.h"
 #include "Interfaces/IPv4/IPv4Address.h"
 #include "Interfaces/IPv4/IPv4Endpoint.h"
@@ -20,6 +22,8 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "EdGraphSchema_K2.h"
 #include "Logging/TokenizedMessage.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "MaterialTypes.h"
 #include "Misc/App.h"
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
@@ -37,6 +41,7 @@
 #include "UEPISettings.h"
 #include "UEPISnapshotStore.h"
 #include "UObject/UnrealType.h"
+#include "UObject/UObjectIterator.h"
 
 namespace UE::ProjectIntelligence
 {
@@ -388,6 +393,121 @@ namespace UE::ProjectIntelligence
 			}
 			OutError = FString::Printf(TEXT("Property type is not supported by write alpha: %s"), *Property->GetClass()->GetName());
 			return false;
+		}
+
+		bool JsonVector(const TSharedPtr<FJsonObject>& Object, FVector& OutVector)
+		{
+			if (!Object.IsValid())
+			{
+				return false;
+			}
+			double X = 0.0;
+			double Y = 0.0;
+			double Z = 0.0;
+			if (!Object->TryGetNumberField(TEXT("x"), X) || !Object->TryGetNumberField(TEXT("y"), Y) || !Object->TryGetNumberField(TEXT("z"), Z))
+			{
+				return false;
+			}
+			OutVector = FVector(X, Y, Z);
+			return true;
+		}
+
+		bool JsonRotator(const TSharedPtr<FJsonObject>& Object, FRotator& OutRotator)
+		{
+			if (!Object.IsValid())
+			{
+				return false;
+			}
+			double Pitch = 0.0;
+			double Yaw = 0.0;
+			double Roll = 0.0;
+			Object->TryGetNumberField(TEXT("pitch"), Pitch);
+			Object->TryGetNumberField(TEXT("yaw"), Yaw);
+			Object->TryGetNumberField(TEXT("roll"), Roll);
+			OutRotator = FRotator(Pitch, Yaw, Roll);
+			return true;
+		}
+
+		bool JsonColor(const TSharedPtr<FJsonObject>& Object, FLinearColor& OutColor)
+		{
+			if (!Object.IsValid())
+			{
+				return false;
+			}
+			double R = 0.0;
+			double G = 0.0;
+			double B = 0.0;
+			double A = 1.0;
+			if (!Object->TryGetNumberField(TEXT("r"), R) || !Object->TryGetNumberField(TEXT("g"), G) || !Object->TryGetNumberField(TEXT("b"), B))
+			{
+				return false;
+			}
+			Object->TryGetNumberField(TEXT("a"), A);
+			OutColor = FLinearColor(R, G, B, A);
+			return true;
+		}
+
+		TArray<AActor*> ResolveActorTargets(const TSharedPtr<FJsonObject>& Params)
+		{
+			TArray<FString> Paths;
+			if (const TSharedPtr<FJsonObject> Targets = JsonObjectField(Params, TEXT("targets")))
+			{
+				if (const TArray<TSharedPtr<FJsonValue>>* Values = JsonArray(Targets, TEXT("paths")))
+				{
+					for (const TSharedPtr<FJsonValue>& Value : *Values)
+					{
+						FString Path;
+						if (Value.IsValid() && Value->TryGetString(Path) && !Path.IsEmpty())
+						{
+							Paths.Add(Path);
+						}
+					}
+				}
+			}
+			const FString DirectPath = JsonString(Params, TEXT("actor"), JsonString(Params, TEXT("path")));
+			if (!DirectPath.IsEmpty())
+			{
+				Paths.Add(DirectPath);
+			}
+
+			TArray<AActor*> Actors;
+			for (const FString& Path : Paths)
+			{
+				AActor* Actor = FindObject<AActor>(nullptr, *Path);
+				if (!Actor)
+				{
+					for (TObjectIterator<AActor> It; It; ++It)
+					{
+						if (It->GetPathName() == Path || It->GetName() == Path)
+						{
+							Actor = *It;
+							break;
+						}
+					}
+				}
+				if (Actor)
+				{
+					Actors.AddUnique(Actor);
+				}
+			}
+			return Actors;
+		}
+
+		UMaterialInstanceConstant* LoadMaterialInstanceForEdit(const TSharedPtr<FJsonObject>& Params, FString& OutAssetPath, FString& OutError)
+		{
+			OutAssetPath = JsonString(Params, TEXT("asset"), JsonString(Params, TEXT("material")));
+			if (OutAssetPath.IsEmpty())
+			{
+				OutError = TEXT("Material operation requires params.asset or params.material.");
+				return nullptr;
+			}
+			UMaterialInstanceConstant* Instance = LoadObject<UMaterialInstanceConstant>(nullptr, *OutAssetPath);
+			if (!Instance)
+			{
+				OutError = FString::Printf(TEXT("Failed to load MaterialInstanceConstant: %s"), *OutAssetPath);
+				return nullptr;
+			}
+			return Instance;
 		}
 
 		void AddOperationResult(TArray<TSharedPtr<FJsonValue>>& OperationResults, int32 Index, const FString& Type, bool bOk, const FString& Message, const TSharedPtr<FJsonObject>& Detail = nullptr)
@@ -905,24 +1025,31 @@ namespace UE::ProjectIntelligence
 		const UUEPISettings* Settings = GetDefault<UUEPISettings>();
 		const bool bWriteEnabled = Settings && Settings->bEnableWriteTools;
 		const bool bBlueprintApplyEnabled = bWriteEnabled && Settings->bAllowBlueprintEdits;
+		const bool bActorApplyEnabled = bWriteEnabled && Settings->bAllowActorEdits;
+		const bool bMaterialApplyEnabled = bWriteEnabled && Settings->bAllowMaterialEdits;
 
-		auto MakeOperation = [bBlueprintApplyEnabled](const FString& Name, const FString& Domain, const FString& Status, bool bApplySupported)
+		auto MakeOperation = [](const FString& Name, const FString& Domain, const FString& Status, bool bApplySupported)
 		{
 			TSharedRef<FJsonObject> Operation = MakeShared<FJsonObject>();
 			Operation->SetStringField(TEXT("name"), Name);
 			Operation->SetStringField(TEXT("domain"), Domain);
 			Operation->SetStringField(TEXT("status"), Status);
 			Operation->SetBoolField(TEXT("preview_supported"), true);
-			Operation->SetBoolField(TEXT("apply_supported"), bApplySupported && bBlueprintApplyEnabled);
+			Operation->SetBoolField(TEXT("apply_supported"), bApplySupported);
 			return MakeShared<FJsonValueObject>(Operation);
 		};
 
 		TArray<TSharedPtr<FJsonValue>> Operations;
-		Operations.Add(MakeOperation(TEXT("blueprint.add_variable"), TEXT("blueprint"), TEXT("alpha_apply"), true));
-		Operations.Add(MakeOperation(TEXT("blueprint.set_variable_default"), TEXT("blueprint"), TEXT("alpha_apply"), true));
-		Operations.Add(MakeOperation(TEXT("blueprint.add_component"), TEXT("blueprint"), TEXT("alpha_apply"), true));
-		Operations.Add(MakeOperation(TEXT("blueprint.set_component_property"), TEXT("blueprint"), TEXT("alpha_apply"), true));
-		Operations.Add(MakeOperation(TEXT("blueprint.compile"), TEXT("blueprint"), TEXT("alpha_apply"), true));
+		Operations.Add(MakeOperation(TEXT("blueprint.add_variable"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("blueprint.set_variable_default"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("blueprint.add_component"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("blueprint.set_component_property"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("blueprint.compile"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("actor.set_transform"), TEXT("actor"), TEXT("alpha_apply"), bActorApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("actor.set_property"), TEXT("actor"), TEXT("alpha_apply"), bActorApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("material.set_scalar_parameter"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("material.set_vector_parameter"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
+		Operations.Add(MakeOperation(TEXT("material.set_texture_parameter"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
 
 		const TArray<FString> UnsupportedBlueprintOps = {
 			TEXT("blueprint.create_function"),
@@ -937,6 +1064,26 @@ namespace UE::ProjectIntelligence
 		for (const FString& Name : UnsupportedBlueprintOps)
 		{
 			Operations.Add(MakeOperation(Name, TEXT("blueprint"), TEXT("unsupported_alpha"), false));
+		}
+		const TArray<FString> UnsupportedContentOps = {
+			TEXT("content.import"),
+			TEXT("content.create_folder"),
+			TEXT("content.duplicate_asset"),
+			TEXT("content.rename_asset"),
+			TEXT("widget.create"),
+			TEXT("widget.add_text"),
+			TEXT("widget.add_button"),
+			TEXT("widget.set_slot"),
+			TEXT("widget.bind_button_to_custom_event"),
+			TEXT("input.create_action"),
+			TEXT("input.create_mapping_context"),
+			TEXT("input.add_key_mapping"),
+			TEXT("input.remove_key_mapping")
+		};
+		for (const FString& Name : UnsupportedContentOps)
+		{
+			const FString Domain = Name.StartsWith(TEXT("widget.")) ? TEXT("umg") : (Name.StartsWith(TEXT("input.")) ? TEXT("input") : TEXT("content"));
+			Operations.Add(MakeOperation(Name, Domain, TEXT("unsupported_alpha"), false));
 		}
 
 		TSharedRef<FJsonObject> SettingsObject = MakeShared<FJsonObject>();
@@ -965,10 +1112,6 @@ namespace UE::ProjectIntelligence
 		if (!Settings || !Settings->bEnableWriteTools)
 		{
 			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_WRITE_DISABLED"), TEXT("UEPI write tools are disabled in Project Settings."));
-		}
-		if (!Settings->bAllowBlueprintEdits)
-		{
-			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_BLUEPRINT_DISABLED"), TEXT("Blueprint write alpha is disabled in UEPI Project Settings."));
 		}
 		if (!GEditor)
 		{
@@ -1052,6 +1195,13 @@ namespace UE::ProjectIntelligence
 			UBlueprint* Blueprint = nullptr;
 			if (Type.StartsWith(TEXT("blueprint.")))
 			{
+				if (!Settings->bAllowBlueprintEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Blueprint write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
 				Blueprint = LoadBlueprintForEdit(OpParams, AssetPath, Error);
 				if (!Blueprint)
 				{
@@ -1219,10 +1369,181 @@ namespace UE::ProjectIntelligence
 					break;
 				}
 			}
+			else if (Type == TEXT("actor.set_transform"))
+			{
+				if (!Settings->bAllowActorEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Actor write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				TArray<AActor*> Actors = ResolveActorTargets(OpParams);
+				if (Actors.Num() == 0)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("actor.set_transform did not resolve any target actors.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				TSharedPtr<FJsonObject> SetObject = JsonObjectField(JsonObjectField(OpParams, TEXT("operation")), TEXT("set"));
+				if (!SetObject.IsValid())
+				{
+					SetObject = JsonObjectField(OpParams, TEXT("set"));
+				}
+				if (!SetObject.IsValid())
+				{
+					SetObject = OpParams;
+				}
+				TArray<FString> ActorPaths;
+				for (AActor* Actor : Actors)
+				{
+					Actor->Modify();
+					FTransform Transform = Actor->GetActorTransform();
+					FVector VectorValue;
+					FRotator RotatorValue;
+					if (JsonVector(JsonObjectField(SetObject, TEXT("location")), VectorValue))
+					{
+						Transform.SetLocation(VectorValue);
+					}
+					if (JsonRotator(JsonObjectField(SetObject, TEXT("rotation")), RotatorValue))
+					{
+						Transform.SetRotation(RotatorValue.Quaternion());
+					}
+					if (JsonVector(JsonObjectField(SetObject, TEXT("scale")), VectorValue))
+					{
+						Transform.SetScale3D(VectorValue);
+					}
+					Actor->SetActorTransform(Transform, false, nullptr, ETeleportType::TeleportPhysics);
+					ActorPaths.Add(Actor->GetPathName());
+				}
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetArrayField(TEXT("actors"), StringArrayToJsonValues(ActorPaths));
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Actor transform updated."), Detail);
+				bMutated = true;
+			}
+			else if (Type == TEXT("actor.set_property"))
+			{
+				if (!Settings->bAllowActorEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Actor write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				const FString PropertyName = JsonString(OpParams, TEXT("property"));
+				TArray<AActor*> Actors = ResolveActorTargets(OpParams);
+				if (Actors.Num() == 0 || PropertyName.IsEmpty())
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("actor.set_property requires target actors and property.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				TArray<FString> ActorPaths;
+				for (AActor* Actor : Actors)
+				{
+					Actor->Modify();
+					if (!SetSimplePropertyValue(Actor, PropertyName, OpParams, Error))
+					{
+						bAllOk = false;
+						FailureMessage = Error;
+						break;
+					}
+					ActorPaths.Add(Actor->GetPathName());
+				}
+				if (!bAllOk)
+				{
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetArrayField(TEXT("actors"), StringArrayToJsonValues(ActorPaths));
+				Detail->SetStringField(TEXT("property"), PropertyName);
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Actor property updated."), Detail);
+				bMutated = true;
+			}
+			else if (Type == TEXT("material.set_scalar_parameter") || Type == TEXT("material.set_vector_parameter") || Type == TEXT("material.set_texture_parameter"))
+			{
+				if (!Settings->bAllowMaterialEdits)
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Material write alpha is disabled in UEPI Project Settings.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				UMaterialInstanceConstant* Instance = LoadMaterialInstanceForEdit(OpParams, AssetPath, Error);
+				if (!Instance)
+				{
+					bAllOk = false;
+					FailureMessage = Error;
+					AddOperationResult(OperationResults, Index, Type, false, Error);
+					break;
+				}
+				const FString ParameterName = JsonString(OpParams, TEXT("parameter"), JsonString(OpParams, TEXT("name")));
+				if (ParameterName.IsEmpty())
+				{
+					bAllOk = false;
+					FailureMessage = TEXT("Material parameter operation requires parameter or name.");
+					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+					break;
+				}
+				Instance->Modify();
+				if (Type == TEXT("material.set_scalar_parameter"))
+				{
+					double NumberValue = 0.0;
+					if (!OpParams->TryGetNumberField(TEXT("value"), NumberValue))
+					{
+						bAllOk = false;
+						FailureMessage = TEXT("material.set_scalar_parameter requires numeric value.");
+						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+						break;
+					}
+					Instance->SetScalarParameterValueEditorOnly(FMaterialParameterInfo(FName(*ParameterName)), static_cast<float>(NumberValue));
+				}
+				else if (Type == TEXT("material.set_vector_parameter"))
+				{
+					FLinearColor ColorValue;
+					TSharedPtr<FJsonObject> ColorObject = JsonObjectField(OpParams, TEXT("value"));
+					if (!ColorObject.IsValid())
+					{
+						ColorObject = OpParams;
+					}
+					if (!JsonColor(ColorObject, ColorValue))
+					{
+						bAllOk = false;
+						FailureMessage = TEXT("material.set_vector_parameter requires value {r,g,b,a?}.");
+						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+						break;
+					}
+					Instance->SetVectorParameterValueEditorOnly(FMaterialParameterInfo(FName(*ParameterName)), ColorValue);
+				}
+				else
+				{
+					const FString TexturePath = JsonString(OpParams, TEXT("texture"), JsonString(OpParams, TEXT("value")));
+					UTexture* Texture = TexturePath.IsEmpty() ? nullptr : LoadObject<UTexture>(nullptr, *TexturePath);
+					if (!Texture)
+					{
+						bAllOk = false;
+						FailureMessage = FString::Printf(TEXT("Failed to load texture parameter value: %s"), *TexturePath);
+						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
+						break;
+					}
+					Instance->SetTextureParameterValueEditorOnly(FMaterialParameterInfo(FName(*ParameterName)), Texture);
+				}
+				Instance->PostEditChange();
+				Instance->MarkPackageDirty();
+				AffectedAssets.AddUnique(AssetPath);
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetStringField(TEXT("asset"), Instance->GetPathName());
+				Detail->SetStringField(TEXT("parameter"), ParameterName);
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Material instance parameter updated."), Detail);
+				bMutated = true;
+			}
 			else
 			{
 				bAllOk = false;
-				FailureMessage = FString::Printf(TEXT("Operation is not implemented in Blueprint write alpha: %s"), *Type);
+				FailureMessage = FString::Printf(TEXT("Operation is not implemented in write alpha: %s"), *Type);
 				AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
 				break;
 			}

@@ -120,7 +120,7 @@ Codex profile exposes only these ten read-only tools.
 - `ai_behavior_flow`
 - `network_replication_flow`
 
-The experimental `codex_write_alpha` profile exposes five additional edit tools for discovery, dry-run planning, apply, validate, and rollback. Apply remains disabled by default through UEPI project settings; when the live bridge and write flags are explicitly enabled, the alpha executor only allows a small Blueprint subset and never saves packages by default.
+The experimental `codex_write_alpha` profile exposes five additional edit tools for discovery, dry-run planning, apply, validate, and rollback. Apply remains disabled by default through UEPI project settings; when the live bridge and write flags are explicitly enabled, the alpha executor only allows small Blueprint, Actor, and Material subsets and never saves packages by default.
 
 ## Snapshot Modes
 
