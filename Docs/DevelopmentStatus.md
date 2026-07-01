@@ -58,11 +58,11 @@
 - Worker registration, heartbeat, queue, lease, and job APIs.
 - Commandlet worker mode.
 - Extension SDK interfaces.
-- Write-operation and runtime-evaluation settings.
+- Runtime-evaluation settings.
 
 ## Next
 
 - Broader real-project verification across blank, template, and feature sample projects.
-- Future write-operation work should remain separate from the current read-only MCP contract.
-- Viewport screenshot artifact creation remains future live-bridge work.
-- Write apply/validate/rollback execution remains future work behind `codex_write_alpha`; current implementation is dry-run planning, C++ registry scaffolding, and safe rejection.
+- Future write-operation work should remain behind explicit non-default profiles and settings, separate from the stable read-only MCP contract.
+- Viewport screenshot artifact creation is implemented for the active editor viewport through the optional live bridge.
+- Blueprint graph node/function/connection writes, Content Browser operations, UMG writes, and Enhanced Input writes remain future apply work; current alpha discovers them for preview and rejects apply safely.

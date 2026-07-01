@@ -38,7 +38,13 @@ editor.read_output_log
 asset.refresh_now
 ```
 
-`editor.capture_viewport` currently returns a structured unsupported diagnostic and an artifact directory hint. Snapshot tools remain available when the bridge is off.
+`editor.capture_viewport` captures the active editor viewport to:
+
+```text
+__PROJECT_ROOT__/Saved/UEProjectIntelligence/artifacts/screenshots/viewport-*.png
+```
+
+It returns the artifact path, `uepi://artifact/screenshots/...` URI, PNG dimensions, and byte count. Snapshot tools remain available when the bridge is off.
 
 ## Session Path
 

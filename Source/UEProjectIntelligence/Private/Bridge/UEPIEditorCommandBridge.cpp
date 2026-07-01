@@ -17,6 +17,7 @@
 #include "HAL/FileManager.h"
 #include "Interfaces/IPv4/IPv4Address.h"
 #include "Interfaces/IPv4/IPv4Endpoint.h"
+#include "ImageUtils.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/CompilerResultsLog.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -40,6 +41,7 @@
 #include "Sockets.h"
 #include "UEPISettings.h"
 #include "UEPISnapshotStore.h"
+#include "UnrealClient.h"
 #include "UObject/UnrealType.h"
 #include "UObject/UObjectIterator.h"
 
@@ -1008,16 +1010,54 @@ namespace UE::ProjectIntelligence
 
 	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::ViewportCaptureUnsupported(const FString& RequestId) const
 	{
-		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
-		Result->SetStringField(TEXT("artifact_directory"), FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("artifacts"), TEXT("screenshots")));
-		Result->SetStringField(TEXT("status"), TEXT("unsupported_in_current_build"));
+		if (!GEditor || !GEditor->GetActiveViewport())
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_VIEWPORT_CAPTURE_NO_ACTIVE_VIEWPORT"), TEXT("No active editor viewport is available for capture."));
+		}
 
-		TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
-		Response->SetStringField(TEXT("id"), RequestId);
-		Response->SetBoolField(TEXT("ok"), false);
-		Response->SetObjectField(TEXT("result"), Result);
-		Response->SetArrayField(TEXT("diagnostics"), DiagnosticsArray(TEXT("UEPI_VIEWPORT_CAPTURE_NOT_IMPLEMENTED"), TEXT("warning"), TEXT("Viewport capture artifact creation is reserved for a later bridge build.")));
-		return Response;
+		FViewport* Viewport = GEditor->GetActiveViewport();
+		const FIntPoint Size = Viewport->GetSizeXY();
+		if (Size.X <= 0 || Size.Y <= 0)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_VIEWPORT_CAPTURE_BAD_SIZE"), TEXT("Active viewport has no readable size."));
+		}
+
+		TArray<FColor> Pixels;
+		if (!Viewport->ReadPixels(Pixels) || Pixels.Num() != Size.X * Size.Y)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_VIEWPORT_CAPTURE_READ_FAILED"), TEXT("Failed to read pixels from the active editor viewport."));
+		}
+		for (FColor& Pixel : Pixels)
+		{
+			Pixel.A = 255;
+		}
+
+		TArray64<uint8> PngData;
+		FImageUtils::PNGCompressImageArray(Size.X, Size.Y, MakeArrayView(Pixels), PngData);
+		if (PngData.Num() <= 0)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_VIEWPORT_CAPTURE_ENCODE_FAILED"), TEXT("Failed to encode active viewport pixels as PNG."));
+		}
+
+		const FString ArtifactDirectory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("artifacts"), TEXT("screenshots"));
+		IFileManager::Get().MakeDirectory(*ArtifactDirectory, true);
+		const FString CreatedAt = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
+		const FString ArtifactPath = FPaths::Combine(ArtifactDirectory, FString::Printf(TEXT("viewport-%s.png"), *CreatedAt));
+		if (!FFileHelper::SaveArrayToFile(PngData, *ArtifactPath))
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_VIEWPORT_CAPTURE_SAVE_FAILED"), FString::Printf(TEXT("Failed to save viewport artifact: %s"), *ArtifactPath));
+		}
+
+		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.viewport-capture.v1"));
+		Result->SetStringField(TEXT("artifact_uri"), FString::Printf(TEXT("uepi://artifact/screenshots/%s"), *FPaths::GetCleanFilename(ArtifactPath)));
+		Result->SetStringField(TEXT("artifact_path"), ArtifactPath);
+		Result->SetStringField(TEXT("artifact_directory"), ArtifactDirectory);
+		Result->SetStringField(TEXT("format"), TEXT("png"));
+		Result->SetNumberField(TEXT("width"), Size.X);
+		Result->SetNumberField(TEXT("height"), Size.Y);
+		Result->SetNumberField(TEXT("byte_count"), static_cast<double>(PngData.Num()));
+		return SuccessResponse(RequestId, Result);
 	}
 
 	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::EditDiscoverResult(const FString& RequestId) const
