@@ -27,14 +27,14 @@ capabilities
 diagnostics
 ```
 
-In the current foundation build, `ready` is normally `false`. Snapshot tools remain available.
+In the current foundation build, the Unreal side can write a disabled-by-default session/token skeleton when `bEnableLiveEditorBridge` is enabled. `transport_ready` is still `false`, so MCP reports `ready: false`. Snapshot tools remain available.
 
 ## Session Path
 
 Future editor bridge sessions use:
 
 ```text
-__PROJECT_ROOT__/Saved/UEProjectIntelligence/runtime/editor-bridge.json
+__PROJECT_ROOT__/Saved/UEProjectIntelligence/store/sessions/editor-bridge.json
 ```
 
 Expected future schema:
@@ -45,8 +45,11 @@ Expected future schema:
   "host": "127.0.0.1",
   "port": 0,
   "session_id": "...",
-  "token_hint": "...",
-  "started_at_utc": "..."
+  "token_path": "...",
+  "token_hash": "...",
+  "transport_ready": false,
+  "started_at": "...",
+  "last_heartbeat": "..."
 }
 ```
 

@@ -11,7 +11,7 @@ BRIDGE_SESSION_SCHEMA = "uepi.editor-bridge-session.v1"
 
 
 def bridge_session_path(store: SnapshotStore) -> Path:
-    return store.root / "runtime" / "editor-bridge.json"
+    return store.sessions_dir / "editor-bridge.json"
 
 
 def read_bridge_session(store: SnapshotStore) -> dict[str, Any] | None:
@@ -29,13 +29,15 @@ def bridge_status(store: SnapshotStore) -> dict[str, Any]:
     path = bridge_session_path(store)
     session = read_bridge_session(store)
     configured = session is not None and session.get("schema_version") == BRIDGE_SESSION_SCHEMA
+    active = bool(configured and session and session.get("active"))
+    ready = bool(active and session and session.get("transport_ready"))
     return {
         "supported": True,
-        "enabled": False,
+        "enabled": active,
         "configured": configured,
-        "ready": False,
+        "ready": ready,
         "connected": False,
-        "transport": "tcp-json-localhost",
+        "transport": str(session.get("protocol") or "tcp-json-localhost") if configured and session else "tcp-json-localhost",
         "session_path": str(path),
         "session": session if configured else None,
         "capabilities": [

@@ -37,6 +37,7 @@
 - `uepi_blueprint` includes a semantic summary, call graph grouping, data mutation summary, side effects, and static flow hints derived from Snapshot relations.
 - Experimental `codex_write_alpha` profile exposes edit discover/preview/apply/validate/rollback tools; apply rejects by default and no Unreal asset is modified.
 - Disabled-by-default UE settings now reserve live bridge and write safety gates.
+- C++ write foundation now includes `IUEPIEditOperation`, `FUEPIEditOperationRegistry`, and a dry-run-aware transaction scope skeleton without registering any asset mutation operations.
 - v2 MCP smoke test without daemon, worker, HTTP, Web UI, or SQLite service, including saved+live overlay merge, tombstones, cache sync, initialize instructions, and targeted refresh request creation.
 - MCP smoke test now also covers context routes, Blueprint semantic summary, bridge readiness fields, and write-alpha rejection behavior.
 - Synthetic Snapshot MCP fixture now covers deleted assets and renamed old-path tombstones with a valid new-path fragment.
@@ -59,5 +60,5 @@
 
 - Broader real-project verification across blank, template, and feature sample projects.
 - Future write-operation work should remain separate from the current read-only MCP contract.
-- Optional live editor TCP bridge implementation remains future work; current code only exposes bridge readiness/status shape and disabled settings.
-- Write apply/validate/rollback execution remains future work behind `codex_write_alpha`; current implementation is dry-run planning plus safe rejection.
+- Optional live editor bridge now has disabled-by-default UE session/token skeleton and MCP readiness/status shape; TCP transport loop and live read command execution remain future work.
+- Write apply/validate/rollback execution remains future work behind `codex_write_alpha`; current implementation is dry-run planning, C++ registry scaffolding, and safe rejection.

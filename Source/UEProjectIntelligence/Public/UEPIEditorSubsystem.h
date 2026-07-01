@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Bridge/UEPIEditorCommandBridge.h"
 #include "Containers/Ticker.h"
 #include "EditorSubsystem.h"
 #include "UObject/ObjectSaveContext.h"
@@ -77,6 +78,15 @@ struct FUEPICollectorStatus
 
 	UPROPERTY(BlueprintReadOnly, Category="UE Project Intelligence")
 	FString LastError;
+
+	UPROPERTY(BlueprintReadOnly, Category="UE Project Intelligence")
+	bool bBridgeActive = false;
+
+	UPROPERTY(BlueprintReadOnly, Category="UE Project Intelligence")
+	FString BridgeSessionPath;
+
+	UPROPERTY(BlueprintReadOnly, Category="UE Project Intelligence")
+	int32 BridgePort = 0;
 };
 
 UCLASS()
@@ -117,6 +127,8 @@ private:
 	void StartLiveSession();
 	void WriteLiveSessionState(const FString& State);
 	void StopLiveSession();
+	void StartEditorBridgeIfEnabled();
+	void StopEditorBridge();
 	bool TickCollector(float DeltaTime);
 	void EnqueueInvalidation(const FUEPIIncrementalEvent& Event);
 	void ProcessInvalidationQueue();
@@ -151,6 +163,7 @@ private:
 	FString LastRefreshRequestUtc;
 	FString LastRefreshRequestPath;
 	FString LastCollectorError;
+	TUniquePtr<UE::ProjectIntelligence::FUEPIEditorCommandBridge> EditorBridge;
 	int32 PendingRefreshRequests = 0;
 	double LastHeartbeatSeconds = 0.0;
 	FTSTicker::FDelegateHandle CollectorTickerHandle;

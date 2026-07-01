@@ -17,8 +17,10 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonWriter.h"
+#include "Bridge/UEPIEditorCommandBridge.h"
 #include "UObject/UObjectIterator.h"
 #include "UEPIAssetRegistryScanner.h"
+#include "UEPISettings.h"
 #include "UEPISnapshotStore.h"
 
 namespace
@@ -152,6 +154,7 @@ void UUEPIEditorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	if (!IsRunningCommandlet())
 	{
 		StartLiveSession();
+		StartEditorBridgeIfEnabled();
 		RegisterIncrementalDelegates();
 		RegisterLoadedBlueprintCompileDelegates();
 		CollectorTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
@@ -168,6 +171,7 @@ void UUEPIEditorSubsystem::Deinitialize()
 		CollectorTickerHandle.Reset();
 	}
 	UnregisterIncrementalDelegates();
+	StopEditorBridge();
 	StopLiveSession();
 	IncrementalEvents.Reset();
 	PendingInvalidations.Reset();
@@ -290,6 +294,9 @@ void UUEPIEditorSubsystem::GetCollectorStatus(FUEPICollectorStatus& OutStatus) c
 	OutStatus.LastRefreshRequestUtc = LastRefreshRequestUtc;
 	OutStatus.LastRefreshRequestPath = LastRefreshRequestPath;
 	OutStatus.LastError = LastCollectorError;
+	OutStatus.bBridgeActive = EditorBridge.IsValid() && EditorBridge->IsActive();
+	OutStatus.BridgeSessionPath = EditorBridge.IsValid() ? EditorBridge->GetSessionPath() : FString();
+	OutStatus.BridgePort = EditorBridge.IsValid() ? EditorBridge->GetPort() : 0;
 }
 
 void UUEPIEditorSubsystem::GetIncrementalEvents(TArray<FUEPIIncrementalEvent>& OutEvents) const
@@ -378,6 +385,32 @@ void UUEPIEditorSubsystem::StopLiveSession()
 	LiveSessionId.Reset();
 }
 
+void UUEPIEditorSubsystem::StartEditorBridgeIfEnabled()
+{
+	const UUEPISettings* Settings = GetDefault<UUEPISettings>();
+	if (!Settings || !Settings->bEnableLiveEditorBridge)
+	{
+		return;
+	}
+
+	EditorBridge = MakeUnique<UE::ProjectIntelligence::FUEPIEditorCommandBridge>();
+	FString Error;
+	if (!EditorBridge->Start(LiveSessionId, Settings->LiveEditorBridgePort, Error))
+	{
+		LastCollectorError = Error;
+		EditorBridge.Reset();
+	}
+}
+
+void UUEPIEditorSubsystem::StopEditorBridge()
+{
+	if (EditorBridge.IsValid())
+	{
+		EditorBridge->Stop();
+		EditorBridge.Reset();
+	}
+}
+
 bool UUEPIEditorSubsystem::TickCollector(float DeltaTime)
 {
 	const double Now = FPlatformTime::Seconds();
@@ -387,6 +420,10 @@ bool UUEPIEditorSubsystem::TickCollector(float DeltaTime)
 	}
 
 	RegisterLoadedBlueprintCompileDelegates();
+	if (EditorBridge.IsValid())
+	{
+		EditorBridge->TickHeartbeat();
+	}
 	ProcessInvalidationQueue();
 	ProcessRefreshRequests();
 	return true;
