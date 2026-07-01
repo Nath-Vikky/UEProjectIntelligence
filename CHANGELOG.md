@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0-dev
+## 2.0.0-alpha.1
 
 - Started the snapshot-first read-only MCP convergence line.
 - Reframed `main` around UE plugin collection, Snapshot Store, and stdio MCP as the only default AI entry point.
