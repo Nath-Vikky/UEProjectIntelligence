@@ -56,6 +56,7 @@ TOOLS: list[dict[str, Any]] = [
             {
                 "question": {"type": "string"},
                 "route": {"type": "string"},
+                "live": {"type": "boolean"},
                 "scope": {"type": "array", "items": {"type": "string"}},
                 "max_items": {"type": "integer"},
             },
@@ -68,6 +69,7 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": object_schema(
             {
                 "asset": {"type": "string"},
+                "refresh": {"type": "string"},
                 "include_snapshot": {"type": "boolean"},
                 "relation_limit": {"type": "integer"},
             },
@@ -80,6 +82,7 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": object_schema(
             {
                 "asset": {"type": "string"},
+                "refresh": {"type": "string"},
                 "limit": {"type": "integer"},
             },
             ["asset"],
@@ -105,6 +108,7 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": object_schema(
             {
                 "asset": {"type": "string"},
+                "refresh": {"type": "string"},
                 "include": {"type": "array", "items": {"type": "string"}},
                 "limit": {"type": "integer"},
             },
@@ -267,6 +271,7 @@ class UEPIMCPServer:
                     engine.context(
                         question=str(arguments.get("question") or ""),
                         route=str(arguments.get("route") or "auto"),
+                        live=bool(arguments.get("live", False)),
                         scope=scope if isinstance(scope, list) else None,
                         max_items=int(arguments.get("max_items") or 40),
                     )
@@ -275,12 +280,13 @@ class UEPIMCPServer:
                 return tool_response(
                     engine.asset(
                         asset=str(arguments.get("asset") or ""),
+                        refresh=str(arguments.get("refresh") or "auto"),
                         include_snapshot=bool(arguments.get("include_snapshot", True)),
                         relation_limit=int(arguments.get("relation_limit") or 80),
                     )
                 )
             if name == "uepi_blueprint":
-                return tool_response(engine.blueprint(asset=str(arguments.get("asset") or ""), limit=int(arguments.get("limit") or 200)))
+                return tool_response(engine.blueprint(asset=str(arguments.get("asset") or ""), refresh=str(arguments.get("refresh") or "auto"), limit=int(arguments.get("limit") or 200)))
             if name == "uepi_blueprint_trace":
                 start = arguments.get("start")
                 if isinstance(start, dict):
@@ -300,6 +306,7 @@ class UEPIMCPServer:
                 return tool_response(
                     engine.animation(
                         asset=str(arguments.get("asset") or ""),
+                        refresh=str(arguments.get("refresh") or "auto"),
                         include=include if isinstance(include, list) else None,
                         limit=int(arguments.get("limit") or 300),
                     )

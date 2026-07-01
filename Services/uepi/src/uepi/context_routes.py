@@ -193,6 +193,7 @@ class ProjectOverviewRoute(KeywordRoute):
                 "entity_kinds": result.get("entity_kinds"),
                 "relation_types": result.get("relation_types"),
                 "top_assets": top_assets[:max_items],
+                "cpp_symbols": result.get("cpp_symbols"),
             },
             next_actions=[
                 {

@@ -27,7 +27,18 @@ capabilities
 diagnostics
 ```
 
-In the current foundation build, the Unreal side can write a disabled-by-default session/token skeleton when `bEnableLiveEditorBridge` is enabled. `transport_ready` is still `false`, so MCP reports `ready: false`. Snapshot tools remain available.
+In the current build, the Unreal side can start a disabled-by-default localhost TCP bridge when `bEnableLiveEditorBridge` is enabled. It writes a session file and token file, then accepts length-prefixed JSON requests.
+
+Implemented commands:
+
+```text
+editor.get_status
+editor.get_selection
+editor.read_output_log
+asset.refresh_now
+```
+
+`editor.capture_viewport` currently returns a structured unsupported diagnostic and an artifact directory hint. Snapshot tools remain available when the bridge is off.
 
 ## Session Path
 
@@ -47,7 +58,7 @@ Expected future schema:
   "session_id": "...",
   "token_path": "...",
   "token_hash": "...",
-  "transport_ready": false,
+  "transport_ready": true,
   "started_at": "...",
   "last_heartbeat": "..."
 }

@@ -35,6 +35,10 @@
 - `uepi_status` reports optional live bridge readiness fields without requiring a bridge to exist.
 - `uepi_context` routes natural-language questions through project overview, input-to-gameplay, Blueprint behavior, animation playback, UI, dependency impact, data-driven, GAS, AI, and networking routes.
 - `uepi_blueprint` includes a semantic summary, call graph grouping, data mutation summary, side effects, and static flow hints derived from Snapshot relations.
+- Lightweight C++ UHT-style symbol scan is available in `uepi_overview` and `project_overview` context sections.
+- Optional live editor bridge uses localhost length-prefixed TCP JSON when enabled, with token validation and read commands for status, selection, output log tail, and refresh request creation.
+- `uepi_context(live=true)` can include live editor bridge status, selection, and output log sections when the bridge is connected.
+- `uepi_asset`, `uepi_blueprint`, and `uepi_animation` accept `refresh="force"` and use the live bridge to queue immediate targeted refresh when available.
 - Experimental `codex_write_alpha` profile exposes edit discover/preview/apply/validate/rollback tools; apply rejects by default and no Unreal asset is modified.
 - Disabled-by-default UE settings now reserve live bridge and write safety gates.
 - C++ write foundation now includes `IUEPIEditOperation`, `FUEPIEditOperationRegistry`, and a dry-run-aware transaction scope skeleton without registering any asset mutation operations.
@@ -60,5 +64,5 @@
 
 - Broader real-project verification across blank, template, and feature sample projects.
 - Future write-operation work should remain separate from the current read-only MCP contract.
-- Optional live editor bridge now has disabled-by-default UE session/token skeleton and MCP readiness/status shape; TCP transport loop and live read command execution remain future work.
+- Viewport screenshot artifact creation remains future live-bridge work.
 - Write apply/validate/rollback execution remains future work behind `codex_write_alpha`; current implementation is dry-run planning, C++ registry scaffolding, and safe rejection.

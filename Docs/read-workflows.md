@@ -14,6 +14,8 @@ UEPI's default path is read-only Snapshot Query. A saved Snapshot is enough for 
 2. Read `result.route`, `result.sections`, `evidence`, and `next_actions`.
 3. Call the recommended narrow tool.
 
+When the editor bridge is enabled and connected, pass `live: true` to include editor status, selection, and output log tail.
+
 ## Blueprint Questions
 
 Use:
@@ -33,6 +35,8 @@ data_mutations
 ```
 
 For a specific event or node, call `uepi_blueprint_trace` with `start`.
+
+When you need an immediate editor refresh and the bridge is connected, pass `refresh: "force"` to `uepi_asset`, `uepi_blueprint`, or `uepi_animation`.
 
 ## Animation Questions
 

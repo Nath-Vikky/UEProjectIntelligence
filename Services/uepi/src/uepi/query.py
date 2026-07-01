@@ -7,7 +7,8 @@ from typing import Any
 
 from .blueprint_semantics import summarize_blueprint_semantics
 from .cache import SQLiteSnapshotCache, cache_status, sync_cache
-from .bridge_client import bridge_status
+from .cpp_symbols import scan_cpp_symbols
+from .bridge_client import bridge_status, call_bridge, live_context
 from .result import envelope as make_envelope
 from .snapshot import SnapshotView
 from .store import SnapshotState, SnapshotStore, SnapshotStoreError, _load_json, _parse_utc
@@ -387,6 +388,43 @@ class UEPIQueryEngine:
             }
         ]
 
+    def _force_bridge_refresh(
+        self,
+        target: str,
+        *,
+        diagnostics: list[dict[str, Any]],
+        freshness: str | None,
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        target = str(target or "").strip()
+        if not target:
+            return freshness, diagnostics
+        response = call_bridge(self.store, "asset.refresh_now", {"target_object_paths": [target], "data_mode": "live"}, timeout=2.0)
+        if response.get("ok"):
+            result = _as_dict(response.get("result"))
+            return "refresh_requested", diagnostics + [
+                {
+                    "severity": "info",
+                    "code": "UEPI_REFRESH_REQUESTED",
+                    "message": "A live editor bridge refresh request was queued for this target.",
+                    "target_object_path": target,
+                    "request_path": result.get("request_path"),
+                    "recoverable": True,
+                    "recommended_user_action": "Keep the editor open and retry after UEPI processes the refresh request.",
+                    "recommended_agent_action": {"tool": "uepi_status", "after_seconds": 2},
+                }
+            ]
+        error = _as_dict(response.get("error"))
+        return freshness, diagnostics + [
+            {
+                "severity": "warning",
+                "code": error.get("code") or "UEPI_BRIDGE_REFRESH_UNAVAILABLE",
+                "message": error.get("message") or "The optional live editor bridge could not queue a forced refresh.",
+                "recoverable": True,
+                "recommended_user_action": "Enable the UEPI live bridge or use Run Snapshot Scan.",
+                "recommended_agent_action": {"tool": "uepi_status"},
+            }
+        ]
+
     def _domain_entities_for_asset(self, asset: dict[str, Any], domain_kinds: set[str], limit: int) -> list[dict[str, Any]]:
         asset_id = str(asset.get("id") or "")
         if self.cache:
@@ -511,6 +549,7 @@ class UEPIQueryEngine:
                 "entity_kinds": entity_kinds,
                 "relation_types": relation_types,
                 "top_assets": top_assets,
+                "cpp_symbols": scan_cpp_symbols(self.store.root, limit=80),
             },
             tool="uepi_overview",
             operation="project_overview",
@@ -538,8 +577,10 @@ class UEPIQueryEngine:
             operation="entity_search",
         )
 
-    def asset(self, asset: str, include_snapshot: bool = True, relation_limit: int = 80) -> dict[str, Any]:
+    def asset(self, asset: str, include_snapshot: bool = True, relation_limit: int = 80, refresh: str = "auto") -> dict[str, Any]:
         freshness, diagnostics = self._freshness_for_identifier(asset, "uepi_asset")
+        if refresh == "force":
+            freshness, diagnostics = self._force_bridge_refresh(asset, diagnostics=diagnostics, freshness=freshness)
         entity, candidates = self._resolve_entity(asset)
         if not entity:
             tombstone = self._tombstone_candidate(asset)
@@ -590,8 +631,10 @@ class UEPIQueryEngine:
             operation="asset_read",
         )
 
-    def blueprint(self, asset: str, limit: int = 200) -> dict[str, Any]:
+    def blueprint(self, asset: str, limit: int = 200, refresh: str = "auto") -> dict[str, Any]:
         freshness, diagnostics = self._freshness_for_identifier(asset, "uepi_blueprint")
+        if refresh == "force":
+            freshness, diagnostics = self._force_bridge_refresh(asset, diagnostics=diagnostics, freshness=freshness)
         entity, candidates = self._resolve_entity(asset)
         if not entity:
             tombstone = self._tombstone_candidate(asset)
@@ -778,8 +821,10 @@ class UEPIQueryEngine:
             operation="static_flow_trace",
         )
 
-    def animation(self, asset: str, include: list[str] | None = None, limit: int = 300) -> dict[str, Any]:
+    def animation(self, asset: str, include: list[str] | None = None, limit: int = 300, refresh: str = "auto") -> dict[str, Any]:
         freshness, diagnostics = self._freshness_for_identifier(asset, "uepi_animation")
+        if refresh == "force":
+            freshness, diagnostics = self._force_bridge_refresh(asset, diagnostics=diagnostics, freshness=freshness)
         entity, candidates = self._resolve_entity(asset)
         if not entity:
             tombstone = self._tombstone_candidate(asset)
@@ -945,7 +990,7 @@ class UEPIQueryEngine:
             operation="generation_diff",
         )
 
-    def context(self, question: str, scope: list[str] | None = None, max_items: int = 40, route: str = "auto") -> dict[str, Any]:
+    def context(self, question: str, scope: list[str] | None = None, max_items: int = 40, route: str = "auto", live: bool = False) -> dict[str, Any]:
         from .context_ranker import select_route
         from .context_routes import make_routes
 
@@ -975,8 +1020,23 @@ class UEPIQueryEngine:
         result = pack.to_result(scope, limit)
         result["available_routes"] = [candidate.name for candidate in routes]
         result["terms"] = terms[:20]
+        diagnostics: list[dict[str, Any]] = []
+        if live:
+            result.setdefault("sections", {})["live_editor"] = live_context(self.store)
+            if not result["sections"]["live_editor"].get("status", {}).get("ok"):
+                diagnostics.append(
+                    {
+                        "severity": "warning",
+                        "code": "UEPI_BRIDGE_LIVE_CONTEXT_UNAVAILABLE",
+                        "message": "uepi_context requested live editor context, but the optional bridge is not connected.",
+                        "recoverable": True,
+                        "recommended_user_action": "Enable the UEPI live bridge in project settings and keep the editor open.",
+                        "recommended_agent_action": {"tool": "uepi_status"},
+                    }
+                )
         return self._envelope(
             result,
+            diagnostics=diagnostics,
             evidence=pack.evidence,
             next_actions=pack.next_actions,
             tool="uepi_context",

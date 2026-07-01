@@ -546,6 +546,9 @@ def main() -> int:
             assert status["result"]["bridge"]["session_path"].endswith("editor-bridge.json")
             assert status["result"]["cache"]["synced"] is True
             assert status["result"]["cache"]["schema_version"] == "uepi.sqlite-cache.v2.1"
+            overview = request(process, 45, "tools/call", {"name": "uepi_overview", "arguments": {"limit": 10}})["structuredContent"]
+            assert_envelope(overview)
+            assert "cpp_symbols" in overview["result"]
             search = request(process, 4, "tools/call", {"name": "uepi_search", "arguments": {"query": "BP_Hero"}})["structuredContent"]
             assert_envelope(search)
             assert search["result"]["match_count"] >= 1
@@ -565,6 +568,18 @@ def main() -> int:
             assert context["operation"] == "context_route:blueprint_behavior"
             assert context["result"]["route"] == "blueprint_behavior"
             assert "blueprint_semantic_summary" in context["result"]["sections"]
+            live_context = request(
+                process,
+                46,
+                "tools/call",
+                {
+                    "name": "uepi_context",
+                    "arguments": {"question": "What is selected in the editor?", "live": True, "max_items": 20},
+                },
+            )["structuredContent"]
+            assert_envelope(live_context)
+            assert "live_editor" in live_context["result"]["sections"]
+            assert any(item.get("code") == "UEPI_BRIDGE_LIVE_CONTEXT_UNAVAILABLE" for item in live_context["diagnostics"])
             deleted_search = request(process, 40, "tools/call", {"name": "uepi_search", "arguments": {"query": "BP_Deleted"}})["structuredContent"]
             assert deleted_search["result"]["match_count"] == 0
             deleted_asset = request(process, 41, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "BP_Deleted"}})["structuredContent"]
