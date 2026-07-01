@@ -55,4 +55,4 @@ uepi_edit_validate
 uepi_edit_rollback
 ```
 
-This foundation build rejects `uepi_edit_apply` by default. Use it only for operation-plan design and safety workflow testing.
+`uepi_edit_apply` is still disabled by default by UEPI project settings. Enable the live editor bridge and the explicit write flags only in a test project or sandbox directory, then use preview -> user approval -> apply -> validate -> refresh/diff.

@@ -40,5 +40,5 @@ Notes:
 
 ```text
 The default codex profile remains read-only and exposes exactly ten tools.
-The codex_write_alpha profile exposes five extra edit tools. edit_apply requires the live bridge, user approval, and explicit write settings; the current alpha executor is limited to a small Blueprint subset.
+The codex_write_alpha profile exposes five extra edit tools. edit_apply requires the live bridge, user approval, and explicit write settings; the current alpha executor covers Blueprint variables, components, custom events, function graphs, common graph nodes, pin connections, Actor transform/property edits, and Material Instance parameter edits.
 ```

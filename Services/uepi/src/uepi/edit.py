@@ -348,18 +348,28 @@ def _load_plan(store: SnapshotStore, transaction_id: str) -> dict[str, Any] | No
 
 
 def discover(store: SnapshotStore) -> dict[str, Any]:
+    bridge_discover = call_bridge(store, "edit.discover", timeout=1.5)
+    bridge_operations: dict[str, dict[str, Any]] = {}
+    if bridge_discover.get("ok"):
+        for operation in (bridge_discover.get("result") or {}).get("operations") or []:
+            if isinstance(operation, dict) and isinstance(operation.get("name"), str):
+                bridge_operations[operation["name"]] = operation
+
     operations = []
     for name, risk in SUPPORTED_PREVIEW_OPERATIONS.items():
+        bridge_operation = bridge_operations.get(name, {})
+        apply_supported = bool(bridge_operation.get("apply_supported"))
         operations.append(
             {
                 "name": name,
-                "status": "preview_supported",
+                "status": bridge_operation.get("status") or ("alpha_apply" if apply_supported else "preview_supported"),
                 "risk": risk,
                 "preview_supported": True,
-                "apply_supported": False,
+                "apply_supported": apply_supported,
                 "required_evidence": ["uepi_status", "uepi_context_or_domain_read", "affected_asset_path"],
             }
         )
+    apply_enabled = any(item.get("apply_supported") for item in operations)
     return _response(
         store,
         tool="uepi_edit_discover",
@@ -368,13 +378,17 @@ def discover(store: SnapshotStore) -> dict[str, Any]:
             "schema_version": "uepi.edit-discover.v1",
             "profile": "codex_write_alpha",
             "default_enabled": False,
-            "apply_enabled": False,
+            "apply_enabled": apply_enabled,
+            "bridge": {
+                "connected": bool(bridge_discover.get("ok")),
+                "discover": bridge_discover,
+            },
             "plan_schema_version": EDIT_PLAN_SCHEMA,
             "operations": operations,
             "safety_rules": [
                 "No low-level write operation is exposed as an MCP tool.",
                 "edit_preview must produce a transaction_id before edit_apply.",
-                "edit_apply is disabled in this foundation build.",
+                "edit_apply requires the live editor bridge, explicit write settings, and approved=true.",
                 "Forbidden operations include arbitrary Python, console commands, deletes, save_all, PIE, config writes, and source-control submit.",
                 "Apply requires user approval, scoped operations, backup artifacts, validation, rescan, and diff.",
             ],
@@ -499,7 +513,7 @@ def reject_apply(store: SnapshotStore, transaction_id: str = "") -> dict[str, An
         operation="apply",
         error={
             "code": "UEPI_EDIT_APPLY_DISABLED",
-            "message": "codex_write_alpha apply is not enabled in this foundation build.",
+            "message": "codex_write_alpha apply requires the live editor bridge, user approval, and explicit UEPI write settings.",
             "retryable": False,
             "candidates": [],
         },
@@ -507,11 +521,11 @@ def reject_apply(store: SnapshotStore, transaction_id: str = "") -> dict[str, An
             {
                 "severity": "warning",
                 "code": "UEPI_EDIT_APPLY_DISABLED",
-                "message": "Only edit discovery and preview are available. No Unreal asset was modified.",
+                "message": "No Unreal asset was modified because edit apply is not enabled for this session.",
                 "audit_path": str(audit_path),
                 "plan_found": bool(plan),
                 "recoverable": False,
-                "recommended_user_action": "Use the read-only tools or wait for a build with explicit write support.",
+                "recommended_user_action": "Enable the live editor bridge and explicit write flags only for a test project or sandbox.",
                 "recommended_agent_action": {"tool": "uepi_edit_discover"},
             }
         ],

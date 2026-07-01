@@ -31,6 +31,14 @@ blueprint.add_variable
 blueprint.set_variable_default
 blueprint.add_component
 blueprint.set_component_property
+blueprint.create_function
+blueprint.add_event_node              # custom_event only
+blueprint.add_function_call_node
+blueprint.add_variable_get_node
+blueprint.add_variable_set_node
+blueprint.add_branch_node
+blueprint.add_print_string_node
+blueprint.connect_pins
 blueprint.compile
 actor.set_transform
 actor.set_property
@@ -39,7 +47,10 @@ material.set_vector_parameter
 material.set_texture_parameter
 ```
 
-Package saving remains disabled by default. Unsupported graph operations return structured diagnostics instead of partially editing graphs.
+Blueprint graph operations return the created node GUIDs, pin IDs, pin names, directions, and links so the Agent can connect pins without guessing UI labels.
+`blueprint.add_event_node` is intentionally limited to custom events in this alpha.
+
+Package saving remains disabled by default. Unsupported or out-of-scope graph operations return structured diagnostics instead of partially editing graphs.
 Content import/rename, UMG, and Enhanced Input operations are discoverable for preview planning but remain apply-unsupported in this alpha.
 
 ## Future Transaction Flow

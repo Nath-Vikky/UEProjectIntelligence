@@ -146,7 +146,7 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "uepi_edit_preview",
-        "description": "Create a dry-run UEPI edit operation plan. This foundation build does not apply edits.",
+        "description": "Create a dry-run UEPI edit operation plan without modifying Unreal assets.",
         "inputSchema": object_schema(
             {
                 "intent": {"type": "string"},
@@ -157,17 +157,17 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "uepi_edit_apply",
-        "description": "Reject edit apply by default until safe write execution is enabled in a later build.",
+        "description": "Apply an approved UEPI edit plan through the optional live editor bridge when write alpha settings allow it.",
         "inputSchema": object_schema({"transaction_id": {"type": "string"}, "approved": {"type": "boolean"}}),
     },
     {
         "name": "uepi_edit_validate",
-        "description": "Validate an applied UEPI edit transaction. Currently reports that no apply path is enabled.",
+        "description": "Validate an applied UEPI edit transaction through the optional live editor bridge.",
         "inputSchema": object_schema({"transaction_id": {"type": "string"}}),
     },
     {
         "name": "uepi_edit_rollback",
-        "description": "Rollback an applied UEPI edit transaction. Currently reports that no apply path is enabled.",
+        "description": "Rollback the last applied UEPI edit transaction through the optional live editor bridge.",
         "inputSchema": object_schema({"transaction_id": {"type": "string"}}),
     },
 ]

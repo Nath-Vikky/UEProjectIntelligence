@@ -84,6 +84,52 @@ Legacy-compatible fields such as `state`, `omissions`, `truncation`, and `contin
 }
 ```
 
+## Blueprint Graph Write Operations
+
+Graph write operations are carried inside the edit plan `operations` array and are applied only by `uepi_edit_apply` after preview and user approval.
+
+Create a function graph:
+
+```json
+{
+  "type": "blueprint.create_function",
+  "params": {
+    "asset": "/Game/Blueprints/BP_Test.BP_Test",
+    "name": "UEPI_TestFunction"
+  }
+}
+```
+
+Add a PrintString node and return real pin evidence:
+
+```json
+{
+  "type": "blueprint.add_print_string_node",
+  "params": {
+    "asset": "/Game/Blueprints/BP_Test.BP_Test",
+    "graph": "EventGraph",
+    "message": "Hello from UEPI",
+    "position": {"x": 600, "y": 120}
+  }
+}
+```
+
+Connect pins using returned node GUIDs and pin names or pin IDs:
+
+```json
+{
+  "type": "blueprint.connect_pins",
+  "params": {
+    "asset": "/Game/Blueprints/BP_Test.BP_Test",
+    "graph": "EventGraph",
+    "source": {"node_guid": "...", "pin_name": "then"},
+    "target": {"node_guid": "...", "pin_name": "execute"}
+  }
+}
+```
+
+Successful node operations return a `detail.node` object with `node_guid`, `graph`, `class`, `title`, and a `pins` array containing `pin_id`, `name`, `direction`, `category`, `default_value`, and `linked_to`.
+
 ## Edit Audit
 
 Edit preview/apply/validate/rollback records are appended to:

@@ -36,10 +36,10 @@
 - `uepi_context` routes natural-language questions through project overview, input-to-gameplay, Blueprint behavior, animation playback, UI, dependency impact, data-driven, GAS, AI, and networking routes.
 - `uepi_blueprint` includes a semantic summary, call graph grouping, data mutation summary, side effects, and static flow hints derived from Snapshot relations.
 - Lightweight C++ UHT-style symbol scan is available in `uepi_overview` and `project_overview` context sections.
-- Optional live editor bridge uses localhost length-prefixed TCP JSON when enabled, with token validation and read commands for status, selection, output log tail, and refresh request creation.
+- Optional live editor bridge uses localhost length-prefixed TCP JSON when enabled, with token validation and read commands for status, selection, viewport screenshot artifacts, output log tail, and refresh request creation.
 - `uepi_context(live=true)` can include live editor bridge status, selection, and output log sections when the bridge is connected.
 - `uepi_asset`, `uepi_blueprint`, and `uepi_animation` accept `refresh="force"` and use the live bridge to queue immediate targeted refresh when available.
-- Experimental `codex_write_alpha` profile exposes edit discover/preview/apply/validate/rollback tools. Apply is disabled by default in settings; when explicitly enabled, the bridge supports Blueprint, Actor transform/property, and Material Instance parameter alpha subsets without package saving.
+- Experimental `codex_write_alpha` profile exposes edit discover/preview/apply/validate/rollback tools. Apply is disabled by default in settings; when explicitly enabled, the bridge supports Blueprint variables/components/functions/custom events/common nodes/pin links, Actor transform/property, and Material Instance parameter alpha subsets without package saving.
 - Disabled-by-default UE settings now reserve live bridge and write safety gates.
 - C++ write foundation now includes `IUEPIEditOperation`, `FUEPIEditOperationRegistry`, and a dry-run-aware transaction scope skeleton without registering any asset mutation operations.
 - v2 MCP smoke test without daemon, worker, HTTP, Web UI, or SQLite service, including saved+live overlay merge, tombstones, cache sync, initialize instructions, and targeted refresh request creation.
@@ -64,5 +64,5 @@
 
 - Broader real-project verification across blank, template, and feature sample projects.
 - Future write-operation work should remain behind explicit non-default profiles and settings, separate from the stable read-only MCP contract.
-- Viewport screenshot artifact creation is implemented for the active editor viewport through the optional live bridge.
-- Blueprint graph node/function/connection writes, Content Browser operations, UMG writes, and Enhanced Input writes remain future apply work; current alpha discovers them for preview and rejects apply safely.
+- Content Browser operations, UMG writes, and Enhanced Input writes remain future apply work; current alpha discovers them for preview and rejects apply safely.
+- Post-apply semantic diff is still an Agent workflow step after targeted refresh rather than a single bridge-side chained operation.
