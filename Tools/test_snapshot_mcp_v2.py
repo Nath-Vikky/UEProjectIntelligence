@@ -659,10 +659,29 @@ def main() -> int:
                 write_process,
                 63,
                 "tools/call",
-                {"name": "uepi_edit_preview", "arguments": {"intent": "Add a safe test variable", "operations": []}},
+                {
+                    "name": "uepi_edit_preview",
+                    "arguments": {
+                        "intent": "Add a safe test variable",
+                        "operations": [
+                            {
+                                "type": "blueprint.add_variable",
+                                "params": {
+                                    "asset": "/Game/BP_Hero.BP_Hero",
+                                    "name": "Health",
+                                    "pin_type": "float",
+                                },
+                            }
+                        ],
+                    },
+                },
             )["structuredContent"]
             assert_envelope(preview)
+            assert preview["result"]["plan"]["schema_version"] == "uepi.edit_plan.v1"
             assert preview["result"]["plan"]["status"] == "preview_only"
+            assert preview["result"]["plan"]["affected_assets"] == ["/Game/BP_Hero.BP_Hero"]
+            assert preview["result"]["plan"]["backup"]["artifact_uri"].startswith("uepi://artifact/backups/")
+            assert preview["result"]["audit_path"].endswith(".jsonl")
             rejected = request(
                 write_process,
                 64,

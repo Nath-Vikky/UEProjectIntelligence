@@ -47,16 +47,49 @@ Legacy-compatible fields such as `state`, `omissions`, `truncation`, and `contin
 
 ```json
 {
-  "schema_version": "uepi.edit-plan.v1",
+  "schema_version": "uepi.edit_plan.v1",
+  "schema_aliases": ["uepi.edit-plan.v1"],
   "transaction_id": "uepi-preview-...",
   "created_at_utc": "...",
   "status": "preview_only",
   "intent": "...",
   "operations": [],
   "evidence": [],
+  "affected_assets": ["/Game/BP_Hero.BP_Hero"],
+  "risk": {
+    "level": "low",
+    "requires_user_approval": true,
+    "blocked_operation_count": 0
+  },
+  "safety": {
+    "dry_run": true,
+    "mutates_unreal_assets": false,
+    "requires_editor_bridge": true,
+    "allow_saving": false
+  },
+  "backup": {
+    "required": true,
+    "artifact_uri": "uepi://artifact/backups/uepi-preview-...",
+    "manifest_path": "__PROJECT_ROOT__/Saved/UEProjectIntelligence/artifacts/backups/uepi-preview-.../manifest.json"
+  },
   "requires_user_approval": true,
   "apply_supported": false,
   "validation_plan": [],
+  "rollback_plan": {
+    "strategy": "transaction_undo_or_backup_restore",
+    "backup_artifact": "uepi://artifact/backups/uepi-preview-..."
+  },
+  "diagnostics": [],
   "rejection_reasons": []
 }
 ```
+
+## Edit Audit
+
+Edit preview/apply/validate/rollback records are appended to:
+
+```text
+__PROJECT_ROOT__/Saved/UEProjectIntelligence/audit/edit-YYYYMMDD.jsonl
+```
+
+Each line uses `uepi.edit-audit.v1` and includes the transaction id, event name, affected assets where available, and the backup artifact URI.
