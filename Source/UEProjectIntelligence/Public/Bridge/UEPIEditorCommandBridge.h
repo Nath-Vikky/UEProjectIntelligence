@@ -36,6 +36,10 @@ namespace UE::ProjectIntelligence
 		TSharedRef<FJsonObject> OutputLogResult(const FString& RequestId, int32 LineLimit) const;
 		TSharedRef<FJsonObject> RefreshNowResult(const FString& RequestId, const TArray<FString>& Targets, const FString& DataMode) const;
 		TSharedRef<FJsonObject> ViewportCaptureUnsupported(const FString& RequestId) const;
+		TSharedRef<FJsonObject> EditDiscoverResult(const FString& RequestId) const;
+		TSharedRef<FJsonObject> EditApplyResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params);
+		TSharedRef<FJsonObject> EditValidateResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const;
+		TSharedRef<FJsonObject> EditRollbackResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params);
 		TSharedRef<FJsonObject> MakeSessionObject(const FString& State) const;
 		bool WriteSessionObject(const FString& State, FString& OutError) const;
 
@@ -43,6 +47,8 @@ namespace UE::ProjectIntelligence
 		FString SessionPath;
 		FString TokenPath;
 		FString Token;
+		FString LastAppliedTransactionId;
+		FString LastAppliedSummary;
 		int32 Port = 0;
 		bool bActive = false;
 		TUniquePtr<FTcpListener> Listener;

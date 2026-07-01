@@ -22,4 +22,19 @@ namespace UE::ProjectIntelligence
 			TEXT("asset.refresh_now")
 		};
 	}
+
+	TArray<FString> FUEPIBridgeProtocol::WriteCapabilities()
+	{
+		return {
+			TEXT("edit.discover"),
+			TEXT("edit.apply"),
+			TEXT("edit.validate"),
+			TEXT("edit.rollback"),
+			TEXT("blueprint.add_variable"),
+			TEXT("blueprint.set_variable_default"),
+			TEXT("blueprint.add_component"),
+			TEXT("blueprint.set_component_property"),
+			TEXT("blueprint.compile")
+		};
+	}
 }

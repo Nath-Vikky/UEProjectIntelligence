@@ -340,7 +340,13 @@ class UEPIMCPServer:
                         )
                     )
                 if name == "uepi_edit_apply":
-                    return tool_response(edit.reject_apply(engine.store, transaction_id=str(arguments.get("transaction_id") or "")))
+                    return tool_response(
+                        edit.apply(
+                            engine.store,
+                            transaction_id=str(arguments.get("transaction_id") or ""),
+                            approved=bool(arguments.get("approved", False)),
+                        )
+                    )
                 if name == "uepi_edit_validate":
                     return tool_response(edit.validate(engine.store, transaction_id=str(arguments.get("transaction_id") or "")))
                 if name == "uepi_edit_rollback":

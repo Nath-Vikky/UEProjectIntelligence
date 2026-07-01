@@ -21,7 +21,8 @@
 
 ## Not Supported In 2.0-dev
 
-- Asset writes, saves, deletes, renames, or Blueprint compiles.
+- General asset writes, saves, deletes, renames, and broad Blueprint graph edits.
+- Blueprint write alpha can add variables, set variable defaults, add simple components, set simple component properties, and compile through the live bridge when write settings are explicitly enabled.
 - Runtime pose evaluation.
 - Daemon, HTTP, Web UI, worker queue, or remote service deployment.
 - Third-party extension SDK.

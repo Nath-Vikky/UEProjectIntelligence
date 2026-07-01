@@ -36,6 +36,7 @@ public class UEProjectIntelligence : ModuleRules
 				"InputCore",
 				"LevelEditor",
 				"LevelSequence",
+				"MessageLog",
 				"MovieScene",
 				"MovieSceneTracks",
 				"Projects",

@@ -128,6 +128,10 @@ def bridge_status(store: SnapshotStore) -> dict[str, Any]:
             "editor.capture_viewport",
             "editor.read_output_log",
             "asset.refresh_now",
+            "edit.discover",
+            "edit.apply",
+            "edit.validate",
+            "edit.rollback",
         ],
         "diagnostics": [] if configured else [
             {

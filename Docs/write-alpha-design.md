@@ -12,17 +12,29 @@ uepi_edit_rollback
 
 No low-level tools such as `add_node`, `connect_pin`, `save_asset`, `run_python`, or `run_console_command` are exposed directly to Codex.
 
-## Current Foundation Behavior
+## Current Alpha Behavior
 
-`codex_write_alpha` is available for operation catalog and dry-run plan testing.
+`codex_write_alpha` is available for operation catalog, dry-run plan testing, and explicitly enabled live-bridge Blueprint alpha edits.
 
-`uepi_edit_apply` rejects by default:
+`uepi_edit_apply` is settings-gated by default:
 
 ```text
-UEPI_EDIT_APPLY_DISABLED
+UEPI_EDIT_WRITE_DISABLED
+UEPI_EDIT_BLUEPRINT_DISABLED
+UEPI_EDIT_APPROVAL_REQUIRED
 ```
 
-No Unreal assets are modified by this build.
+When the live bridge and write settings are enabled, apply supports:
+
+```text
+blueprint.add_variable
+blueprint.set_variable_default
+blueprint.add_component
+blueprint.set_component_property
+blueprint.compile
+```
+
+Package saving remains disabled by default. Unsupported graph operations return structured diagnostics instead of partially editing graphs.
 
 ## Future Transaction Flow
 
@@ -40,10 +52,10 @@ report
 
 ## Operation Plan Shape
 
-Plans use `uepi.edit-plan.v1` and are saved under:
+Plans use `uepi.edit_plan.v1` and are saved under:
 
 ```text
-__PROJECT_ROOT__/Saved/UEProjectIntelligence/store/edit/
+__PROJECT_ROOT__/Saved/UEProjectIntelligence/store/edit/plans/
 ```
 
-The plan must include a `transaction_id`, operation list, required evidence, validation plan, and rollback strategy.
+The plan must include a `transaction_id`, operation list, affected assets, required evidence, backup artifact, validation plan, and rollback strategy.

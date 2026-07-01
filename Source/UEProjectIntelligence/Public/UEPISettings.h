@@ -43,8 +43,35 @@ public:
 	bool bEnableWriteTools;
 
 	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	bool bAllowBlueprintEdits;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	bool bAllowActorEdits;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	bool bAllowContentEdits;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	bool bAllowMaterialEdits;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	bool bAllowUMGEdits;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	bool bAllowInputEdits;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	bool bAllowSavingPackages;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
 	bool bRequirePreviewBeforeApply;
 
 	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
 	bool bRequireSnapshotDiffAfterApply;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety", meta=(ClampMin="1", ClampMax="50"))
+	int32 MaxWriteOperationsPerTransaction;
+
+	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety", meta=(ClampMin="1", ClampMax="20"))
+	int32 MaxWriteAssetsPerTransaction;
 };

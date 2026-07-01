@@ -9,8 +9,17 @@ UUEPISettings::UUEPISettings()
 	, bEnableLiveEditorBridge(false)
 	, LiveEditorBridgePort(0)
 	, bEnableWriteTools(false)
+	, bAllowBlueprintEdits(false)
+	, bAllowActorEdits(false)
+	, bAllowContentEdits(false)
+	, bAllowMaterialEdits(false)
+	, bAllowUMGEdits(false)
+	, bAllowInputEdits(false)
+	, bAllowSavingPackages(false)
 	, bRequirePreviewBeforeApply(true)
 	, bRequireSnapshotDiffAfterApply(true)
+	, MaxWriteOperationsPerTransaction(8)
+	, MaxWriteAssetsPerTransaction(3)
 {
 }
 

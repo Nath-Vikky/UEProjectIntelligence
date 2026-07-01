@@ -690,7 +690,7 @@ def main() -> int:
             )["structuredContent"]
             assert_envelope(rejected)
             assert rejected["ok"] is False
-            assert rejected["error"]["code"] == "UEPI_EDIT_APPLY_DISABLED"
+            assert rejected["error"]["code"] in {"UEPI_EDIT_BRIDGE_APPLY_FAILED", "UEPI_BRIDGE_NOT_CONFIGURED", "UEPI_BRIDGE_NOT_READY"}
         finally:
             if write_process.stdin:
                 write_process.stdin.close()

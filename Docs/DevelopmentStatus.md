@@ -39,7 +39,7 @@
 - Optional live editor bridge uses localhost length-prefixed TCP JSON when enabled, with token validation and read commands for status, selection, output log tail, and refresh request creation.
 - `uepi_context(live=true)` can include live editor bridge status, selection, and output log sections when the bridge is connected.
 - `uepi_asset`, `uepi_blueprint`, and `uepi_animation` accept `refresh="force"` and use the live bridge to queue immediate targeted refresh when available.
-- Experimental `codex_write_alpha` profile exposes edit discover/preview/apply/validate/rollback tools; apply rejects by default and no Unreal asset is modified.
+- Experimental `codex_write_alpha` profile exposes edit discover/preview/apply/validate/rollback tools. Apply is disabled by default in settings; when explicitly enabled, the bridge supports a small Blueprint alpha subset without package saving.
 - Disabled-by-default UE settings now reserve live bridge and write safety gates.
 - C++ write foundation now includes `IUEPIEditOperation`, `FUEPIEditOperationRegistry`, and a dry-run-aware transaction scope skeleton without registering any asset mutation operations.
 - v2 MCP smoke test without daemon, worker, HTTP, Web UI, or SQLite service, including saved+live overlay merge, tombstones, cache sync, initialize instructions, and targeted refresh request creation.

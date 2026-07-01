@@ -7,6 +7,7 @@ import shutil
 from typing import Any
 from uuid import uuid4
 
+from .bridge_client import call_bridge
 from .result import envelope
 from .store import SnapshotStore
 
@@ -391,8 +392,15 @@ def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None
     diagnostics = _operation_diagnostics(clean_operations)
     backup = _write_backup_artifact(store, transaction_id, affected_assets)
     risk_level = _risk_level(clean_operations)
-    apply_supported = False
-    apply_reasons = ["edit_apply is intentionally disabled until bridge executors are enabled."]
+    bridge_discover = call_bridge(store, "edit.discover", timeout=1.5)
+    supported_apply = set()
+    if bridge_discover.get("ok"):
+        for operation in (bridge_discover.get("result") or {}).get("operations") or []:
+            if isinstance(operation, dict) and operation.get("apply_supported") and isinstance(operation.get("name"), str):
+                supported_apply.add(operation["name"])
+    plan_operation_types = [_operation_type(operation) for operation in clean_operations]
+    apply_supported = bool(clean_operations) and bool(supported_apply) and all(op_type in supported_apply for op_type in plan_operation_types)
+    apply_reasons = [] if apply_supported else ["Bridge apply is unavailable or the plan includes operations without alpha executors."]
     if any(item.get("severity") == "error" for item in diagnostics):
         apply_reasons.append("The plan includes invalid or blocked operations.")
     plan = {
@@ -416,6 +424,10 @@ def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None
             "forbidden_operations": sorted(BLOCKED_OPERATIONS),
             "requires_editor_bridge": True,
             "allow_saving": False,
+        },
+        "bridge": {
+            "connected": bool(bridge_discover.get("ok")),
+            "discover": bridge_discover,
         },
         "backup": backup,
         "requires_user_approval": True,
@@ -502,53 +514,171 @@ def reject_apply(store: SnapshotStore, transaction_id: str = "") -> dict[str, An
     )
 
 
+def apply(store: SnapshotStore, transaction_id: str = "", approved: bool = False) -> dict[str, Any]:
+    plan = _load_plan(store, transaction_id)
+    if plan is None:
+        audit_path = _write_audit(
+            store,
+            {
+                "event": "edit.apply",
+                "transaction_id": transaction_id,
+                "status": "rejected",
+                "reason": "plan_not_found",
+            },
+        )
+        return _response(
+            store,
+            tool="uepi_edit_apply",
+            operation="apply",
+            error={
+                "code": "UEPI_EDIT_PLAN_NOT_FOUND",
+                "message": "edit_apply requires a transaction_id produced by edit_preview.",
+                "retryable": False,
+                "candidates": [],
+            },
+            result={"audit_path": str(audit_path)},
+        )
+    if not approved:
+        audit_path = _write_audit(
+            store,
+            {
+                "event": "edit.apply",
+                "transaction_id": transaction_id,
+                "status": "rejected",
+                "reason": "approval_missing",
+            },
+        )
+        return _response(
+            store,
+            tool="uepi_edit_apply",
+            operation="apply",
+            error={
+                "code": "UEPI_EDIT_APPROVAL_REQUIRED",
+                "message": "edit_apply requires approved=true after user review.",
+                "retryable": False,
+                "candidates": [],
+            },
+            result={"plan": plan, "audit_path": str(audit_path)},
+        )
+
+    bridge_result = call_bridge(
+        store,
+        "edit.apply",
+        {"transaction_id": transaction_id, "approved": True, "plan": plan},
+        timeout=30.0,
+    )
+    audit_path = _write_audit(
+        store,
+        {
+            "event": "edit.apply",
+            "transaction_id": transaction_id,
+            "status": "applied" if bridge_result.get("ok") else "failed",
+            "bridge_ok": bool(bridge_result.get("ok")),
+            "affected_assets": plan.get("affected_assets") if isinstance(plan.get("affected_assets"), list) else [],
+        },
+    )
+    if not bridge_result.get("ok"):
+        return _response(
+            store,
+            tool="uepi_edit_apply",
+            operation="apply",
+            error={
+                "code": (bridge_result.get("error") or {}).get("code") or "UEPI_EDIT_BRIDGE_APPLY_FAILED",
+                "message": (bridge_result.get("error") or {}).get("message") or "Editor bridge rejected or failed edit.apply.",
+                "retryable": False,
+                "candidates": [],
+            },
+            result={"plan": plan, "bridge": bridge_result, "audit_path": str(audit_path)},
+            diagnostics=bridge_result.get("diagnostics") if isinstance(bridge_result.get("diagnostics"), list) else [],
+        )
+    return _response(
+        store,
+        tool="uepi_edit_apply",
+        operation="apply",
+        result={"plan": plan, "bridge": bridge_result, "audit_path": str(audit_path)},
+        diagnostics=bridge_result.get("diagnostics") if isinstance(bridge_result.get("diagnostics"), list) else [],
+        next_actions=[
+            {
+                "reason": "Validate compile status and refresh/diff evidence after apply.",
+                "tool": "uepi_edit_validate",
+                "arguments": {"transaction_id": transaction_id},
+            }
+        ],
+    )
+
+
 def validate(store: SnapshotStore, transaction_id: str = "") -> dict[str, Any]:
     plan = _load_plan(store, transaction_id)
+    bridge_result = call_bridge(
+        store,
+        "edit.validate",
+        {"transaction_id": transaction_id, "plan": plan} if plan is not None else {"transaction_id": transaction_id},
+        timeout=30.0,
+    )
     audit_path = _write_audit(
         store,
         {
             "event": "edit.validate",
             "transaction_id": transaction_id,
-            "status": "not_applied",
+            "status": "validated" if bridge_result.get("ok") else "failed",
             "plan_found": bool(plan),
+            "bridge_ok": bool(bridge_result.get("ok")),
         },
     )
+    if bridge_result.get("ok"):
+        return _response(
+            store,
+            tool="uepi_edit_validate",
+            operation="validate",
+            result={"plan_found": bool(plan), "bridge": bridge_result, "audit_path": str(audit_path)},
+            diagnostics=bridge_result.get("diagnostics") if isinstance(bridge_result.get("diagnostics"), list) else [],
+            next_actions=[{"reason": "Use uepi_diff after the targeted refresh has produced a new Snapshot generation.", "tool": "uepi_diff", "arguments": {}}],
+        )
     return _response(
         store,
         tool="uepi_edit_validate",
         operation="validate",
         error={
-            "code": "UEPI_EDIT_NOT_APPLIED",
-            "message": "No editable transaction can be validated because apply is disabled.",
+            "code": (bridge_result.get("error") or {}).get("code") or "UEPI_EDIT_VALIDATE_UNAVAILABLE",
+            "message": (bridge_result.get("error") or {}).get("message") or "Editor bridge validation is unavailable.",
             "retryable": False,
             "candidates": [],
         },
-        result={"plan_found": bool(plan), "audit_path": str(audit_path)},
+        result={"plan_found": bool(plan), "bridge": bridge_result, "audit_path": str(audit_path)},
         next_actions=[{"reason": "Use uepi_diff for saved Snapshot generation comparisons.", "tool": "uepi_diff", "arguments": {}}],
     )
 
 
 def rollback(store: SnapshotStore, transaction_id: str = "") -> dict[str, Any]:
     plan = _load_plan(store, transaction_id)
+    bridge_result = call_bridge(store, "edit.rollback", {"transaction_id": transaction_id}, timeout=10.0)
     audit_path = _write_audit(
         store,
         {
             "event": "edit.rollback",
             "transaction_id": transaction_id,
-            "status": "unavailable",
+            "status": "rolled_back" if bridge_result.get("ok") else "failed",
             "plan_found": bool(plan),
+            "bridge_ok": bool(bridge_result.get("ok")),
         },
     )
+    if bridge_result.get("ok"):
+        return _response(
+            store,
+            tool="uepi_edit_rollback",
+            operation="rollback",
+            result={"plan_found": bool(plan), "bridge": bridge_result, "audit_path": str(audit_path)},
+        )
     return _response(
         store,
         tool="uepi_edit_rollback",
         operation="rollback",
         error={
-            "code": "UEPI_EDIT_ROLLBACK_UNAVAILABLE",
-            "message": "No UEPI edit transaction has been applied, so rollback is unavailable.",
+            "code": (bridge_result.get("error") or {}).get("code") or "UEPI_EDIT_ROLLBACK_UNAVAILABLE",
+            "message": (bridge_result.get("error") or {}).get("message") or "Editor bridge rollback is unavailable.",
             "retryable": False,
             "candidates": [],
         },
-        result={"plan_found": bool(plan), "audit_path": str(audit_path)},
+        result={"plan_found": bool(plan), "bridge": bridge_result, "audit_path": str(audit_path)},
         next_actions=[],
     )
