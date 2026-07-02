@@ -17,9 +17,15 @@
 #include "Dom/JsonValue.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SkeletalMeshSocket.h"
+#include "HAL/FileManager.h"
+#include "Misc/DateTime.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "PhysicsEngine/PhysicsConstraintTemplate.h"
 #include "ReferenceSkeleton.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #if UEPI_WITH_IK_RIG
 #include "Retargeter/IKRetargeter.h"
 #include "Rig/IKRigDefinition.h"
@@ -376,6 +382,446 @@ TArray<int32> AnimSequenceSampleFrames(const IAnimationDataModel& DataModel)
 		FrameNumbers.AddUnique(LastFrame);
 	}
 	return FrameNumbers;
+}
+
+TArray<int32> AnimSequenceProfileSampleFrames(const IAnimationDataModel& DataModel)
+{
+	TArray<int32> FrameNumbers;
+	const int32 LastFrame = FMath::Max(0, DataModel.GetNumberOfFrames());
+	const int32 MaxProfileSamples = 17;
+	const int32 DesiredSampleCount = FMath::Clamp(LastFrame + 1, 1, MaxProfileSamples);
+	for (int32 SampleIndex = 0; SampleIndex < DesiredSampleCount; ++SampleIndex)
+	{
+		const double Alpha = DesiredSampleCount <= 1
+			? 0.0
+			: static_cast<double>(SampleIndex) / static_cast<double>(DesiredSampleCount - 1);
+		FrameNumbers.AddUnique(FMath::Clamp(FMath::RoundToInt(static_cast<double>(LastFrame) * Alpha), 0, LastFrame));
+	}
+	FrameNumbers.AddUnique(0);
+	FrameNumbers.AddUnique(LastFrame);
+	FrameNumbers.Sort();
+	return FrameNumbers;
+}
+
+FString AnimDominantAxis(const FVector& Delta)
+{
+	const FVector Abs(FMath::Abs(Delta.X), FMath::Abs(Delta.Y), FMath::Abs(Delta.Z));
+	if (Abs.X < 0.001 && Abs.Y < 0.001 && Abs.Z < 0.001)
+	{
+		return TEXT("none");
+	}
+	if (Abs.X >= Abs.Y && Abs.X >= Abs.Z)
+	{
+		return Delta.X >= 0.0 ? TEXT("+X") : TEXT("-X");
+	}
+	if (Abs.Y >= Abs.X && Abs.Y >= Abs.Z)
+	{
+		return Delta.Y >= 0.0 ? TEXT("+Y") : TEXT("-Y");
+	}
+	return Delta.Z >= 0.0 ? TEXT("+Z") : TEXT("-Z");
+}
+
+TSharedRef<FJsonObject> AnimVectorDeltaObject(const FVector& Delta)
+{
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetObjectField(TEXT("vector"), AnimVectorObject(Delta));
+	Object->SetNumberField(TEXT("length"), Delta.Size());
+	Object->SetStringField(TEXT("dominant_axis"), AnimDominantAxis(Delta));
+	return Object;
+}
+
+TSharedRef<FJsonObject> AnimTransformForLLMObject(const FTransform& Transform)
+{
+	TSharedRef<FJsonObject> Object = AnimTransformObject(Transform);
+	Object->SetObjectField(TEXT("rotation_euler_degrees"), AnimRotatorObject(Transform.Rotator()));
+	return Object;
+}
+
+TSharedRef<FJsonObject> AnimTransformEntryForLLMJson(
+	int32 Index,
+	const FName& BoneName,
+	const FTransform& LocalTransform,
+	const FTransform& ComponentTransform)
+{
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetNumberField(TEXT("index"), Index);
+	Object->SetStringField(TEXT("bone_name"), BoneName.ToString());
+	Object->SetObjectField(TEXT("local_transform"), AnimTransformForLLMObject(LocalTransform));
+	Object->SetObjectField(TEXT("component_transform"), AnimTransformForLLMObject(ComponentTransform));
+	return Object;
+}
+
+TSharedRef<FJsonObject> AnimMotionSampleJson(
+	int32 FrameNumber,
+	double TimeSeconds,
+	double NormalizedTime,
+	const FTransform& LocalTransform,
+	const FTransform& ComponentTransform,
+	const FTransform& InitialLocalTransform,
+	const FTransform& InitialComponentTransform)
+{
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetNumberField(TEXT("frame_number"), FrameNumber);
+	Object->SetNumberField(TEXT("time_seconds"), TimeSeconds);
+	Object->SetNumberField(TEXT("normalized_time"), NormalizedTime);
+	Object->SetObjectField(TEXT("local_transform"), AnimTransformForLLMObject(LocalTransform));
+	Object->SetObjectField(TEXT("component_transform"), AnimTransformForLLMObject(ComponentTransform));
+	Object->SetObjectField(TEXT("local_translation_delta_from_initial"), AnimVectorDeltaObject(LocalTransform.GetTranslation() - InitialLocalTransform.GetTranslation()));
+	Object->SetObjectField(TEXT("component_translation_delta_from_initial"), AnimVectorDeltaObject(ComponentTransform.GetTranslation() - InitialComponentTransform.GetTranslation()));
+	Object->SetNumberField(TEXT("local_rotation_delta_degrees_from_initial"), QuatAngularDistanceDegrees(InitialLocalTransform.GetRotation(), LocalTransform.GetRotation()));
+	Object->SetNumberField(TEXT("component_rotation_delta_degrees_from_initial"), QuatAngularDistanceDegrees(InitialComponentTransform.GetRotation(), ComponentTransform.GetRotation()));
+	return Object;
+}
+
+TSharedRef<FJsonObject> AnimVectorBoundsObject(const FVector& MinValue, const FVector& MaxValue)
+{
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetObjectField(TEXT("min"), AnimVectorObject(MinValue));
+	Object->SetObjectField(TEXT("max"), AnimVectorObject(MaxValue));
+	Object->SetObjectField(TEXT("extent"), AnimVectorObject(MaxValue - MinValue));
+	Object->SetNumberField(TEXT("diagonal_length"), (MaxValue - MinValue).Size());
+	return Object;
+}
+
+TArray<FTransform> BuildLocalBonePoseForFrame(
+	const IAnimationDataModel& DataModel,
+	const TArray<FName>& TrackNames,
+	const FReferenceSkeleton& RefSkeleton,
+	int32 FrameNumber)
+{
+	TArray<FTransform> TrackTransforms;
+	if (TrackNames.Num() > 0)
+	{
+		DataModel.GetBoneTracksTransform(TrackNames, FFrameNumber(FrameNumber), TrackTransforms);
+	}
+
+	TArray<FTransform> LocalBonePoses = RefSkeleton.GetRefBonePose();
+	const int32 ExistingPoseCount = LocalBonePoses.Num();
+	LocalBonePoses.SetNum(RefSkeleton.GetNum());
+	for (int32 BoneIndex = ExistingPoseCount; BoneIndex < LocalBonePoses.Num(); ++BoneIndex)
+	{
+		LocalBonePoses[BoneIndex] = FTransform::Identity;
+	}
+
+	for (int32 TrackIndex = 0; TrackIndex < TrackNames.Num(); ++TrackIndex)
+	{
+		const int32 BoneIndex = RefSkeleton.FindBoneIndex(TrackNames[TrackIndex]);
+		if (RefSkeleton.IsValidIndex(BoneIndex) && TrackTransforms.IsValidIndex(TrackIndex))
+		{
+			LocalBonePoses[BoneIndex] = TrackTransforms[TrackIndex];
+		}
+	}
+
+	return LocalBonePoses;
+}
+
+struct FChangedBoneProfile
+{
+	double Score = 0.0;
+	bool bPositionChanges = false;
+	TSharedPtr<FJsonObject> Object;
+};
+
+FString AnimationBoneMotionArtifactRoot()
+{
+	return FPaths::Combine(
+		FPaths::ProjectSavedDir(),
+		TEXT("UEProjectIntelligence"),
+		TEXT("store"),
+		TEXT("artifacts"),
+		TEXT("animation_bone_motion"));
+}
+
+TSharedRef<FJsonObject> AnimationBoneMotionProfileObject(
+	const UAnimSequence& Sequence,
+	const TArray<FName>& TrackNames,
+	const TArray<FAnimTrackMotionMetrics>& MotionMetrics)
+{
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetStringField(TEXT("schema_version"), TEXT("uepi.animation_bone_motion_profile.v1"));
+	Object->SetStringField(TEXT("intended_reader"), TEXT("LLM"));
+	Object->SetStringField(TEXT("coordinate_space_note"), TEXT("local_transform is parent-relative; component_transform is skeleton component-space in Unreal centimeters."));
+	Object->SetStringField(TEXT("sequence_path"), Sequence.GetPathName());
+	Object->SetStringField(TEXT("sequence_name"), Sequence.GetName());
+	Object->SetStringField(TEXT("skeleton_path"), Sequence.GetSkeleton() ? Sequence.GetSkeleton()->GetPathName() : FString());
+	Object->SetNumberField(TEXT("play_length_seconds"), Sequence.GetPlayLength());
+	Object->SetStringField(TEXT("sampling_frame_rate"), AnimFrameRateString(Sequence.GetSamplingFrameRate()));
+	Object->SetNumberField(TEXT("sample_key_count"), Sequence.GetNumberOfSampledKeys());
+	Object->SetNumberField(TEXT("bone_track_count"), TrackNames.Num());
+
+	const IAnimationDataModel* DataModel = Sequence.GetDataModel();
+	const USkeleton* Skeleton = Sequence.GetSkeleton();
+	if (!DataModel || !Skeleton)
+	{
+		Object->SetStringField(TEXT("analysis_state"), TEXT("unavailable"));
+		Object->SetStringField(TEXT("unavailable_reason"), !DataModel ? TEXT("missing_animation_data_model") : TEXT("missing_skeleton"));
+		Object->SetNumberField(TEXT("analysis_sample_count"), 0);
+		Object->SetNumberField(TEXT("bone_count"), 0);
+		Object->SetNumberField(TEXT("changed_bone_count"), 0);
+		Object->SetNumberField(TEXT("position_changed_bone_count"), 0);
+		return Object;
+	}
+
+	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+	const FFrameRate DataFrameRate = DataModel->GetFrameRate();
+	const TArray<int32> ProfileFrames = AnimSequenceProfileSampleFrames(*DataModel);
+	const double PlayLength = FMath::Max(Sequence.GetPlayLength(), 0.0f);
+
+	TMap<FName, int32> TrackIndexByName;
+	for (int32 TrackIndex = 0; TrackIndex < TrackNames.Num(); ++TrackIndex)
+	{
+		TrackIndexByName.Add(TrackNames[TrackIndex], TrackIndex);
+	}
+
+	TMap<FName, FAnimTrackMotionMetrics> MotionMetricsByName;
+	for (const FAnimTrackMotionMetrics& Metrics : MotionMetrics)
+	{
+		MotionMetricsByName.Add(Metrics.BoneName, Metrics);
+	}
+
+	TArray<TArray<FTransform>> LocalPoseSamples;
+	TArray<TArray<FTransform>> ComponentPoseSamples;
+	TArray<double> SampleTimes;
+	for (const int32 FrameNumber : ProfileFrames)
+	{
+		TArray<FTransform> LocalPose = BuildLocalBonePoseForFrame(*DataModel, TrackNames, RefSkeleton, FrameNumber);
+		TArray<FTransform> ComponentPose = BuildComponentSpacePose(RefSkeleton, LocalPose);
+		LocalPoseSamples.Add(MoveTemp(LocalPose));
+		ComponentPoseSamples.Add(MoveTemp(ComponentPose));
+		SampleTimes.Add(AnimFrameSeconds(DataFrameRate, FrameNumber));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> SampleFrameValues;
+	for (int32 SampleIndex = 0; SampleIndex < ProfileFrames.Num(); ++SampleIndex)
+	{
+		TSharedRef<FJsonObject> SampleObject = MakeShared<FJsonObject>();
+		SampleObject->SetNumberField(TEXT("index"), SampleIndex);
+		SampleObject->SetNumberField(TEXT("frame_number"), ProfileFrames[SampleIndex]);
+		SampleObject->SetNumberField(TEXT("time_seconds"), SampleTimes.IsValidIndex(SampleIndex) ? SampleTimes[SampleIndex] : 0.0);
+		SampleObject->SetNumberField(TEXT("normalized_time"), PlayLength > 0.0 ? (SampleTimes.IsValidIndex(SampleIndex) ? SampleTimes[SampleIndex] / PlayLength : 0.0) : 0.0);
+		SampleFrameValues.Add(MakeShared<FJsonValueObject>(SampleObject));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> InitialPoseValues;
+	TArray<TSharedPtr<FJsonValue>> EndPoseValues;
+	TArray<FChangedBoneProfile> ChangedBoneProfiles;
+	int32 PositionChangedBoneCount = 0;
+	constexpr double PositionThreshold = 0.05;
+	constexpr double RotationThresholdDegrees = 0.05;
+
+	for (int32 BoneIndex = 0; BoneIndex < RefSkeleton.GetNum(); ++BoneIndex)
+	{
+		const FName BoneName = RefSkeleton.GetBoneName(BoneIndex);
+		const int32 ParentIndex = RefSkeleton.GetParentIndex(BoneIndex);
+		const FName ParentName = RefSkeleton.IsValidIndex(ParentIndex) ? RefSkeleton.GetBoneName(ParentIndex) : NAME_None;
+		const FTransform InitialLocal = LocalPoseSamples.Num() > 0 && LocalPoseSamples[0].IsValidIndex(BoneIndex) ? LocalPoseSamples[0][BoneIndex] : FTransform::Identity;
+		const FTransform InitialComponent = ComponentPoseSamples.Num() > 0 && ComponentPoseSamples[0].IsValidIndex(BoneIndex) ? ComponentPoseSamples[0][BoneIndex] : InitialLocal;
+		const FTransform EndLocal = LocalPoseSamples.Num() > 0 && LocalPoseSamples.Last().IsValidIndex(BoneIndex) ? LocalPoseSamples.Last()[BoneIndex] : InitialLocal;
+		const FTransform EndComponent = ComponentPoseSamples.Num() > 0 && ComponentPoseSamples.Last().IsValidIndex(BoneIndex) ? ComponentPoseSamples.Last()[BoneIndex] : InitialComponent;
+
+		InitialPoseValues.Add(MakeShared<FJsonValueObject>(AnimTransformEntryForLLMJson(BoneIndex, BoneName, InitialLocal, InitialComponent)));
+		EndPoseValues.Add(MakeShared<FJsonValueObject>(AnimTransformEntryForLLMJson(BoneIndex, BoneName, EndLocal, EndComponent)));
+
+		FVector ComponentMin = InitialComponent.GetTranslation();
+		FVector ComponentMax = InitialComponent.GetTranslation();
+		FVector LocalMin = InitialLocal.GetTranslation();
+		FVector LocalMax = InitialLocal.GetTranslation();
+		double ComponentPathLength = 0.0;
+		double ComponentMaxStep = 0.0;
+		double ComponentRotationRange = 0.0;
+		double LocalRotationRange = 0.0;
+		FTransform PreviousComponent = InitialComponent;
+
+		TArray<TSharedPtr<FJsonValue>> BoneSampleValues;
+		for (int32 SampleIndex = 0; SampleIndex < ProfileFrames.Num(); ++SampleIndex)
+		{
+			const FTransform LocalTransform = LocalPoseSamples.IsValidIndex(SampleIndex) && LocalPoseSamples[SampleIndex].IsValidIndex(BoneIndex)
+				? LocalPoseSamples[SampleIndex][BoneIndex]
+				: InitialLocal;
+			const FTransform ComponentTransform = ComponentPoseSamples.IsValidIndex(SampleIndex) && ComponentPoseSamples[SampleIndex].IsValidIndex(BoneIndex)
+				? ComponentPoseSamples[SampleIndex][BoneIndex]
+				: InitialComponent;
+			ExpandVectorBounds(ComponentMin, ComponentMax, ComponentTransform.GetTranslation());
+			ExpandVectorBounds(LocalMin, LocalMax, LocalTransform.GetTranslation());
+			ComponentRotationRange = FMath::Max(ComponentRotationRange, QuatAngularDistanceDegrees(InitialComponent.GetRotation(), ComponentTransform.GetRotation()));
+			LocalRotationRange = FMath::Max(LocalRotationRange, QuatAngularDistanceDegrees(InitialLocal.GetRotation(), LocalTransform.GetRotation()));
+			if (SampleIndex > 0)
+			{
+				const double StepDistance = (ComponentTransform.GetTranslation() - PreviousComponent.GetTranslation()).Size();
+				ComponentPathLength += StepDistance;
+				ComponentMaxStep = FMath::Max(ComponentMaxStep, StepDistance);
+			}
+			PreviousComponent = ComponentTransform;
+			const double TimeSeconds = SampleTimes.IsValidIndex(SampleIndex) ? SampleTimes[SampleIndex] : 0.0;
+			BoneSampleValues.Add(MakeShared<FJsonValueObject>(AnimMotionSampleJson(
+				ProfileFrames[SampleIndex],
+				TimeSeconds,
+				PlayLength > 0.0 ? TimeSeconds / PlayLength : 0.0,
+				LocalTransform,
+				ComponentTransform,
+				InitialLocal,
+				InitialComponent)));
+		}
+
+		const FVector ComponentDisplacement = EndComponent.GetTranslation() - InitialComponent.GetTranslation();
+		const double ComponentTranslationRange = (ComponentMax - ComponentMin).Size();
+		const double ComponentDisplacementLength = ComponentDisplacement.Size();
+		const double LocalTranslationRange = (LocalMax - LocalMin).Size();
+		const bool bPositionChanges = ComponentTranslationRange > PositionThreshold || ComponentDisplacementLength > PositionThreshold;
+		const bool bRotationChanges = ComponentRotationRange > RotationThresholdDegrees || LocalRotationRange > RotationThresholdDegrees;
+		const FAnimTrackMotionMetrics* DirectMotion = MotionMetricsByName.Find(BoneName);
+		const bool bDirectTrackChanges = DirectMotion && DirectMotion->Changes();
+		if (!bPositionChanges && !bRotationChanges && !bDirectTrackChanges)
+		{
+			continue;
+		}
+
+		if (bPositionChanges)
+		{
+			++PositionChangedBoneCount;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> ChangeChannelValues;
+		if (bPositionChanges)
+		{
+			ChangeChannelValues.Add(MakeShared<FJsonValueString>(TEXT("component_translation")));
+		}
+		if (bRotationChanges)
+		{
+			ChangeChannelValues.Add(MakeShared<FJsonValueString>(TEXT("component_rotation")));
+		}
+		if (DirectMotion && DirectMotion->bTranslationChanges)
+		{
+			ChangeChannelValues.Add(MakeShared<FJsonValueString>(TEXT("local_translation_track")));
+		}
+		if (DirectMotion && DirectMotion->bRotationChanges)
+		{
+			ChangeChannelValues.Add(MakeShared<FJsonValueString>(TEXT("local_rotation_track")));
+		}
+		if (DirectMotion && DirectMotion->bScaleChanges)
+		{
+			ChangeChannelValues.Add(MakeShared<FJsonValueString>(TEXT("local_scale_track")));
+		}
+
+		TSharedRef<FJsonObject> BoneObject = MakeShared<FJsonObject>();
+		BoneObject->SetNumberField(TEXT("bone_index"), BoneIndex);
+		BoneObject->SetStringField(TEXT("bone_name"), BoneName.ToString());
+		BoneObject->SetNumberField(TEXT("parent_index"), ParentIndex);
+		BoneObject->SetStringField(TEXT("parent_name"), ParentName.ToString());
+		const int32* DirectTrackIndex = TrackIndexByName.Find(BoneName);
+		BoneObject->SetBoolField(TEXT("has_direct_track"), DirectTrackIndex != nullptr);
+		BoneObject->SetNumberField(TEXT("track_index"), DirectTrackIndex ? *DirectTrackIndex : -1);
+		BoneObject->SetBoolField(TEXT("position_changes"), bPositionChanges);
+		BoneObject->SetBoolField(TEXT("rotation_changes"), bRotationChanges);
+		BoneObject->SetArrayField(TEXT("change_channels"), ChangeChannelValues);
+		BoneObject->SetNumberField(TEXT("component_translation_range"), ComponentTranslationRange);
+		BoneObject->SetNumberField(TEXT("component_displacement_length"), ComponentDisplacementLength);
+		BoneObject->SetNumberField(TEXT("component_path_length"), ComponentPathLength);
+		BoneObject->SetNumberField(TEXT("component_max_step"), ComponentMaxStep);
+		BoneObject->SetNumberField(TEXT("component_rotation_range_degrees"), ComponentRotationRange);
+		BoneObject->SetNumberField(TEXT("local_translation_range"), LocalTranslationRange);
+		BoneObject->SetNumberField(TEXT("local_rotation_range_degrees"), LocalRotationRange);
+		BoneObject->SetObjectField(TEXT("component_translation_bounds"), AnimVectorBoundsObject(ComponentMin, ComponentMax));
+		BoneObject->SetObjectField(TEXT("component_translation_delta_start_to_end"), AnimVectorDeltaObject(ComponentDisplacement));
+		BoneObject->SetObjectField(TEXT("initial_local_transform"), AnimTransformForLLMObject(InitialLocal));
+		BoneObject->SetObjectField(TEXT("end_local_transform"), AnimTransformForLLMObject(EndLocal));
+		BoneObject->SetObjectField(TEXT("initial_component_transform"), AnimTransformForLLMObject(InitialComponent));
+		BoneObject->SetObjectField(TEXT("end_component_transform"), AnimTransformForLLMObject(EndComponent));
+		BoneObject->SetNumberField(TEXT("sample_count"), BoneSampleValues.Num());
+		BoneObject->SetArrayField(TEXT("samples"), BoneSampleValues);
+		BoneObject->SetStringField(
+			TEXT("llm_summary"),
+			FString::Printf(
+				TEXT("%s moves %.3f cm end-to-start toward %s, spans %.3f cm across sampled component-space positions, and rotates %.3f degrees in component space."),
+				*BoneName.ToString(),
+				ComponentDisplacementLength,
+				*AnimDominantAxis(ComponentDisplacement),
+				ComponentTranslationRange,
+				ComponentRotationRange));
+
+		FChangedBoneProfile Changed;
+		Changed.Score = ComponentPathLength + ComponentTranslationRange + (ComponentRotationRange * 0.01);
+		Changed.bPositionChanges = bPositionChanges;
+		Changed.Object = BoneObject;
+		ChangedBoneProfiles.Add(MoveTemp(Changed));
+	}
+
+	ChangedBoneProfiles.Sort([](const FChangedBoneProfile& Left, const FChangedBoneProfile& Right)
+	{
+		return Left.Score > Right.Score;
+	});
+
+	TArray<TSharedPtr<FJsonValue>> ChangedBoneValues;
+	for (const FChangedBoneProfile& Changed : ChangedBoneProfiles)
+	{
+		if (Changed.Object.IsValid())
+		{
+			ChangedBoneValues.Add(MakeShared<FJsonValueObject>(Changed.Object.ToSharedRef()));
+		}
+	}
+
+	TArray<TSharedPtr<FJsonValue>> GuidelineValues;
+	GuidelineValues.Add(MakeShared<FJsonValueString>(TEXT("Use initial_pose and end_pose to anchor the animation on this skeleton.")));
+	GuidelineValues.Add(MakeShared<FJsonValueString>(TEXT("Use changed_bones samples as sparse keyframes; interpolate transforms between normalized_time values.")));
+	GuidelineValues.Add(MakeShared<FJsonValueString>(TEXT("Prefer component_translation for human-readable motion intent, and local_transform for programmatic bone animation output.")));
+
+	Object->SetStringField(TEXT("analysis_state"), TEXT("ready"));
+	Object->SetStringField(TEXT("skeleton_key"), Skeleton->GetPathName());
+	Object->SetNumberField(TEXT("frame_count"), DataModel->GetNumberOfFrames());
+	Object->SetNumberField(TEXT("data_model_key_count"), DataModel->GetNumberOfKeys());
+	Object->SetNumberField(TEXT("analysis_sample_count"), ProfileFrames.Num());
+	Object->SetNumberField(TEXT("bone_count"), RefSkeleton.GetNum());
+	Object->SetNumberField(TEXT("changed_bone_count"), ChangedBoneValues.Num());
+	Object->SetNumberField(TEXT("position_changed_bone_count"), PositionChangedBoneCount);
+	Object->SetArrayField(TEXT("sample_frames"), SampleFrameValues);
+	Object->SetArrayField(TEXT("initial_pose"), InitialPoseValues);
+	Object->SetArrayField(TEXT("end_pose"), EndPoseValues);
+	Object->SetArrayField(TEXT("changed_bones"), ChangedBoneValues);
+	Object->SetArrayField(TEXT("llm_generation_guidelines"), GuidelineValues);
+	return Object;
+}
+
+TSharedRef<FJsonObject> WriteAnimationBoneMotionProfileArtifact(
+	const FString& ProjectId,
+	const UAnimSequence& Sequence,
+	const TArray<FName>& TrackNames,
+	const TArray<FAnimTrackMotionMetrics>& MotionMetrics)
+{
+	const FString ArtifactId = MakeStableId(ProjectId, TEXT("animation_bone_motion_profile"), Sequence.GetPathName());
+	const FString ArtifactDir = AnimationBoneMotionArtifactRoot();
+	const FString ArtifactPath = FPaths::Combine(ArtifactDir, ArtifactId + TEXT(".json"));
+	TSharedRef<FJsonObject> Payload = AnimationBoneMotionProfileObject(Sequence, TrackNames, MotionMetrics);
+	Payload->SetStringField(TEXT("artifact_id"), ArtifactId);
+	Payload->SetStringField(TEXT("artifact_uri"), TEXT("uepi://animation-bone-motion-profile/") + ArtifactId);
+	Payload->SetStringField(TEXT("generated_at_utc"), FDateTime::UtcNow().ToIso8601());
+
+	FString Json;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Json);
+	FJsonSerializer::Serialize(Payload, Writer);
+
+	TSharedRef<FJsonObject> Manifest = MakeShared<FJsonObject>();
+	Manifest->SetStringField(TEXT("schema_version"), TEXT("uepi.animation_bone_motion_profile_manifest.v1"));
+	Manifest->SetStringField(TEXT("profile_schema_version"), TEXT("uepi.animation_bone_motion_profile.v1"));
+	Manifest->SetStringField(TEXT("artifact_id"), ArtifactId);
+	Manifest->SetStringField(TEXT("artifact_uri"), TEXT("uepi://animation-bone-motion-profile/") + ArtifactId);
+	Manifest->SetStringField(TEXT("storage"), TEXT("snapshot_store_artifact_json"));
+	Manifest->SetStringField(TEXT("path"), FPaths::ConvertRelativePathToFull(ArtifactPath));
+	Manifest->SetStringField(TEXT("sequence_path"), Sequence.GetPathName());
+	Manifest->SetStringField(TEXT("skeleton_path"), Sequence.GetSkeleton() ? Sequence.GetSkeleton()->GetPathName() : FString());
+	Manifest->SetNumberField(TEXT("analysis_sample_count"), Payload->GetNumberField(TEXT("analysis_sample_count")));
+	Manifest->SetNumberField(TEXT("bone_count"), Payload->GetNumberField(TEXT("bone_count")));
+	Manifest->SetNumberField(TEXT("changed_bone_count"), Payload->GetNumberField(TEXT("changed_bone_count")));
+	Manifest->SetNumberField(TEXT("position_changed_bone_count"), Payload->GetNumberField(TEXT("position_changed_bone_count")));
+	Manifest->SetNumberField(TEXT("byte_count"), FTCHARToUTF8(*Json).Length());
+	Manifest->SetStringField(TEXT("encoding"), TEXT("json"));
+
+	IFileManager::Get().MakeDirectory(*ArtifactDir, true);
+	if (!FFileHelper::SaveStringToFile(Json, *ArtifactPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	{
+		Manifest->SetStringField(TEXT("storage"), TEXT("snapshot_store_artifact_json_write_failed"));
+		Manifest->SetStringField(TEXT("write_error"), FString::Printf(TEXT("Failed to write animation bone motion profile artifact: %s"), *ArtifactPath));
+	}
+	return Manifest;
 }
 
 TSharedRef<FJsonObject> AnimTransformEntryJson(
@@ -933,7 +1379,7 @@ FString AddAnimationSequenceEntity(
 	Entity.Attributes.Add(TEXT("curve_count"), DataModel ? FString::FromInt(DataModel->GetNumberOfFloatCurves() + DataModel->GetNumberOfTransformCurves()) : TEXT("0"));
 	Entity.Attributes.Add(TEXT("collection_level"), LexToString(ECollectionLevel::Structural));
 	Entity.Completeness.State = ECompletenessState::Partial;
-	Entity.Completeness.Covered = { TEXT("sequence_metadata"), TEXT("bone_track_metadata"), TEXT("frame_time_samples"), TEXT("raw_local_track_samples"), TEXT("component_space_pose_samples"), TEXT("root_motion_metadata"), TEXT("additive_metadata"), TEXT("notify_metadata"), TEXT("curve_counts"), TEXT("motion_summary") };
+	Entity.Completeness.Covered = { TEXT("sequence_metadata"), TEXT("bone_track_metadata"), TEXT("frame_time_samples"), TEXT("raw_local_track_samples"), TEXT("component_space_pose_samples"), TEXT("root_motion_metadata"), TEXT("additive_metadata"), TEXT("notify_metadata"), TEXT("curve_counts"), TEXT("motion_summary"), TEXT("bone_motion_profile_artifact") };
 	Entity.Completeness.Omitted = { TEXT("full_per_frame_pose_samples"), TEXT("raw_curve_keys"), TEXT("compressed_track_data") };
 	AddAnimEvidence(Entity, SequencePath, TEXT("UAnimSequence metadata read through Animation Data Model."));
 	OutEntities.Add(MoveTemp(Entity));
@@ -2791,6 +3237,7 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 		TrackValues.Add(MakeShared<FJsonValueObject>(TrackObject));
 	}
 	const TSharedRef<FJsonObject> MotionSummaryObject = AnimationMotionSummaryObject(Sequence, MotionMetricsValues);
+	const TSharedRef<FJsonObject> BoneMotionProfileManifest = WriteAnimationBoneMotionProfileArtifact(ProjectId, Sequence, TrackNames, MotionMetricsValues);
 	if (FEntityRecord* SequenceEntity = FindEntity(OutEntities, SequenceId))
 	{
 		int32 ChangingBoneCount = 0;
@@ -2803,7 +3250,11 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 		}
 		SequenceEntity->Attributes.Add(TEXT("motion_changing_bone_count"), FString::FromInt(ChangingBoneCount));
 		SequenceEntity->Attributes.Add(TEXT("motion_static_bone_count"), FString::FromInt(FMath::Max(MotionMetricsValues.Num() - ChangingBoneCount, 0)));
+		SequenceEntity->Attributes.Add(TEXT("bone_motion_profile_artifact_uri"), BoneMotionProfileManifest->GetStringField(TEXT("artifact_uri")));
+		SequenceEntity->Attributes.Add(TEXT("bone_motion_profile_changed_bone_count"), FString::FromInt(static_cast<int32>(BoneMotionProfileManifest->GetNumberField(TEXT("changed_bone_count")))));
+		SequenceEntity->Attributes.Add(TEXT("bone_motion_profile_position_changed_bone_count"), FString::FromInt(static_cast<int32>(BoneMotionProfileManifest->GetNumberField(TEXT("position_changed_bone_count")))));
 		SequenceEntity->Completeness.Covered.AddUnique(TEXT("motion_summary"));
+		SequenceEntity->Completeness.Covered.AddUnique(TEXT("bone_motion_profile_artifact"));
 	}
 
 	TArray<TSharedPtr<FJsonValue>> NotifyValues;
@@ -2906,6 +3357,7 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 	Object->SetNumberField(TEXT("sampled_pose_count"), PoseSampleValues.Num());
 	Object->SetArrayField(TEXT("tracks"), TrackValues);
 	Object->SetObjectField(TEXT("motion_summary"), MotionSummaryObject);
+	Object->SetObjectField(TEXT("bone_motion_profile"), BoneMotionProfileManifest);
 	Object->SetArrayField(TEXT("notifies"), NotifyValues);
 	Object->SetArrayField(TEXT("pose_samples"), MoveTemp(PoseSampleValues));
 	return Object;

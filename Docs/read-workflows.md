@@ -40,7 +40,15 @@ When you need an immediate editor refresh and the bridge is connected, pass `ref
 
 ## Animation Questions
 
-Use `uepi_animation` for sequence, skeleton, track, notify, curve, and motion summary. Use `uepi_impact` when you need to know who plays or references the animation.
+Use `uepi_animation` for sequence, skeleton, track, notify, curve, and motion summary. When the user asks how bones move over time or wants enough evidence to generate animation procedurally, pass `include: ["bone_motion_profile"]`; UEPI reads the stored profile artifact instead of recomputing the analysis in the MCP layer. Use `uepi_impact` when you need to know who plays or references the animation.
+
+Bone motion profile artifacts are written under:
+
+```text
+Saved/UEProjectIntelligence/store/artifacts/animation_bone_motion/
+```
+
+The profile separates `initial_pose`, `end_pose`, and sorted `changed_bones`. Each changed bone includes sparse time samples, local transforms, component-space transforms, component translation deltas, rotation deltas, bounds, and an LLM-oriented summary.
 
 ## Impact Questions
 

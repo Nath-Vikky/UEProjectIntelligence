@@ -115,7 +115,7 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 - `uepi_asset`: read one asset/entity and nearby relations.
 - `uepi_blueprint`: read Blueprint graph, node, pin, event, CFG, and DFG entities captured in Snapshot.
 - `uepi_blueprint_trace`: trace static Blueprint flow relations.
-- `uepi_animation`: read animation, skeleton, track, notify, curve, and motion-summary data captured in Snapshot.
+- `uepi_animation`: read animation, skeleton, track, notify, curve, motion-summary, and optional bone-motion profile artifacts captured in Snapshot.
 - `uepi_impact`: inspect incoming/outgoing dependency impact.
 - `uepi_diff`: compare saved Snapshot generations.
 - `uepi_edit_discover`: discover supported guarded edit operations.

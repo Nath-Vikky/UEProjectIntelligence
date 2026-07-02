@@ -101,16 +101,22 @@ def request(process: subprocess.Popen[bytes], request_id: int, method: str, para
 def write_fixture(root: Path) -> None:
     store = root / "store"
     objects = store / "objects" / "aa"
+    artifacts = store / "artifacts" / "animation_bone_motion"
     manifests = store / "manifests"
     sessions = store / "sessions"
     objects.mkdir(parents=True)
+    artifacts.mkdir(parents=True)
     manifests.mkdir(parents=True)
     sessions.mkdir(parents=True)
 
     asset_id = "asset-bp-hero"
+    animation_asset_id = "asset-waving"
+    animation_sequence_id = "anim-sequence-waving"
+    animation_artifact_id = "a" * 64
     project_entity_id = "project-root"
     node_id = "node-beginplay"
     relation_id = "rel-contains-node"
+    animation_relation_id = "rel-animation-asset-sequence"
     asset_entity = {
         "id": asset_id,
         "kind": "asset",
@@ -215,6 +221,184 @@ def write_fixture(root: Path) -> None:
     asset_fragment_path = objects / "aaassetfragment.json"
     asset_fragment_path.write_text(json.dumps(asset_fragment, ensure_ascii=False), encoding="utf-8")
 
+    animation_profile_path = artifacts / f"{animation_artifact_id}.json"
+    animation_profile = {
+        "schema_version": "uepi.animation_bone_motion_profile.v1",
+        "artifact_id": animation_artifact_id,
+        "artifact_uri": f"uepi://animation-bone-motion-profile/{animation_artifact_id}",
+        "intended_reader": "LLM",
+        "sequence_path": "/Game/Animations/Waving.Waving",
+        "sequence_name": "Waving",
+        "skeleton_path": "/Game/Characters/Mannequins/Meshes/SK_Mannequin.SK_Mannequin",
+        "analysis_state": "ready",
+        "coordinate_space_note": "local_transform is parent-relative; component_transform is skeleton component-space in Unreal centimeters.",
+        "play_length_seconds": 1.0,
+        "analysis_sample_count": 3,
+        "bone_count": 2,
+        "changed_bone_count": 1,
+        "position_changed_bone_count": 1,
+        "sample_frames": [
+            {"index": 0, "frame_number": 0, "time_seconds": 0.0, "normalized_time": 0.0},
+            {"index": 1, "frame_number": 15, "time_seconds": 0.5, "normalized_time": 0.5},
+            {"index": 2, "frame_number": 30, "time_seconds": 1.0, "normalized_time": 1.0},
+        ],
+        "initial_pose": [],
+        "end_pose": [],
+        "changed_bones": [
+            {
+                "bone_index": 1,
+                "bone_name": "hand_r",
+                "parent_index": 0,
+                "parent_name": "upperarm_r",
+                "has_direct_track": True,
+                "track_index": 0,
+                "position_changes": True,
+                "rotation_changes": True,
+                "change_channels": ["component_translation", "component_rotation", "local_rotation_track"],
+                "component_translation_range": 24.0,
+                "component_displacement_length": 4.0,
+                "component_path_length": 48.0,
+                "component_max_step": 24.0,
+                "component_rotation_range_degrees": 55.0,
+                "component_translation_delta_start_to_end": {
+                    "vector": {"x": 0.0, "y": 4.0, "z": 0.0},
+                    "length": 4.0,
+                    "dominant_axis": "+Y",
+                },
+                "samples": [
+                    {
+                        "frame_number": 0,
+                        "time_seconds": 0.0,
+                        "normalized_time": 0.0,
+                        "component_translation_delta_from_initial": {
+                            "vector": {"x": 0.0, "y": 0.0, "z": 0.0},
+                            "length": 0.0,
+                            "dominant_axis": "none",
+                        },
+                    },
+                    {
+                        "frame_number": 15,
+                        "time_seconds": 0.5,
+                        "normalized_time": 0.5,
+                        "component_translation_delta_from_initial": {
+                            "vector": {"x": 0.0, "y": 24.0, "z": 0.0},
+                            "length": 24.0,
+                            "dominant_axis": "+Y",
+                        },
+                    },
+                ],
+                "llm_summary": "hand_r moves in a waving arc.",
+            }
+        ],
+        "llm_generation_guidelines": ["Use changed_bones samples as sparse keyframes."],
+    }
+    animation_profile_path.write_text(json.dumps(animation_profile, ensure_ascii=False), encoding="utf-8")
+    bone_motion_profile_manifest = {
+        "schema_version": "uepi.animation_bone_motion_profile_manifest.v1",
+        "profile_schema_version": "uepi.animation_bone_motion_profile.v1",
+        "artifact_id": animation_artifact_id,
+        "artifact_uri": f"uepi://animation-bone-motion-profile/{animation_artifact_id}",
+        "storage": "snapshot_store_artifact_json",
+        "path": str(animation_profile_path),
+        "sequence_path": "/Game/Animations/Waving.Waving",
+        "skeleton_path": "/Game/Characters/Mannequins/Meshes/SK_Mannequin.SK_Mannequin",
+        "analysis_sample_count": 3,
+        "bone_count": 2,
+        "changed_bone_count": 1,
+        "position_changed_bone_count": 1,
+        "byte_count": animation_profile_path.stat().st_size,
+        "encoding": "json",
+    }
+    animation_asset_entity = {
+        "id": animation_asset_id,
+        "kind": "asset",
+        "canonical_key": "/Game/Animations/Waving.Waving",
+        "display_name": "Waving",
+        "source_layer": "asset_registry",
+        "attributes": {"object_path": "/Game/Animations/Waving.Waving", "asset_name": "Waving"},
+        "completeness": {"state": "partial", "covered": ["asset_registry_metadata", "animation_sequence"], "omitted": [], "warnings": []},
+        "diagnostics": [],
+        "evidence": [],
+        "snapshot": {
+            "animation_sequence": {
+                "schema_version": "uepi.anim_sequence.v1",
+                "source_layer": "animation_data_model",
+                "sequence_path": "/Game/Animations/Waving.Waving",
+                "skeleton_path": "/Game/Characters/Mannequins/Meshes/SK_Mannequin.SK_Mannequin",
+                "play_length_seconds": 1.0,
+                "sample_key_count": 31,
+                "sampling_frame_rate": "30/1",
+                "rate_scale": 1.0,
+                "loop": False,
+                "bone_track_count": 1,
+                "float_curve_count": 0,
+                "transform_curve_count": 0,
+                "attribute_count": 0,
+                "notify_count": 0,
+                "sampled_pose_count": 0,
+                "tracks": [
+                    {
+                        "id": "track-waving-hand-r",
+                        "index": 0,
+                        "bone_name": "hand_r",
+                        "raw_local_key_count": 31,
+                    }
+                ],
+                "motion_summary": {
+                    "schema_version": "uepi.animation_motion_summary.v1",
+                    "sequence_path": "/Game/Animations/Waving.Waving",
+                    "track_count": 1,
+                    "changing_bone_count": 1,
+                    "static_bone_count": 0,
+                    "changing_bones": [],
+                },
+                "bone_motion_profile": bone_motion_profile_manifest,
+                "notifies": [],
+                "pose_samples": [],
+            }
+        },
+    }
+    animation_sequence_entity = {
+        "id": animation_sequence_id,
+        "kind": "animation_sequence",
+        "canonical_key": "/Game/Animations/Waving.Waving",
+        "display_name": "Waving",
+        "source_layer": "animation_data_model",
+        "attributes": {
+            "sequence_path": "/Game/Animations/Waving.Waving",
+            "bone_motion_profile_artifact_uri": f"uepi://animation-bone-motion-profile/{animation_artifact_id}",
+        },
+        "completeness": {"state": "partial", "covered": ["motion_summary", "bone_motion_profile_artifact"], "omitted": [], "warnings": []},
+        "diagnostics": [],
+        "evidence": [],
+    }
+    animation_fragment = {
+        "schema_version": "uepi.asset-fragment.v2",
+        "project_id": "project-fixture",
+        "project_name": "FixtureProject",
+        "project_file": str(root / "FixtureProject.uproject"),
+        "engine_version": "5.3.2",
+        "source_scan_finished_at_utc": "2026-06-26T00:00:01Z",
+        "asset": {"id": animation_asset_id, "canonical_key": "/Game/Animations/Waving.Waving", "display_name": "Waving", "kind": "asset"},
+        "entities": [animation_asset_entity, animation_sequence_entity],
+        "relations": [
+            {
+                "id": animation_relation_id,
+                "type": "contains_animation_sequence",
+                "from_id": animation_asset_id,
+                "to_id": animation_sequence_id,
+                "source_layer": "animation_data_model",
+                "derived": False,
+                "confidence": 1.0,
+                "attributes": {},
+                "evidence": [],
+            }
+        ],
+        "diagnostics": [],
+    }
+    animation_fragment_path = objects / "aaanimationfragment.json"
+    animation_fragment_path.write_text(json.dumps(animation_fragment, ensure_ascii=False), encoding="utf-8")
+
     manifest = {
         "schema_version": "uepi.snapshot-manifest.v2",
         "data_mode": "saved",
@@ -223,13 +407,14 @@ def write_fixture(root: Path) -> None:
         "generation": 1,
         "created_at_utc": "2026-06-26T00:00:02Z",
         "project": {"id": "project-fixture", "name": "FixtureProject", "project_file": str(root / "FixtureProject.uproject"), "engine_version": "5.3.2"},
-        "counts": {"entities": 2, "relations": 1, "diagnostics": 0, "asset_entities": 1},
+        "counts": {"entities": 4, "relations": 2, "diagnostics": 0, "asset_entities": 2},
         "source": {},
         "completeness": {"state": "partial", "covered": ["blueprint_graphs"], "omitted": [], "warnings": []},
-        "asset_entity_ids": [asset_id],
+        "asset_entity_ids": [asset_id, animation_asset_id],
         "fragments": [
             {"kind": "project_fragment", "schema_version": "uepi.project-fragment.v2", "hash": "aaprojectfragment", "path": str(project_fragment_path)},
             {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aaassetfragment", "path": str(asset_fragment_path), "asset_id": asset_id},
+            {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aaanimationfragment", "path": str(animation_fragment_path), "asset_id": animation_asset_id},
         ],
     }
     (manifests / "saved.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
@@ -615,6 +800,17 @@ def main() -> int:
             assert search["result"]["match_count"] >= 1
             assert search["result"]["query_source"] == "sqlite_cache"
             assert "typed_attributes" in search["result"]["matches"][0]
+            animation = request(
+                process,
+                48,
+                "tools/call",
+                {"name": "uepi_animation", "arguments": {"asset": "Waving", "include": ["summary", "bone_motion_profile"]}},
+            )["structuredContent"]
+            assert_envelope(animation)
+            assert animation["ok"] is True
+            assert animation["result"]["bone_motion_profile_manifest"]["artifact_id"] == "a" * 64
+            assert animation["result"]["bone_motion_profile"]["schema_version"] == "uepi.animation_bone_motion_profile.v1"
+            assert animation["result"]["bone_motion_profile"]["changed_bones"][0]["bone_name"] == "hand_r"
             context = request(
                 process,
                 44,

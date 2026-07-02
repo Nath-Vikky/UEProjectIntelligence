@@ -37,6 +37,12 @@ Read animation context:
 uepi_animation {"asset": "MM_Run_Fwd", "include": ["summary", "tracks", "notifies", "curves", "pose_samples"]}
 ```
 
+Read an LLM-ready bone motion profile artifact:
+
+```text
+uepi_animation {"asset": "Waving", "include": ["summary", "bone_motion_profile"]}
+```
+
 Build a context bundle:
 
 ```text

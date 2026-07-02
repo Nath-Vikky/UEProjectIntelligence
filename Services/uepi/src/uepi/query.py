@@ -86,6 +86,14 @@ def _relation_summary(relation: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _path_is_relative_to(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
 class UEPIQueryEngine:
     def __init__(self, store: SnapshotStore):
         self.store = store
@@ -214,6 +222,77 @@ class UEPIQueryEngine:
             diagnostics=diagnostics,
             next_actions=next_actions,
         )
+
+    def _load_artifact_payload(self, manifest: dict[str, Any], *, expected_schema: str, diagnostic_code: str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+        path_text = str(manifest.get("path") or "").strip()
+        if not path_text:
+            return None, [
+                {
+                    "severity": "warning",
+                    "code": diagnostic_code,
+                    "message": "Artifact manifest did not include a readable path.",
+                    "recoverable": False,
+                }
+            ]
+
+        path = Path(path_text).expanduser()
+        if not path.is_absolute():
+            path = self.store.root / path
+        try:
+            resolved = path.resolve()
+            allowed_roots = [
+                (self.store.store_dir / "artifacts").resolve(),
+                (self.store.root / "Artifacts").resolve(),
+                (self.store.root / "artifacts").resolve(),
+            ]
+        except OSError as exc:
+            return None, [
+                {
+                    "severity": "warning",
+                    "code": diagnostic_code,
+                    "message": f"Artifact path could not be resolved: {exc}",
+                    "path": path_text,
+                    "recoverable": False,
+                }
+            ]
+
+        if not any(_path_is_relative_to(resolved, root) for root in allowed_roots):
+            return None, [
+                {
+                    "severity": "warning",
+                    "code": diagnostic_code,
+                    "message": "Artifact path is outside the UEPI artifact directories and was not read.",
+                    "path": str(resolved),
+                    "recoverable": False,
+                }
+            ]
+
+        try:
+            payload = _load_json(resolved)
+        except SnapshotStoreError as exc:
+            return None, [
+                {
+                    "severity": "warning",
+                    "code": diagnostic_code,
+                    "message": str(exc),
+                    "path": str(resolved),
+                    "recoverable": True,
+                    "recommended_agent_action": {"tool": "uepi_animation"},
+                }
+            ]
+
+        if expected_schema and payload.get("schema_version") != expected_schema:
+            return None, [
+                {
+                    "severity": "warning",
+                    "code": diagnostic_code,
+                    "message": f"Artifact schema mismatch: expected {expected_schema}, got {payload.get('schema_version')!r}.",
+                    "path": str(resolved),
+                    "recoverable": False,
+                }
+            ]
+
+        return payload, []
 
     def _matches_entity(self, entity: dict[str, Any], query: str, kind: str | None = None) -> bool:
         if kind and entity.get("kind") != kind:
@@ -849,17 +928,35 @@ class UEPIQueryEngine:
             )
         domain_entities = self._domain_entities_for_asset(entity, ANIMATION_KINDS, max(1, min(limit, 1000)))
         snapshot = _as_dict(entity.get("snapshot"))
-        requested = include or ["summary", "tracks", "notifies", "curves", "relations"]
+        requested = include or ["summary", "tracks", "notifies", "curves", "relations", "bone_motion_profile_manifest"]
+        sequence_snapshot = snapshot.get("animation_sequence") or (snapshot if snapshot.get("schema_version") == "uepi.anim_sequence.v1" else None)
+        sequence_snapshot = sequence_snapshot if isinstance(sequence_snapshot, dict) else None
+        bone_motion_profile_manifest = _as_dict(sequence_snapshot.get("bone_motion_profile")) if sequence_snapshot else {}
         result = {
             "asset": _short_entity(entity, include_snapshot=True),
             "include": requested,
             "animation_entities": domain_entities,
             "motion_summary": snapshot.get("animation_motion_summary") or snapshot.get("motion_summary"),
-            "sequence": snapshot.get("animation_sequence") or (snapshot if snapshot.get("schema_version") == "uepi.anim_sequence.v1" else None),
+            "sequence": sequence_snapshot,
+            "bone_motion_profile_manifest": bone_motion_profile_manifest or None,
             "resolution_candidates": candidates,
             "query_source": "sqlite_cache" if self.cache else "snapshot_fragments",
         }
         omissions: list[str] = []
+        artifact_diagnostics: list[dict[str, Any]] = []
+        if "bone_motion_profile" in requested:
+            if bone_motion_profile_manifest:
+                payload, artifact_diagnostics = self._load_artifact_payload(
+                    bone_motion_profile_manifest,
+                    expected_schema="uepi.animation_bone_motion_profile.v1",
+                    diagnostic_code="UEPI_ANIMATION_BONE_MOTION_PROFILE_UNAVAILABLE",
+                )
+                if payload:
+                    result["bone_motion_profile"] = payload
+                else:
+                    omissions.append("bone_motion_profile_artifact_unreadable")
+            else:
+                omissions.append("bone_motion_profile_artifact_not_present_in_snapshot")
         if not domain_entities and not snapshot:
             omissions.append("animation_details_not_present_in_snapshot")
             freshness, diagnostics = self._domain_refresh_for_missing_snapshot(
@@ -873,6 +970,7 @@ class UEPIQueryEngine:
             )
         if "pose_samples" in requested and not result["sequence"]:
             omissions.append("pose_samples_require_animation_sequence_snapshot")
+        diagnostics = diagnostics + artifact_diagnostics
         return self._envelope(
             result,
             diagnostics=diagnostics,
