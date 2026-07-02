@@ -77,6 +77,7 @@ Unsupported or out-of-scope operations return structured diagnostics instead of 
 ```text
 read evidence
 edit_discover
+choose Blueprint design and compare compact vs expanded alternatives
 edit_preview with the complete intended plan
 one user approval
 edit_apply
@@ -85,6 +86,19 @@ targeted Snapshot refresh
 uepi_diff
 report
 ```
+
+## Blueprint Plan Quality
+
+Write alpha is intentionally operation-based, but Agents should not treat the operation catalog as a macro recorder. For Blueprint graph edits, choose the design first and use operations second.
+
+Preferred designs:
+
+- Use variables for state instead of duplicating constants across many nodes.
+- Use timers, loops, custom events, or helper functions for repeated or time-based behavior.
+- Keep graphs small enough for a human to inspect, debug, and extend.
+- Use expanded node-by-node graphs only for tiny examples, direct user requests, or when UEPI cannot yet express the compact design safely.
+
+`uepi_edit_preview` returns non-blocking quality diagnostics when a plan appears to unroll repeated behavior or create an unusually large number of nodes. Agents should revise the plan or explicitly report the operation-catalog limitation before requesting approval.
 
 ## Operation Plan Shape
 

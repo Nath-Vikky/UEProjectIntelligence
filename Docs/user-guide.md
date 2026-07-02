@@ -93,7 +93,7 @@ Offline Snapshot reads use the explicit `--project` path in the MCP config. Trea
 After connecting UEPI MCP, start with:
 
 ```text
-Use UEPI first. Call uepi_status, then uepi_overview. When answering project-specific Unreal questions, use uepi_context or uepi_search before guessing asset paths. Treat read results as snapshot evidence unless UEPI says data_mode is live. Use edit tools only for explicit project-change requests, and always preview before apply.
+Use UEPI first. Call uepi_status, then uepi_overview. When answering project-specific Unreal questions, use uepi_context or uepi_search before guessing asset paths. Treat read results as snapshot evidence unless UEPI says data_mode is live. Use edit tools only for explicit project-change requests. For Blueprint edits, choose a compact maintainable design before choosing operations; prefer variables, timers, loops, custom events, or helper functions over repeated expanded nodes. Always preview before apply.
 ```
 
 ## Recommended Agent Flow
@@ -101,7 +101,7 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 1. Call `uepi_status`.
 2. Use `uepi_search` or `uepi_context` to identify candidate assets.
 3. Call the narrow read tool needed by the question.
-4. If the user asks for a project change, call `uepi_edit_discover`, then create one complete `uepi_edit_preview` plan for the intended edit.
+4. If the user asks for a project change, call `uepi_edit_discover`, compare compact and expanded Blueprint designs when relevant, then create one complete `uepi_edit_preview` plan for the intended edit.
 5. Ask for explicit approval once; after approval, call `uepi_edit_apply`, `uepi_edit_validate`, refresh/read the changed asset, and use `uepi_diff` where applicable without more approval prompts unless the plan changes.
 6. If diagnostics include `UEPI_REFRESH_REQUESTED`, wait briefly and retry the same tool.
 7. If diagnostics include `UEPI_SNAPSHOT_STALE`, open the editor/plugin for realtime refresh or run a commandlet scan.

@@ -686,6 +686,7 @@ def main() -> int:
             assert discover["result"]["legacy_profile_alias"] == "codex_write_alpha"
             assert discover["result"]["default_enabled"] is True
             assert discover["result"]["apply_enabled"] is False
+            assert "blueprint_plan_guidance" in discover["result"]
             preview = request(
                 process,
                 63,
@@ -709,6 +710,45 @@ def main() -> int:
             )["structuredContent"]
             assert_envelope(preview)
             assert preview["result"]["plan"]["schema_version"] == "uepi.edit_plan.v1"
+            unrolled_countdown_ops: list[dict[str, Any]] = []
+            for value in range(5, 0, -1):
+                unrolled_countdown_ops.append(
+                    {
+                        "type": "blueprint.add_print_string_node",
+                        "params": {
+                            "asset": "/Game/BP_Hero.BP_Hero",
+                            "graph": "EventGraph",
+                            "message": str(value),
+                        },
+                    }
+                )
+                if value > 1:
+                    unrolled_countdown_ops.append(
+                        {
+                            "type": "blueprint.add_function_call_node",
+                            "params": {
+                                "asset": "/Game/BP_Hero.BP_Hero",
+                                "graph": "EventGraph",
+                                "function_path": "/Script/Engine.KismetSystemLibrary:Delay",
+                                "defaults": {"Duration": 1.0},
+                            },
+                        }
+                    )
+            unrolled_preview = request(
+                process,
+                65,
+                "tools/call",
+                {
+                    "name": "uepi_edit_preview",
+                    "arguments": {
+                        "intent": "Add a countdown",
+                        "operations": unrolled_countdown_ops,
+                    },
+                },
+            )["structuredContent"]
+            assert_envelope(unrolled_preview)
+            unrolled_codes = {item.get("code") for item in unrolled_preview["diagnostics"]}
+            assert "UEPI_EDIT_BLUEPRINT_UNROLLED_COUNTDOWN" in unrolled_codes
             apply_without_bridge = request(
                 process,
                 64,

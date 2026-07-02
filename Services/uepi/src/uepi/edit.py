@@ -268,6 +268,131 @@ def _operation_diagnostics(operations: list[Any]) -> list[dict[str, Any]]:
                     "recoverable": True,
                 }
             )
+    diagnostics.extend(_plan_quality_diagnostics(operations))
+    return diagnostics
+
+
+def _param_string(params: dict[str, Any], *names: str) -> str:
+    for name in names:
+        value = params.get(name)
+        if value is None:
+            continue
+        return str(value).strip()
+    return ""
+
+
+def _param_number(params: dict[str, Any], *names: str) -> float | None:
+    for name in names:
+        value = params.get(name)
+        if isinstance(value, bool) or value is None:
+            continue
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value.strip())
+            except ValueError:
+                continue
+    return None
+
+
+def _nested_defaults(params: dict[str, Any]) -> dict[str, Any]:
+    defaults = params.get("defaults")
+    return defaults if isinstance(defaults, dict) else {}
+
+
+def _is_consecutive(values: list[int]) -> bool:
+    if len(values) < 5:
+        return False
+    deltas = [right - left for left, right in zip(values, values[1:])]
+    return all(delta == 1 for delta in deltas) or all(delta == -1 for delta in deltas)
+
+
+def _plan_quality_diagnostics(operations: list[Any]) -> list[dict[str, Any]]:
+    """Warn about plans that are safe but likely poor Blueprint design."""
+    diagnostics: list[dict[str, Any]] = []
+    print_messages: list[str] = []
+    numeric_print_messages: list[int] = []
+    delay_durations: list[float] = []
+    new_graph_node_count = 0
+    connect_count = 0
+
+    for operation in operations:
+        op_type = _operation_type(operation)
+        params = _operation_params(operation)
+        if op_type.startswith("blueprint.") and op_type in {
+            "blueprint.add_event_node",
+            "blueprint.add_function_call_node",
+            "blueprint.add_variable_get_node",
+            "blueprint.add_variable_set_node",
+            "blueprint.add_branch_node",
+            "blueprint.add_print_string_node",
+        }:
+            new_graph_node_count += 1
+        if op_type == "blueprint.connect_pins":
+            connect_count += 1
+        if op_type == "blueprint.add_print_string_node":
+            message = _param_string(params, "message", "text", "in_string")
+            print_messages.append(message)
+            try:
+                numeric_print_messages.append(int(message))
+            except ValueError:
+                pass
+        elif op_type == "blueprint.add_function_call_node":
+            function_path = _param_string(params, "function_path", "function")
+            defaults = _nested_defaults(params)
+            duration = _param_number(defaults, "Duration", "duration")
+            if "KismetSystemLibrary:Delay" in function_path and duration is not None:
+                delay_durations.append(duration)
+
+    if _is_consecutive(numeric_print_messages) and len(delay_durations) >= len(numeric_print_messages) - 2:
+        diagnostics.append(
+            {
+                "severity": "warning",
+                "code": "UEPI_EDIT_BLUEPRINT_UNROLLED_COUNTDOWN",
+                "message": (
+                    "This preview appears to unroll a countdown into many PrintString and Delay nodes. "
+                    "Prefer a compact Blueprint design using a state variable plus loop/timer/custom event, "
+                    "or explain why an expanded visual script is required."
+                ),
+                "recoverable": True,
+                "recommended_agent_action": {
+                    "action": "revise_plan",
+                    "prefer": ["state_variable", "timer_or_loop", "function_or_custom_event"],
+                    "avoid": ["one_node_per_countdown_number"],
+                },
+            }
+        )
+    elif len(print_messages) >= 6 or len(delay_durations) >= 5:
+        diagnostics.append(
+            {
+                "severity": "warning",
+                "code": "UEPI_EDIT_BLUEPRINT_REPETITIVE_NODES",
+                "message": (
+                    "This preview creates many repeated Blueprint nodes. For maintainability and runtime behavior, "
+                    "consider a data-driven, loop/timer, function, or variable-based design before requesting approval."
+                ),
+                "recoverable": True,
+                "recommended_agent_action": {"action": "compare_design_alternatives_before_apply"},
+            }
+        )
+
+    if len(operations) >= 24 and new_graph_node_count >= 10 and connect_count >= 8:
+        diagnostics.append(
+            {
+                "severity": "warning",
+                "code": "UEPI_EDIT_BLUEPRINT_NODE_COUNT_HIGH",
+                "message": (
+                    "This Blueprint edit plan has a high operation and node count. Include a design rationale and "
+                    "check whether a smaller graph using variables, helper functions, loops, or timers would satisfy the request better."
+                ),
+                "operation_count": len(operations),
+                "new_graph_node_count": new_graph_node_count,
+                "connect_count": connect_count,
+                "recoverable": True,
+            }
+        )
+
     return diagnostics
 
 
@@ -389,12 +514,32 @@ def discover(store: SnapshotStore) -> dict[str, Any]:
             "safety_rules": [
                 "No low-level write operation is exposed as an MCP tool.",
                 "Build the complete intended edit as one edit_preview plan whenever possible, then ask for one user approval before edit_apply.",
+                "Before previewing Blueprint graph edits, compare at least one compact/idiomatic design against any expanded node-by-node design.",
+                "Avoid unrolling repeated gameplay behavior into many duplicate nodes unless the user explicitly asks for that visual shape.",
                 "Use operation refs/node_ref endpoints when later operations need nodes created earlier in the same plan.",
                 "edit_preview must produce a transaction_id before edit_apply.",
                 "edit_apply requires the live editor bridge and approved=true after user review.",
                 "Forbidden operations include arbitrary Python, console commands, deletes, save_all, PIE, config writes, and source-control submit.",
                 "Apply requires user approval, scoped operations, backup artifacts, validation, rescan, and diff.",
             ],
+            "blueprint_plan_guidance": {
+                "design_goals": [
+                    "Prefer maintainable, compact, idiomatic Blueprint graphs over mechanically expanded graphs.",
+                    "For repeated or time-based behavior, prefer variables plus loops, timers, custom events, or helper functions.",
+                    "Prefer reusable logic and state over one node per repeated value, unless the user asks for an explicit visual sequence.",
+                    "Keep runtime behavior clear: avoid latent Delay chains for scalable gameplay logic when a timer or loop is more appropriate.",
+                ],
+                "preview_evidence": [
+                    "Summarize the design alternatives considered.",
+                    "Explain why the chosen design is simpler, more performant, or more maintainable.",
+                    "State any UEPI operation-catalog limitation that forced a less ideal graph shape.",
+                ],
+                "quality_warnings": [
+                    "UEPI_EDIT_BLUEPRINT_UNROLLED_COUNTDOWN",
+                    "UEPI_EDIT_BLUEPRINT_REPETITIVE_NODES",
+                    "UEPI_EDIT_BLUEPRINT_NODE_COUNT_HIGH",
+                ],
+            },
         },
         next_actions=[
             {

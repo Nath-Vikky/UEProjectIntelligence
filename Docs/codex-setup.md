@@ -31,7 +31,7 @@ When no online editor session is available, the MCP server falls back to the exp
 ## Recommended Prompt Rule
 
 ```text
-Use UEPI first. Call uepi_status before other UEPI tools. Use uepi_context to build bounded evidence before answering Unreal project questions. Treat Blueprint pin links, GUIDs, refs, and evidence as source of truth. For edits, build one complete preview plan, ask for explicit user approval once, then apply, validate, refresh/diff, and report the result without additional approval prompts unless the plan changes.
+Use UEPI first. Call uepi_status before other UEPI tools. Use uepi_context to build bounded evidence before answering Unreal project questions. Treat Blueprint pin links, GUIDs, refs, and evidence as source of truth. For edits, choose a compact, idiomatic Blueprint design before choosing operations; prefer variables, loops, timers, custom events, and helper functions over expanded repeated nodes. Build one complete preview plan, ask for explicit user approval once, then apply, validate, refresh/diff, and report the result without additional approval prompts unless the plan changes.
 ```
 
 ## Quick Check

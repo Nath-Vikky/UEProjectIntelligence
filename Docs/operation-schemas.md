@@ -133,7 +133,22 @@ Connect pins using existing node GUIDs, returned node GUIDs, pin names, pin IDs,
 
 Successful node operations return a `detail.node` object with `node_guid`, `graph`, `class`, `title`, and a `pins` array containing `pin_id`, `name`, `direction`, `category`, `default_value`, and `linked_to`.
 
-A complete single-approval countdown plan can include node creation, intra-plan connections, and compile in the same preview:
+Before building a Blueprint edit plan, choose the Blueprint design. Prefer compact and idiomatic graphs: variables for state, timers or loops for repeated/time-based behavior, custom events for reusable behavior, and helper functions for larger logic. Do not unroll repeated gameplay behavior into one node per repeated value unless the user explicitly asks for that visual graph shape.
+
+For example, a countdown should usually be planned as a compact stateful design:
+
+```text
+BeginPlay
+  -> Set CountdownRemaining = 10
+  -> Start timer or looped custom event
+
+CountdownTick
+  -> PrintString(CountdownRemaining, screen=true, log=false)
+  -> Decrement CountdownRemaining
+  -> Continue while CountdownRemaining > 0, otherwise clear timer/end loop
+```
+
+If the current UEPI operation catalog cannot express the compact design safely, report that limitation in `evidence` before falling back to an expanded graph. Expanded node-by-node examples are useful for tiny demonstrations only:
 
 ```json
 [
@@ -171,6 +186,8 @@ A complete single-approval countdown plan can include node creation, intra-plan 
   }
 ]
 ```
+
+Plans that appear to unroll countdowns or create many repeated nodes return quality warnings such as `UEPI_EDIT_BLUEPRINT_UNROLLED_COUNTDOWN`, `UEPI_EDIT_BLUEPRINT_REPETITIVE_NODES`, or `UEPI_EDIT_BLUEPRINT_NODE_COUNT_HIGH`.
 
 ## Editor Content Write Operations
 
