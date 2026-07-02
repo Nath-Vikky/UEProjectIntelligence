@@ -518,8 +518,31 @@ TArray<FTransform> BuildLocalBonePoseForFrame(
 struct FChangedBoneProfile
 {
 	double Score = 0.0;
+	double DriverScore = 0.0;
+	double InheritedScore = 0.0;
+	int32 BoneIndex = INDEX_NONE;
+	int32 ParentIndex = INDEX_NONE;
+	FName BoneName;
+	FName ParentName;
 	bool bPositionChanges = false;
+	bool bDirectLocalMotion = false;
+	bool bInheritedMotion = false;
+	FString MotionRole;
+	FString GenerationPriority;
 	TSharedPtr<FJsonObject> Object;
+};
+
+struct FAnimMotionIntentGroupSummary
+{
+	FString Id;
+	FString Label;
+	FString Description;
+	int32 DriverCount = 0;
+	int32 InheritedMotionCount = 0;
+	double DriverScore = 0.0;
+	double ComponentMotionScore = 0.0;
+	TArray<FString> DominantDriverBones;
+	TArray<FString> DominantInheritedBones;
 };
 
 FString AnimationBoneMotionArtifactRoot()
@@ -530,6 +553,192 @@ FString AnimationBoneMotionArtifactRoot()
 		TEXT("store"),
 		TEXT("artifacts"),
 		TEXT("animation_bone_motion"));
+}
+
+FString AnimBoneIntentGroupId(const FName& BoneName)
+{
+	const FString LowerName = BoneName.ToString().ToLower();
+	const bool bRight = LowerName.EndsWith(TEXT("_r"));
+	const bool bLeft = LowerName.EndsWith(TEXT("_l"));
+	const bool bArm = LowerName.Contains(TEXT("clavicle")) || LowerName.Contains(TEXT("upperarm")) || LowerName.Contains(TEXT("lowerarm")) || LowerName.Contains(TEXT("hand")) || LowerName.Contains(TEXT("thumb")) || LowerName.Contains(TEXT("index")) || LowerName.Contains(TEXT("middle")) || LowerName.Contains(TEXT("ring")) || LowerName.Contains(TEXT("pinky"));
+	const bool bLeg = LowerName.Contains(TEXT("thigh")) || LowerName.Contains(TEXT("calf")) || LowerName.Contains(TEXT("foot")) || LowerName.Contains(TEXT("ball")) || LowerName.Contains(TEXT("toe"));
+	if (bArm && bRight)
+	{
+		return TEXT("right_arm_hand");
+	}
+	if (bArm && bLeft)
+	{
+		return TEXT("left_arm_hand");
+	}
+	if (bLeg && bRight)
+	{
+		return TEXT("right_leg_foot");
+	}
+	if (bLeg && bLeft)
+	{
+		return TEXT("left_leg_foot");
+	}
+	if (LowerName.Contains(TEXT("spine")) || LowerName.Contains(TEXT("pelvis")) || LowerName.Contains(TEXT("neck")) || LowerName.Contains(TEXT("head")) || LowerName == TEXT("root"))
+	{
+		return TEXT("body_spine_head");
+	}
+	return TEXT("other");
+}
+
+FString AnimMotionGroupLabel(const FString& GroupId)
+{
+	if (GroupId == TEXT("right_arm_hand"))
+	{
+		return TEXT("Right arm and hand");
+	}
+	if (GroupId == TEXT("left_arm_hand"))
+	{
+		return TEXT("Left arm and hand");
+	}
+	if (GroupId == TEXT("right_leg_foot"))
+	{
+		return TEXT("Right leg and foot");
+	}
+	if (GroupId == TEXT("left_leg_foot"))
+	{
+		return TEXT("Left leg and foot");
+	}
+	if (GroupId == TEXT("body_spine_head"))
+	{
+		return TEXT("Body, spine, neck, and head");
+	}
+	return TEXT("Other bones");
+}
+
+FString AnimMotionGroupDescription(const FString& GroupId)
+{
+	if (GroupId == TEXT("right_arm_hand"))
+	{
+		return TEXT("Use these bones first for right-sided arm, hand, finger, or gesture motion.");
+	}
+	if (GroupId == TEXT("left_arm_hand"))
+	{
+		return TEXT("Use these bones first for left-sided arm, hand, finger, or gesture motion.");
+	}
+	if (GroupId == TEXT("right_leg_foot"))
+	{
+		return TEXT("Use these bones for right-sided stance, step, and foot placement changes.");
+	}
+	if (GroupId == TEXT("left_leg_foot"))
+	{
+		return TEXT("Use these bones for left-sided stance, step, and foot placement changes.");
+	}
+	if (GroupId == TEXT("body_spine_head"))
+	{
+		return TEXT("Use these bones for posture, balance, torso, neck, and head motion.");
+	}
+	return TEXT("Use these bones only after reviewing their parent chain and motion role.");
+}
+
+FAnimMotionIntentGroupSummary& FindOrAddMotionIntentGroup(TArray<FAnimMotionIntentGroupSummary>& Groups, const FString& GroupId)
+{
+	for (FAnimMotionIntentGroupSummary& Group : Groups)
+	{
+		if (Group.Id == GroupId)
+		{
+			return Group;
+		}
+	}
+
+	FAnimMotionIntentGroupSummary NewGroup;
+	NewGroup.Id = GroupId;
+	NewGroup.Label = AnimMotionGroupLabel(GroupId);
+	NewGroup.Description = AnimMotionGroupDescription(GroupId);
+	Groups.Add(MoveTemp(NewGroup));
+	return Groups.Last();
+}
+
+TArray<TSharedPtr<FJsonValue>> AnimStringArrayValues(const TArray<FString>& Values)
+{
+	TArray<TSharedPtr<FJsonValue>> JsonValues;
+	for (const FString& Value : Values)
+	{
+		JsonValues.Add(MakeShared<FJsonValueString>(Value));
+	}
+	return JsonValues;
+}
+
+TArray<TSharedPtr<FJsonValue>> AnimBoneChainValues(const FReferenceSkeleton& RefSkeleton, int32 BoneIndex)
+{
+	TArray<int32> Chain;
+	int32 CurrentIndex = BoneIndex;
+	while (RefSkeleton.IsValidIndex(CurrentIndex) && Chain.Num() < 32)
+	{
+		Chain.Add(CurrentIndex);
+		CurrentIndex = RefSkeleton.GetParentIndex(CurrentIndex);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> ChainValues;
+	for (int32 ChainIndex = Chain.Num() - 1; ChainIndex >= 0; --ChainIndex)
+	{
+		const int32 ChainBoneIndex = Chain[ChainIndex];
+		TSharedRef<FJsonObject> BoneObject = MakeShared<FJsonObject>();
+		BoneObject->SetNumberField(TEXT("bone_index"), ChainBoneIndex);
+		BoneObject->SetStringField(TEXT("bone_name"), RefSkeleton.GetBoneName(ChainBoneIndex).ToString());
+		ChainValues.Add(MakeShared<FJsonValueObject>(BoneObject));
+	}
+	return ChainValues;
+}
+
+TSharedRef<FJsonObject> AnimCompactMotionBoneObject(const FReferenceSkeleton& RefSkeleton, const FChangedBoneProfile& Changed, int32 Rank)
+{
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetNumberField(TEXT("rank"), Rank);
+	Object->SetNumberField(TEXT("bone_index"), Changed.BoneIndex);
+	Object->SetStringField(TEXT("bone_name"), Changed.BoneName.ToString());
+	Object->SetNumberField(TEXT("parent_index"), Changed.ParentIndex);
+	Object->SetStringField(TEXT("parent_name"), Changed.ParentName.ToString());
+	Object->SetStringField(TEXT("motion_role"), Changed.MotionRole);
+	Object->SetStringField(TEXT("generation_priority"), Changed.GenerationPriority);
+	Object->SetNumberField(TEXT("driver_score"), Changed.DriverScore);
+	Object->SetNumberField(TEXT("component_motion_score"), Changed.Score);
+	Object->SetNumberField(TEXT("inherited_motion_score"), Changed.InheritedScore);
+	Object->SetBoolField(TEXT("position_changes"), Changed.bPositionChanges);
+	Object->SetBoolField(TEXT("direct_local_motion"), Changed.bDirectLocalMotion);
+	Object->SetBoolField(TEXT("inherited_component_motion"), Changed.bInheritedMotion);
+	Object->SetStringField(TEXT("intent_group"), AnimBoneIntentGroupId(Changed.BoneName));
+	Object->SetArrayField(TEXT("skeleton_chain"), AnimBoneChainValues(RefSkeleton, Changed.BoneIndex));
+	if (Changed.Object.IsValid())
+	{
+		Object->SetNumberField(TEXT("component_translation_range"), Changed.Object->GetNumberField(TEXT("component_translation_range")));
+		Object->SetNumberField(TEXT("component_path_length"), Changed.Object->GetNumberField(TEXT("component_path_length")));
+		Object->SetNumberField(TEXT("component_rotation_range_degrees"), Changed.Object->GetNumberField(TEXT("component_rotation_range_degrees")));
+		Object->SetNumberField(TEXT("local_translation_range"), Changed.Object->GetNumberField(TEXT("local_translation_range")));
+		Object->SetNumberField(TEXT("local_rotation_range_degrees"), Changed.Object->GetNumberField(TEXT("local_rotation_range_degrees")));
+	}
+	return Object;
+}
+
+TArray<TSharedPtr<FJsonValue>> AnimMotionIntentGroupValues(TArray<FAnimMotionIntentGroupSummary>& Groups)
+{
+	Groups.Sort([](const FAnimMotionIntentGroupSummary& Left, const FAnimMotionIntentGroupSummary& Right)
+	{
+		const double LeftScore = Left.DriverScore + (Left.ComponentMotionScore * 0.01);
+		const double RightScore = Right.DriverScore + (Right.ComponentMotionScore * 0.01);
+		return LeftScore > RightScore;
+	});
+
+	TArray<TSharedPtr<FJsonValue>> GroupValues;
+	for (const FAnimMotionIntentGroupSummary& Group : Groups)
+	{
+		TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+		Object->SetStringField(TEXT("id"), Group.Id);
+		Object->SetStringField(TEXT("label"), Group.Label);
+		Object->SetStringField(TEXT("description"), Group.Description);
+		Object->SetNumberField(TEXT("driver_count"), Group.DriverCount);
+		Object->SetNumberField(TEXT("inherited_motion_count"), Group.InheritedMotionCount);
+		Object->SetNumberField(TEXT("driver_score"), Group.DriverScore);
+		Object->SetNumberField(TEXT("component_motion_score"), Group.ComponentMotionScore);
+		Object->SetArrayField(TEXT("dominant_driver_bones"), AnimStringArrayValues(Group.DominantDriverBones));
+		Object->SetArrayField(TEXT("dominant_inherited_bones"), AnimStringArrayValues(Group.DominantInheritedBones));
+		GroupValues.Add(MakeShared<FJsonValueObject>(Object));
+	}
+	return GroupValues;
 }
 
 TSharedRef<FJsonObject> AnimationBoneMotionProfileObject(
@@ -559,6 +768,8 @@ TSharedRef<FJsonObject> AnimationBoneMotionProfileObject(
 		Object->SetNumberField(TEXT("bone_count"), 0);
 		Object->SetNumberField(TEXT("changed_bone_count"), 0);
 		Object->SetNumberField(TEXT("position_changed_bone_count"), 0);
+		Object->SetNumberField(TEXT("driver_bone_count"), 0);
+		Object->SetNumberField(TEXT("inherited_motion_bone_count"), 0);
 		return Object;
 	}
 
@@ -671,6 +882,16 @@ TSharedRef<FJsonObject> AnimationBoneMotionProfileObject(
 		const bool bRotationChanges = ComponentRotationRange > RotationThresholdDegrees || LocalRotationRange > RotationThresholdDegrees;
 		const FAnimTrackMotionMetrics* DirectMotion = MotionMetricsByName.Find(BoneName);
 		const bool bDirectTrackChanges = DirectMotion && DirectMotion->Changes();
+		const double DirectTranslationRange = DirectMotion ? DirectMotion->TranslationRange : 0.0;
+		const double DirectRotationRange = DirectMotion ? DirectMotion->RotationRangeDegrees : 0.0;
+		const double DirectScaleRange = DirectMotion ? DirectMotion->ScaleRange : 0.0;
+		const double DriverRotationRange = FMath::Max(LocalRotationRange, DirectRotationRange);
+		const double DriverScore = DirectTranslationRange + LocalTranslationRange + DriverRotationRange + (DirectScaleRange * 10.0);
+		const double ComponentScore = ComponentPathLength + ComponentTranslationRange + (ComponentRotationRange * 0.01);
+		const bool bDirectLocalMotion = bDirectTrackChanges && DriverScore > 0.05;
+		const bool bInheritedMotion = bPositionChanges && !bDirectLocalMotion;
+		const TCHAR* MotionRole = bDirectLocalMotion ? TEXT("direct_driver") : (bInheritedMotion ? TEXT("inherited_component_motion") : TEXT("minor_pose_adjustment"));
+		const TCHAR* GenerationPriority = DriverScore >= 30.0 ? TEXT("primary_driver") : (DriverScore >= 5.0 ? TEXT("secondary_driver") : (bInheritedMotion ? TEXT("inherited_follow_through") : TEXT("low_priority_pose_detail")));
 		if (!bPositionChanges && !bRotationChanges && !bDirectTrackChanges)
 		{
 			continue;
@@ -713,6 +934,11 @@ TSharedRef<FJsonObject> AnimationBoneMotionProfileObject(
 		BoneObject->SetNumberField(TEXT("track_index"), DirectTrackIndex ? *DirectTrackIndex : -1);
 		BoneObject->SetBoolField(TEXT("position_changes"), bPositionChanges);
 		BoneObject->SetBoolField(TEXT("rotation_changes"), bRotationChanges);
+		BoneObject->SetStringField(TEXT("motion_role"), MotionRole);
+		BoneObject->SetStringField(TEXT("generation_priority"), GenerationPriority);
+		BoneObject->SetNumberField(TEXT("driver_score"), DriverScore);
+		BoneObject->SetNumberField(TEXT("component_motion_score"), ComponentScore);
+		BoneObject->SetNumberField(TEXT("inherited_motion_score"), bInheritedMotion ? ComponentScore : 0.0);
 		BoneObject->SetArrayField(TEXT("change_channels"), ChangeChannelValues);
 		BoneObject->SetNumberField(TEXT("component_translation_range"), ComponentTranslationRange);
 		BoneObject->SetNumberField(TEXT("component_displacement_length"), ComponentDisplacementLength);
@@ -740,8 +966,18 @@ TSharedRef<FJsonObject> AnimationBoneMotionProfileObject(
 				ComponentRotationRange));
 
 		FChangedBoneProfile Changed;
-		Changed.Score = ComponentPathLength + ComponentTranslationRange + (ComponentRotationRange * 0.01);
+		Changed.Score = ComponentScore;
+		Changed.DriverScore = DriverScore;
+		Changed.InheritedScore = bInheritedMotion ? ComponentScore : 0.0;
+		Changed.BoneIndex = BoneIndex;
+		Changed.ParentIndex = ParentIndex;
+		Changed.BoneName = BoneName;
+		Changed.ParentName = ParentName;
 		Changed.bPositionChanges = bPositionChanges;
+		Changed.bDirectLocalMotion = bDirectLocalMotion;
+		Changed.bInheritedMotion = bInheritedMotion;
+		Changed.MotionRole = MotionRole;
+		Changed.GenerationPriority = GenerationPriority;
 		Changed.Object = BoneObject;
 		ChangedBoneProfiles.Add(MoveTemp(Changed));
 	}
@@ -760,8 +996,79 @@ TSharedRef<FJsonObject> AnimationBoneMotionProfileObject(
 		}
 	}
 
+	TArray<FChangedBoneProfile> DriverBoneProfiles;
+	TArray<FChangedBoneProfile> InheritedMotionProfiles;
+	for (const FChangedBoneProfile& Changed : ChangedBoneProfiles)
+	{
+		if (Changed.bDirectLocalMotion)
+		{
+			DriverBoneProfiles.Add(Changed);
+		}
+		else if (Changed.bInheritedMotion)
+		{
+			InheritedMotionProfiles.Add(Changed);
+		}
+	}
+
+	DriverBoneProfiles.Sort([](const FChangedBoneProfile& Left, const FChangedBoneProfile& Right)
+	{
+		if (!FMath::IsNearlyEqual(Left.DriverScore, Right.DriverScore))
+		{
+			return Left.DriverScore > Right.DriverScore;
+		}
+		return Left.Score > Right.Score;
+	});
+
+	InheritedMotionProfiles.Sort([](const FChangedBoneProfile& Left, const FChangedBoneProfile& Right)
+	{
+		return Left.InheritedScore > Right.InheritedScore;
+	});
+
+	TArray<TSharedPtr<FJsonValue>> DriverBoneValues;
+	for (int32 Index = 0; Index < DriverBoneProfiles.Num(); ++Index)
+	{
+		DriverBoneValues.Add(MakeShared<FJsonValueObject>(AnimCompactMotionBoneObject(RefSkeleton, DriverBoneProfiles[Index], Index)));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> InheritedMotionValues;
+	for (int32 Index = 0; Index < InheritedMotionProfiles.Num(); ++Index)
+	{
+		InheritedMotionValues.Add(MakeShared<FJsonValueObject>(AnimCompactMotionBoneObject(RefSkeleton, InheritedMotionProfiles[Index], Index)));
+	}
+
+	TArray<FAnimMotionIntentGroupSummary> IntentGroups;
+	for (const FChangedBoneProfile& Changed : DriverBoneProfiles)
+	{
+		FAnimMotionIntentGroupSummary& Group = FindOrAddMotionIntentGroup(IntentGroups, AnimBoneIntentGroupId(Changed.BoneName));
+		++Group.DriverCount;
+		Group.DriverScore += Changed.DriverScore;
+		Group.ComponentMotionScore += Changed.Score;
+		if (Group.DominantDriverBones.Num() < 8)
+		{
+			Group.DominantDriverBones.Add(Changed.BoneName.ToString());
+		}
+	}
+	for (const FChangedBoneProfile& Changed : InheritedMotionProfiles)
+	{
+		FAnimMotionIntentGroupSummary& Group = FindOrAddMotionIntentGroup(IntentGroups, AnimBoneIntentGroupId(Changed.BoneName));
+		++Group.InheritedMotionCount;
+		Group.ComponentMotionScore += Changed.Score;
+		if (Group.DominantInheritedBones.Num() < 8)
+		{
+			Group.DominantInheritedBones.Add(Changed.BoneName.ToString());
+		}
+	}
+
+	TArray<FString> PrimaryDriverNames;
+	for (int32 Index = 0; Index < FMath::Min(DriverBoneProfiles.Num(), 6); ++Index)
+	{
+		PrimaryDriverNames.Add(DriverBoneProfiles[Index].BoneName.ToString());
+	}
+
 	TArray<TSharedPtr<FJsonValue>> GuidelineValues;
 	GuidelineValues.Add(MakeShared<FJsonValueString>(TEXT("Use initial_pose and end_pose to anchor the animation on this skeleton.")));
+	GuidelineValues.Add(MakeShared<FJsonValueString>(TEXT("Start procedural generation from driver_bones; they are locally keyed controls sorted by local motion strength.")));
+	GuidelineValues.Add(MakeShared<FJsonValueString>(TEXT("Use inherited_motion_bones as follow-through or end-effector evidence, not as the first set of bones to key.")));
 	GuidelineValues.Add(MakeShared<FJsonValueString>(TEXT("Use changed_bones samples as sparse keyframes; interpolate transforms between normalized_time values.")));
 	GuidelineValues.Add(MakeShared<FJsonValueString>(TEXT("Prefer component_translation for human-readable motion intent, and local_transform for programmatic bone animation output.")));
 
@@ -773,10 +1080,18 @@ TSharedRef<FJsonObject> AnimationBoneMotionProfileObject(
 	Object->SetNumberField(TEXT("bone_count"), RefSkeleton.GetNum());
 	Object->SetNumberField(TEXT("changed_bone_count"), ChangedBoneValues.Num());
 	Object->SetNumberField(TEXT("position_changed_bone_count"), PositionChangedBoneCount);
+	Object->SetNumberField(TEXT("driver_bone_count"), DriverBoneValues.Num());
+	Object->SetNumberField(TEXT("inherited_motion_bone_count"), InheritedMotionValues.Num());
+	Object->SetStringField(TEXT("motion_intent_summary"), PrimaryDriverNames.Num() > 0
+		? FString::Printf(TEXT("Primary local driver bones: %s. Use these before inherited end-effectors when generating procedural animation."), *FString::Join(PrimaryDriverNames, TEXT(", ")))
+		: TEXT("No strong local driver bones were detected; use changed_bones as sparse sampled evidence."));
 	Object->SetArrayField(TEXT("sample_frames"), SampleFrameValues);
 	Object->SetArrayField(TEXT("initial_pose"), InitialPoseValues);
 	Object->SetArrayField(TEXT("end_pose"), EndPoseValues);
 	Object->SetArrayField(TEXT("changed_bones"), ChangedBoneValues);
+	Object->SetArrayField(TEXT("driver_bones"), DriverBoneValues);
+	Object->SetArrayField(TEXT("inherited_motion_bones"), InheritedMotionValues);
+	Object->SetArrayField(TEXT("motion_intent_groups"), AnimMotionIntentGroupValues(IntentGroups));
 	Object->SetArrayField(TEXT("llm_generation_guidelines"), GuidelineValues);
 	return Object;
 }
@@ -812,6 +1127,8 @@ TSharedRef<FJsonObject> WriteAnimationBoneMotionProfileArtifact(
 	Manifest->SetNumberField(TEXT("bone_count"), Payload->GetNumberField(TEXT("bone_count")));
 	Manifest->SetNumberField(TEXT("changed_bone_count"), Payload->GetNumberField(TEXT("changed_bone_count")));
 	Manifest->SetNumberField(TEXT("position_changed_bone_count"), Payload->GetNumberField(TEXT("position_changed_bone_count")));
+	Manifest->SetNumberField(TEXT("driver_bone_count"), Payload->GetNumberField(TEXT("driver_bone_count")));
+	Manifest->SetNumberField(TEXT("inherited_motion_bone_count"), Payload->GetNumberField(TEXT("inherited_motion_bone_count")));
 	Manifest->SetNumberField(TEXT("byte_count"), FTCHARToUTF8(*Json).Length());
 	Manifest->SetStringField(TEXT("encoding"), TEXT("json"));
 
@@ -3253,6 +3570,8 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 		SequenceEntity->Attributes.Add(TEXT("bone_motion_profile_artifact_uri"), BoneMotionProfileManifest->GetStringField(TEXT("artifact_uri")));
 		SequenceEntity->Attributes.Add(TEXT("bone_motion_profile_changed_bone_count"), FString::FromInt(static_cast<int32>(BoneMotionProfileManifest->GetNumberField(TEXT("changed_bone_count")))));
 		SequenceEntity->Attributes.Add(TEXT("bone_motion_profile_position_changed_bone_count"), FString::FromInt(static_cast<int32>(BoneMotionProfileManifest->GetNumberField(TEXT("position_changed_bone_count")))));
+		SequenceEntity->Attributes.Add(TEXT("bone_motion_profile_driver_bone_count"), FString::FromInt(static_cast<int32>(BoneMotionProfileManifest->GetNumberField(TEXT("driver_bone_count")))));
+		SequenceEntity->Attributes.Add(TEXT("bone_motion_profile_inherited_motion_bone_count"), FString::FromInt(static_cast<int32>(BoneMotionProfileManifest->GetNumberField(TEXT("inherited_motion_bone_count")))));
 		SequenceEntity->Completeness.Covered.AddUnique(TEXT("motion_summary"));
 		SequenceEntity->Completeness.Covered.AddUnique(TEXT("bone_motion_profile_artifact"));
 	}

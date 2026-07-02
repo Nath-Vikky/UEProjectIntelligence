@@ -5406,6 +5406,9 @@ class ScanValidator:
         self.expect_string(value.get("skeleton_path"), f"{path}.skeleton_path")
         for key in ("analysis_sample_count", "bone_count", "changed_bone_count", "position_changed_bone_count", "byte_count"):
             self.expect_non_negative_integer(value.get(key), f"{path}.{key}")
+        for key in ("driver_bone_count", "inherited_motion_bone_count"):
+            if key in value:
+                self.expect_non_negative_integer(value.get(key), f"{path}.{key}")
         self.expect_string(value.get("encoding"), f"{path}.encoding", allow_empty=False)
 
     def validate_animation_sequence_snapshot(self, value: Any, path: str) -> None:

@@ -236,7 +236,7 @@ class AnimationPlaybackRoute(KeywordRoute):
             name="animation_playback",
             priority=80,
             keywords={"animation", "anim", "montage", "blendspace", "sequence", "run", "walk", "动画", "蒙太奇", "状态机"},
-            interpretation="Animation playback route: sequences, montages, blend spaces, AnimBP references, notifies, curves, changing-bone summaries, and optional bone-motion profile artifacts.",
+            interpretation="Animation playback route: sequences, montages, blend spaces, AnimBP references, notifies, curves, changing-bone summaries, and optional bone-motion profile artifacts with driver_bones and motion_intent_groups.",
             kinds={"asset", "animation_sequence", "animation_montage", "blend_space", "anim_blueprint", "anim_state_machine", "anim_state", "anim_asset_player"},
             relation_types={"contains_track", "animates_bone", "contains_notify", "plays_animation", "plays_montage", "uses_anim_blueprint", "uses_skeleton", "uses_skeletal_mesh"},
         )

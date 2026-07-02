@@ -237,6 +237,9 @@ def write_fixture(root: Path) -> None:
         "bone_count": 2,
         "changed_bone_count": 1,
         "position_changed_bone_count": 1,
+        "driver_bone_count": 1,
+        "inherited_motion_bone_count": 0,
+        "motion_intent_summary": "Primary local driver bones: hand_r. Use these before inherited end-effectors when generating procedural animation.",
         "sample_frames": [
             {"index": 0, "frame_number": 0, "time_seconds": 0.0, "normalized_time": 0.0},
             {"index": 1, "frame_number": 15, "time_seconds": 0.5, "normalized_time": 0.5},
@@ -254,6 +257,11 @@ def write_fixture(root: Path) -> None:
                 "track_index": 0,
                 "position_changes": True,
                 "rotation_changes": True,
+                "motion_role": "direct_driver",
+                "generation_priority": "primary_driver",
+                "driver_score": 55.0,
+                "component_motion_score": 72.55,
+                "inherited_motion_score": 0.0,
                 "change_channels": ["component_translation", "component_rotation", "local_rotation_track"],
                 "component_translation_range": 24.0,
                 "component_displacement_length": 4.0,
@@ -290,7 +298,51 @@ def write_fixture(root: Path) -> None:
                 "llm_summary": "hand_r moves in a waving arc.",
             }
         ],
-        "llm_generation_guidelines": ["Use changed_bones samples as sparse keyframes."],
+        "driver_bones": [
+            {
+                "rank": 0,
+                "bone_index": 1,
+                "bone_name": "hand_r",
+                "parent_index": 0,
+                "parent_name": "upperarm_r",
+                "motion_role": "direct_driver",
+                "generation_priority": "primary_driver",
+                "driver_score": 55.0,
+                "component_motion_score": 72.55,
+                "inherited_motion_score": 0.0,
+                "position_changes": True,
+                "direct_local_motion": True,
+                "inherited_component_motion": False,
+                "intent_group": "right_arm_hand",
+                "skeleton_chain": [
+                    {"bone_index": 0, "bone_name": "upperarm_r"},
+                    {"bone_index": 1, "bone_name": "hand_r"},
+                ],
+                "component_translation_range": 24.0,
+                "component_path_length": 48.0,
+                "component_rotation_range_degrees": 55.0,
+                "local_translation_range": 0.0,
+                "local_rotation_range_degrees": 55.0,
+            }
+        ],
+        "inherited_motion_bones": [],
+        "motion_intent_groups": [
+            {
+                "id": "right_arm_hand",
+                "label": "Right arm and hand",
+                "description": "Use these bones first for right-sided arm, hand, finger, or gesture motion.",
+                "driver_count": 1,
+                "inherited_motion_count": 0,
+                "driver_score": 55.0,
+                "component_motion_score": 72.55,
+                "dominant_driver_bones": ["hand_r"],
+                "dominant_inherited_bones": [],
+            }
+        ],
+        "llm_generation_guidelines": [
+            "Start procedural generation from driver_bones; they are locally keyed controls sorted by local motion strength.",
+            "Use changed_bones samples as sparse keyframes.",
+        ],
     }
     animation_profile_path.write_text(json.dumps(animation_profile, ensure_ascii=False), encoding="utf-8")
     bone_motion_profile_manifest = {
@@ -306,6 +358,8 @@ def write_fixture(root: Path) -> None:
         "bone_count": 2,
         "changed_bone_count": 1,
         "position_changed_bone_count": 1,
+        "driver_bone_count": 1,
+        "inherited_motion_bone_count": 0,
         "byte_count": animation_profile_path.stat().st_size,
         "encoding": "json",
     }
@@ -367,6 +421,8 @@ def write_fixture(root: Path) -> None:
         "attributes": {
             "sequence_path": "/Game/Animations/Waving.Waving",
             "bone_motion_profile_artifact_uri": f"uepi://animation-bone-motion-profile/{animation_artifact_id}",
+            "bone_motion_profile_driver_bone_count": "1",
+            "bone_motion_profile_inherited_motion_bone_count": "0",
         },
         "completeness": {"state": "partial", "covered": ["motion_summary", "bone_motion_profile_artifact"], "omitted": [], "warnings": []},
         "diagnostics": [],
@@ -811,6 +867,9 @@ def main() -> int:
             assert animation["result"]["bone_motion_profile_manifest"]["artifact_id"] == "a" * 64
             assert animation["result"]["bone_motion_profile"]["schema_version"] == "uepi.animation_bone_motion_profile.v1"
             assert animation["result"]["bone_motion_profile"]["changed_bones"][0]["bone_name"] == "hand_r"
+            assert animation["result"]["bone_motion_profile"]["driver_bones"][0]["bone_name"] == "hand_r"
+            assert animation["result"]["bone_motion_profile"]["driver_bones"][0]["motion_role"] == "direct_driver"
+            assert animation["result"]["bone_motion_profile"]["motion_intent_groups"][0]["id"] == "right_arm_hand"
             context = request(
                 process,
                 44,

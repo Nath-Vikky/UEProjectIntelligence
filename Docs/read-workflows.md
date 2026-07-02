@@ -48,7 +48,7 @@ Bone motion profile artifacts are written under:
 Saved/UEProjectIntelligence/store/artifacts/animation_bone_motion/
 ```
 
-The profile separates `initial_pose`, `end_pose`, and sorted `changed_bones`. Each changed bone includes sparse time samples, local transforms, component-space transforms, component translation deltas, rotation deltas, bounds, and an LLM-oriented summary.
+The profile separates `initial_pose`, `end_pose`, `driver_bones`, `inherited_motion_bones`, `motion_intent_groups`, and sorted `changed_bones`. For procedural animation generation, start with `driver_bones` and `motion_intent_groups` to identify locally keyed controls, then use `changed_bones` samples as supporting evidence for interpolation and end-effector follow-through.
 
 ## Impact Questions
 
