@@ -2,6 +2,7 @@
 # Replace every __PLACEHOLDER__ before running Codex.
 # The single codex profile exposes read tools plus safe edit-planning/apply tools.
 # Edit apply still requires the editor live bridge, edit_preview, explicit user approval, validation, and diff reporting.
+# Online UEPI editor sessions are preferred for live reads/edits; this --project path is the offline Snapshot fallback.
 
 [mcp_servers.uepi]
 command = "__PYTHON_EXE__"

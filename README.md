@@ -85,6 +85,8 @@ The MCP command should point to:
 __PROJECT_ROOT__/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py
 ```
 
+When the editor is open, UEPI publishes an active local bridge session and the MCP server uses that online project context for live reads and guarded edits. When no editor session is active, `--project` is the explicit offline Snapshot project selector.
+
 ## Ask Questions Or Request Safe Edits
 
 Recommended Codex flow:

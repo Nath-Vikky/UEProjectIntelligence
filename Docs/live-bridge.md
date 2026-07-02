@@ -27,7 +27,7 @@ capabilities
 diagnostics
 ```
 
-In the current build, the Unreal side starts a localhost TCP bridge by default when the editor session starts. It writes a session file and token file, then accepts length-prefixed JSON requests. Users can still opt out in Project Settings.
+In the current build, the Unreal side starts a localhost TCP bridge by default when the editor session starts. It writes a project-local session file, a project-local token file, and a user-local active-session registry entry, then accepts length-prefixed JSON requests. Users can still opt out in Project Settings.
 
 Implemented commands:
 
@@ -48,20 +48,25 @@ It returns the artifact path, `uepi://artifact/screenshots/...` URI, PNG dimensi
 
 ## Session Path
 
-Future editor bridge sessions use:
+Editor bridge sessions use:
 
 ```text
 __PROJECT_ROOT__/Saved/UEProjectIntelligence/store/sessions/editor-bridge.json
 ```
 
-Expected future schema:
+Session schema:
 
 ```json
 {
   "schema_version": "uepi.editor-bridge-session.v1",
+  "active": true,
   "host": "127.0.0.1",
-  "port": 0,
+  "port": 48735,
   "session_id": "...",
+  "project_file": "...",
+  "project_root": "...",
+  "store_root": "...",
+  "session_path": "...",
   "token_path": "...",
   "token_hash": "...",
   "transport_ready": true,
@@ -69,6 +74,8 @@ Expected future schema:
   "last_heartbeat": "..."
 }
 ```
+
+When the configured bridge port is `0`, UEPI tries localhost ports starting at `48735` so multiple open UE projects can publish separate online sessions.
 
 ## Safety Rules
 

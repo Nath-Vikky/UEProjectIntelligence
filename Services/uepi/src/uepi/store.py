@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -70,6 +71,116 @@ def _identifier_matches_values(identifier: str, values: list[str]) -> bool:
     return False
 
 
+def _session_registry_dirs() -> list[Path]:
+    candidates: list[Path] = []
+    override = os.environ.get("UEPI_SESSION_REGISTRY_DIR")
+    if override:
+        candidates.append(Path(override).expanduser())
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        candidates.append(Path(local_app_data).expanduser() / "UEProjectIntelligence" / "sessions")
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+    return unique
+
+
+def _session_timestamp(session: dict[str, Any]) -> datetime | None:
+    return (
+        _parse_utc(session.get("last_heartbeat"))
+        or _parse_utc(session.get("last_seen_at_utc"))
+        or _parse_utc(session.get("started_at"))
+    )
+
+
+def _session_store_root(session: dict[str, Any]) -> Path | None:
+    store_root = session.get("store_root")
+    if isinstance(store_root, str) and store_root:
+        return Path(store_root).expanduser().resolve()
+    project_file = session.get("project_file")
+    if isinstance(project_file, str) and project_file:
+        return (Path(project_file).expanduser().resolve().parent / "Saved" / "UEProjectIntelligence").resolve()
+    return None
+
+
+def _active_editor_sessions() -> list[dict[str, Any]]:
+    sessions: list[dict[str, Any]] = []
+    now = datetime.now(timezone.utc)
+    for directory in _session_registry_dirs():
+        if not directory.exists():
+            continue
+        for path in directory.glob("*.json"):
+            try:
+                session = _load_json(path)
+            except SnapshotStoreError:
+                continue
+            if session.get("schema_version") != "uepi.editor-bridge-session.v1":
+                continue
+            if not session.get("active") or not session.get("transport_ready"):
+                continue
+            timestamp = _session_timestamp(session)
+            if timestamp is None or (now - timestamp).total_seconds() > 90.0:
+                continue
+            store_root = _session_store_root(session)
+            if store_root is None:
+                continue
+            session = dict(session)
+            session["_registry_path"] = str(path)
+            session["_store_root"] = str(store_root)
+            session["_timestamp"] = timestamp.isoformat()
+            sessions.append(session)
+    sessions.sort(key=lambda item: str(item.get("_timestamp") or ""), reverse=True)
+    return sessions
+
+
+def _session_matches_project(session: dict[str, Any], project: str | Path | None) -> bool:
+    if not project:
+        return False
+    raw = str(project)
+    project_path = Path(project).expanduser()
+    project_values = [raw]
+    try:
+        resolved = project_path.resolve()
+        project_values.append(str(resolved))
+        if resolved.suffix.lower() == ".uproject":
+            project_values.append(str(resolved.parent))
+            project_values.append(resolved.stem)
+        else:
+            project_values.append(resolved.name)
+    except OSError:
+        pass
+
+    values = [
+        str(session.get("project_name") or ""),
+        str(session.get("project_file") or ""),
+        str(session.get("project_root") or ""),
+        str(session.get("store_root") or ""),
+        str(session.get("_store_root") or ""),
+    ]
+    return any(_identifier_matches_values(identifier, values) for identifier in project_values)
+
+
+def _active_editor_store_root(project: str | Path | None = None) -> Path | None:
+    sessions = _active_editor_sessions()
+    if not sessions:
+        return None
+
+    if project:
+        for session in sessions:
+            if _session_matches_project(session, project):
+                return Path(str(session["_store_root"])).resolve()
+
+    if len(sessions) == 1:
+        return Path(str(sessions[0]["_store_root"])).resolve()
+
+    return None
+
+
 def _entity_match_values(entity: dict[str, Any]) -> list[str]:
     attributes = entity.get("attributes") if isinstance(entity.get("attributes"), dict) else {}
     typed_attributes = entity.get("typed_attributes") if isinstance(entity.get("typed_attributes"), dict) else {}
@@ -109,6 +220,10 @@ def resolve_store_root(project: str | Path | None = None, store: str | Path | No
 
     if db:
         return Path(db).expanduser().resolve().parent
+
+    active_store = _active_editor_store_root(project)
+    if active_store is not None:
+        return active_store
 
     if project:
         project_path = Path(project).expanduser().resolve()

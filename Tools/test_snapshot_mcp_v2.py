@@ -13,6 +13,10 @@ from datetime import datetime, timezone
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "Services" / "uepi" / "src" / "uepi" / "mcp_server.py"
 PYTHONPATH = ROOT / "Services" / "uepi" / "src"
+sys.path.insert(0, str(PYTHONPATH))
+
+from uepi.bridge_client import _read_token  # noqa: E402
+from uepi.store import resolve_store_root  # noqa: E402
 
 READ_TOOLS = {
     "uepi_status",
@@ -507,10 +511,49 @@ def write_fixture(root: Path) -> None:
     )
 
 
+def assert_bridge_token_and_registry_resolution(root: Path) -> None:
+    sessions = root / "store" / "sessions"
+    session_path = sessions / "editor-bridge.json"
+    token_path = sessions / "editor-bridge-token.txt"
+    token_path.write_text("secret-token", encoding="utf-8")
+    assert _read_token({"token_path": "../../bad/editor-bridge-token.txt"}, session_path) == "secret-token"
+
+    registry = root / "registry"
+    registry.mkdir(parents=True)
+    (registry / "FixtureProject-abcd1234.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "uepi.editor-bridge-session.v1",
+                "active": True,
+                "state": "active",
+                "transport_ready": True,
+                "project_name": "FixtureProject",
+                "project_file": str(root.parent / "FixtureProject" / "FixtureProject.uproject"),
+                "project_root": str(root.parent / "FixtureProject"),
+                "store_root": str(root),
+                "last_heartbeat": datetime.now(timezone.utc).isoformat(),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    old_registry = os.environ.get("UEPI_SESSION_REGISTRY_DIR")
+    os.environ["UEPI_SESSION_REGISTRY_DIR"] = str(registry)
+    try:
+        assert resolve_store_root(project="FixtureProject") == root.resolve()
+        assert resolve_store_root(project=root.parent / "FixtureProject" / "FixtureProject.uproject") == root.resolve()
+    finally:
+        if old_registry is None:
+            os.environ.pop("UEPI_SESSION_REGISTRY_DIR", None)
+        else:
+            os.environ["UEPI_SESSION_REGISTRY_DIR"] = old_registry
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="uepi_snapshot_mcp_") as temp_dir:
         root = Path(temp_dir)
         write_fixture(root)
+        assert_bridge_token_and_registry_resolution(root)
         env = os.environ.copy()
         env["PYTHONPATH"] = str(PYTHONPATH)
         sync = subprocess.run(

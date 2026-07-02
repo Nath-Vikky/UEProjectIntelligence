@@ -22,6 +22,12 @@ The `codex` profile does not require the Unreal Editor to be open when `Saved/UE
 
 Edit apply still requires the Unreal Editor, the live editor bridge, a preview plan, and explicit user approval. Without those gates, edit tools return structured rejection diagnostics and do not mutate assets.
 
+## Project Selection
+
+When an Unreal Editor with UEPI is open, the plugin writes a local active-session record under the user's app data directory. The MCP server uses that record as the online project context when it matches the configured project, or when it is the only active UEPI editor session.
+
+When no online editor session is available, the MCP server falls back to the explicit `--project` path in the Codex config and serves the latest saved Snapshot for that project. This keeps offline reads intentional: change the configured project path only when the user has clearly selected a different offline project.
+
 ## Recommended Prompt Rule
 
 ```text

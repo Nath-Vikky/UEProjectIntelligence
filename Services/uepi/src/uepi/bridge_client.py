@@ -29,23 +29,42 @@ def read_bridge_session(store: SnapshotStore) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def _read_token(session: dict[str, Any]) -> str | None:
+def _token_path_candidates(session: dict[str, Any], session_path: Path) -> list[Path]:
     token_path = session.get("token_path")
     if not isinstance(token_path, str) or not token_path:
-        return None
-    try:
-        return Path(token_path).read_text(encoding="utf-8-sig").strip()
-    except OSError:
-        return None
+        return []
+    raw = Path(token_path).expanduser()
+    candidates = [raw]
+    if not raw.is_absolute():
+        candidates.append((session_path.parent / raw).resolve())
+        candidates.append(session_path.parent / raw.name)
+    return candidates
+
+
+def _read_token(session: dict[str, Any], session_path: Path) -> str | None:
+    seen: set[str] = set()
+    for candidate in _token_path_candidates(session, session_path):
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            token = candidate.read_text(encoding="utf-8-sig").strip()
+        except OSError:
+            continue
+        if token:
+            return token
+    return None
 
 
 def call_bridge(store: SnapshotStore, command: str, params: dict[str, Any] | None = None, timeout: float = 2.0) -> dict[str, Any]:
+    session_path = bridge_session_path(store)
     session = read_bridge_session(store)
     if not session or session.get("schema_version") != BRIDGE_SESSION_SCHEMA:
         return {"ok": False, "error": {"code": "UEPI_BRIDGE_NOT_CONFIGURED", "message": "Bridge session file is missing."}}
     if not session.get("active") or not session.get("transport_ready"):
         return {"ok": False, "error": {"code": "UEPI_BRIDGE_NOT_READY", "message": "Bridge session exists but transport is not ready."}}
-    token = _read_token(session)
+    token = _read_token(session, session_path)
     if not token:
         return {"ok": False, "error": {"code": "UEPI_BRIDGE_TOKEN_MISSING", "message": "Bridge token file is missing or unreadable."}}
 

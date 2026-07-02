@@ -56,6 +56,8 @@
 #include "Misc/Paths.h"
 #include "Misc/ScopeLock.h"
 #include "Misc/SecureHash.h"
+#include "HAL/PlatformMisc.h"
+#include "HAL/PlatformProcess.h"
 #include "ScopedTransaction.h"
 #include "GenericPlatform/GenericPlatformOutputDevices.h"
 #include "Serialization/JsonSerializer.h"
@@ -87,7 +89,7 @@ namespace UE::ProjectIntelligence
 	{
 		FString UEPISessionsDirectory()
 		{
-			return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("sessions"));
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("sessions")));
 		}
 
 		bool SaveJsonObject(const TSharedRef<FJsonObject>& Object, const FString& Path);
@@ -102,9 +104,32 @@ namespace UE::ProjectIntelligence
 			return FPaths::Combine(UEPISessionsDirectory(), TEXT("editor-bridge-token.txt"));
 		}
 
+		FString UEPIStoreRoot()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence")));
+		}
+
+		FString UEPIGlobalSessionsDirectory()
+		{
+			FString LocalAppData = FPlatformMisc::GetEnvironmentVariable(TEXT("LOCALAPPDATA"));
+			if (LocalAppData.IsEmpty())
+			{
+				LocalAppData = FPaths::ProjectSavedDir();
+			}
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(LocalAppData, TEXT("UEProjectIntelligence"), TEXT("sessions")));
+		}
+
+		FString UEPIGlobalBridgeSessionPath()
+		{
+			const FString ProjectFile = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
+			const FString ProjectHash = FMD5::HashAnsiString(*ProjectFile).Left(12);
+			const FString FileName = FPaths::MakeValidFileName(FString::Printf(TEXT("%s-%s.json"), *FApp::GetProjectName(), *ProjectHash));
+			return FPaths::Combine(UEPIGlobalSessionsDirectory(), FileName);
+		}
+
 		FString UEPIRequestsDirectory()
 		{
-			return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("requests"));
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("requests")));
 		}
 
 		FString JsonObjectToString(const TSharedRef<FJsonObject>& Object)
@@ -1587,7 +1612,6 @@ namespace UE::ProjectIntelligence
 		SessionPath = UEPIBridgeSessionPath();
 		TokenPath = UEPIBridgeTokenPath();
 		Token = FGuid::NewGuid().ToString(EGuidFormats::Digits);
-		Port = InRequestedPort > 0 ? FMath::Clamp(InRequestedPort, 1, 65535) : 48735;
 		bActive = true;
 
 		IFileManager::Get().MakeDirectory(*FPaths::GetPath(TokenPath), true);
@@ -1598,8 +1622,32 @@ namespace UE::ProjectIntelligence
 			return false;
 		}
 
-		const FIPv4Endpoint Endpoint(FIPv4Address(127, 0, 0, 1), static_cast<uint16>(Port));
-		Listener = MakeUnique<FTcpListener>(Endpoint, FTimespan::FromMilliseconds(100), true);
+		const int32 FirstPort = InRequestedPort > 0 ? FMath::Clamp(InRequestedPort, 1, 65535) : 48735;
+		const int32 MaxAttempts = InRequestedPort > 0 ? 1 : 64;
+		for (int32 Attempt = 0; Attempt < MaxAttempts; ++Attempt)
+		{
+			const int32 CandidatePort = FirstPort + Attempt;
+			if (CandidatePort > 65535)
+			{
+				break;
+			}
+			const FIPv4Endpoint Endpoint(FIPv4Address(127, 0, 0, 1), static_cast<uint16>(CandidatePort));
+			Listener = MakeUnique<FTcpListener>(Endpoint, FTimespan::FromMilliseconds(100), true);
+			if (Listener.IsValid() && Listener->IsActive())
+			{
+				Port = CandidatePort;
+				break;
+			}
+			Listener.Reset();
+		}
+		if (!Listener.IsValid() || !Listener->IsActive())
+		{
+			bActive = false;
+			OutError = InRequestedPort > 0
+				? FString::Printf(TEXT("Failed to start UEPI bridge on requested port %d."), InRequestedPort)
+				: TEXT("Failed to start UEPI bridge on any default localhost port.");
+			return false;
+		}
 		Listener->OnConnectionAccepted().BindRaw(this, &FUEPIEditorCommandBridge::HandleConnectionAccepted);
 
 		return WriteSessionObject(TEXT("active"), OutError);
@@ -3973,8 +4021,12 @@ namespace UE::ProjectIntelligence
 		Root->SetStringField(TEXT("implementation"), TEXT("tcp_length_prefixed_json"));
 		Root->SetStringField(TEXT("project_name"), FApp::GetProjectName());
 		Root->SetStringField(TEXT("project_file"), FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath()));
-		Root->SetStringField(TEXT("token_path"), TokenPath);
+		Root->SetStringField(TEXT("project_root"), FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
+		Root->SetStringField(TEXT("store_root"), UEPIStoreRoot());
+		Root->SetStringField(TEXT("session_path"), FPaths::ConvertRelativePathToFull(SessionPath));
+		Root->SetStringField(TEXT("token_path"), FPaths::ConvertRelativePathToFull(TokenPath));
 		Root->SetStringField(TEXT("token_hash"), FMD5::HashAnsiString(*Token));
+		Root->SetNumberField(TEXT("pid"), static_cast<double>(FPlatformProcess::GetCurrentProcessId()));
 		Root->SetStringField(TEXT("started_at"), FDateTime::UtcNow().ToIso8601());
 		Root->SetStringField(TEXT("last_heartbeat"), FDateTime::UtcNow().ToIso8601());
 		TArray<FString> Capabilities = FUEPIBridgeProtocol::ReadCapabilities();
@@ -3991,12 +4043,17 @@ namespace UE::ProjectIntelligence
 			return false;
 		}
 
+		const TSharedRef<FJsonObject> SessionObject = MakeSessionObject(State);
+		const FString SessionText = JsonObjectToString(SessionObject);
 		IFileManager::Get().MakeDirectory(*FPaths::GetPath(SessionPath), true);
-		if (!FFileHelper::SaveStringToFile(JsonObjectToString(MakeSessionObject(State)), *SessionPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+		if (!FFileHelper::SaveStringToFile(SessionText, *SessionPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 		{
 			OutError = FString::Printf(TEXT("Failed to write UEPI bridge session file: %s"), *SessionPath);
 			return false;
 		}
+		const FString GlobalSessionPath = UEPIGlobalBridgeSessionPath();
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(GlobalSessionPath), true);
+		FFileHelper::SaveStringToFile(SessionText, *GlobalSessionPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 		OutError.Reset();
 		return true;
 	}

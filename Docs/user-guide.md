@@ -82,6 +82,12 @@ Working directory:
 __PROJECT_ROOT__
 ```
 
+## Project Selection
+
+Online editor context wins. If a UE project with UEPI is open, the editor publishes an active bridge session and Codex uses that project for live reads and guarded edits.
+
+Offline Snapshot reads use the explicit `--project` path in the MCP config. Treat that path as the selected offline project label; change it only when the user clearly asks to inspect another installed UEPI project while its editor is closed.
+
 ## Recommended Codex Prompt
 
 After connecting UEPI MCP, start with:
