@@ -21,12 +21,12 @@
 
 ## Experimental Write Alpha
 
-- Blueprint write alpha can add variables, set variable defaults, add simple components, set simple component properties, and compile through the live bridge when write settings are explicitly enabled.
+- Blueprint write alpha can add variables, set variable defaults, add simple components, set simple component properties, and compile through the live bridge after preview and user approval.
 - Blueprint graph write alpha can create function graphs, add custom events, add function-call, variable get/set, branch, and PrintString nodes, and connect pins by node GUID plus pin name/id.
-- Actor write alpha can spawn actors, set transforms, and set simple reflected actor properties when explicitly enabled.
-- Material write alpha can create `UMaterialInstanceConstant` assets, set scalar/vector/texture parameters, and apply materials to actor or Blueprint component targets when explicitly enabled.
-- Content write alpha can create `/Game` folders, duplicate assets, rename assets, and run automated allowlisted imports when explicitly enabled.
-- UMG write alpha can create Widget Blueprints, add TextBlock/Button widgets, update CanvasPanel slot properties, and bind Button delegates to ComponentBoundEvent nodes when explicitly enabled.
+- Actor write alpha can spawn actors, set transforms, and set simple reflected actor properties after preview and user approval.
+- Material write alpha can create `UMaterialInstanceConstant` assets, set scalar/vector/texture parameters, and apply materials to actor or Blueprint component targets after preview and user approval.
+- Content write alpha can create `/Game` folders, duplicate assets, rename assets, and run automated allowlisted imports after preview and user approval.
+- UMG write alpha can create Widget Blueprints, add TextBlock/Button widgets, update CanvasPanel slot properties, and bind Button delegates to ComponentBoundEvent nodes after preview and user approval.
 - Enhanced Input write alpha can create Input Action and Input Mapping Context assets and add/remove key mappings when the project has EnhancedInput enabled.
 
 ## Not Supported In 2.0-dev

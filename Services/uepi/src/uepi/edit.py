@@ -378,7 +378,7 @@ def discover(store: SnapshotStore) -> dict[str, Any]:
             "schema_version": "uepi.edit-discover.v1",
             "profile": "codex",
             "legacy_profile_alias": "codex_write_alpha",
-            "default_enabled": False,
+            "default_enabled": True,
             "apply_enabled": apply_enabled,
             "bridge": {
                 "connected": bool(bridge_discover.get("ok")),
@@ -389,7 +389,7 @@ def discover(store: SnapshotStore) -> dict[str, Any]:
             "safety_rules": [
                 "No low-level write operation is exposed as an MCP tool.",
                 "edit_preview must produce a transaction_id before edit_apply.",
-                "edit_apply requires the live editor bridge, explicit write settings, and approved=true.",
+                "edit_apply requires the live editor bridge and approved=true after user review.",
                 "Forbidden operations include arbitrary Python, console commands, deletes, save_all, PIE, config writes, and source-control submit.",
                 "Apply requires user approval, scoped operations, backup artifacts, validation, rescan, and diff.",
             ],
@@ -514,7 +514,7 @@ def reject_apply(store: SnapshotStore, transaction_id: str = "") -> dict[str, An
         operation="apply",
         error={
             "code": "UEPI_EDIT_APPLY_DISABLED",
-            "message": "UEPI edit apply requires the live editor bridge, user approval, and explicit UEPI write settings.",
+            "message": "UEPI edit apply requires the live editor bridge and explicit user approval.",
             "retryable": False,
             "candidates": [],
         },
@@ -526,7 +526,7 @@ def reject_apply(store: SnapshotStore, transaction_id: str = "") -> dict[str, An
                 "audit_path": str(audit_path),
                 "plan_found": bool(plan),
                 "recoverable": False,
-                "recommended_user_action": "Enable the live editor bridge and explicit write flags only for a test project or sandbox.",
+                "recommended_user_action": "Open the Unreal Editor with the UEPI live bridge enabled, then retry after reviewing a preview plan.",
                 "recommended_agent_action": {"tool": "uepi_edit_discover"},
             }
         ],

@@ -1,7 +1,7 @@
 # Copy this block into .codex/config.toml in a trusted Unreal project.
 # Replace every __PLACEHOLDER__ before running Codex.
 # The single codex profile exposes read tools plus safe edit-planning/apply tools.
-# Edit apply still rejects until the UE live bridge, UEPI write settings, and user approval are all present.
+# Edit apply still requires the editor live bridge, edit_preview, explicit user approval, validation, and diff reporting.
 
 [mcp_servers.uepi]
 command = "__PYTHON_EXE__"

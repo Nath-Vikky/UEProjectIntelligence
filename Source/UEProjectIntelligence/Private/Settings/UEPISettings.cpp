@@ -6,15 +6,15 @@ UUEPISettings::UUEPISettings()
 	, bIncludeEngineContent(false)
 	, MaxAssetsPerBatch(50)
 	, MaxInlineCollectionItems(1000)
-	, bEnableLiveEditorBridge(false)
+	, bEnableLiveEditorBridge(true)
 	, LiveEditorBridgePort(0)
-	, bEnableWriteTools(false)
-	, bAllowBlueprintEdits(false)
-	, bAllowActorEdits(false)
-	, bAllowContentEdits(false)
-	, bAllowMaterialEdits(false)
-	, bAllowUMGEdits(false)
-	, bAllowInputEdits(false)
+	, bEnableWriteTools(true)
+	, bAllowBlueprintEdits(true)
+	, bAllowActorEdits(true)
+	, bAllowContentEdits(true)
+	, bAllowMaterialEdits(true)
+	, bAllowUMGEdits(true)
+	, bAllowInputEdits(true)
 	, bAllowSavingPackages(false)
 	, bRequirePreviewBeforeApply(true)
 	, bRequireSnapshotDiffAfterApply(true)
@@ -45,5 +45,5 @@ FText UUEPISettings::GetSectionText() const
 
 FText UUEPISettings::GetSectionDescription() const
 {
-	return NSLOCTEXT("UEProjectIntelligence", "SettingsSectionDescription", "Snapshot read settings plus disabled-by-default experimental bridge/write safety gates for UE Project Intelligence.");
+	return NSLOCTEXT("UEProjectIntelligence", "SettingsSectionDescription", "Snapshot read settings plus Agent-ready live bridge and guarded edit-apply safety gates for UE Project Intelligence.");
 }

@@ -16,7 +16,7 @@ UEPI does not depend on Epic's UE5.8 ModelContextProtocol plugin. The official U
 
 UEPI does not provide tools to run PIE, execute arbitrary Python/shell/console commands, enable plugins, submit source control, save all packages, or perform broad destructive project edits.
 
-Write operations are disabled by default and are guarded by preview plans, explicit user approval, live editor bridge availability, and UEPI project settings. Package saving remains disabled by default.
+Write operations are exposed through guarded edit tools and are still gated by preview plans, explicit user approval, live editor bridge availability, validation, and rollback/diff reporting. Package saving remains disabled by default.
 
 The default product path does not use a daemon, HTTP API, worker queue, Web UI, or remote service registration.
 
@@ -130,7 +130,7 @@ The single `codex` profile exposes these read and edit tools together. `codex_wr
 - `ai_behavior_flow`
 - `network_replication_flow`
 
-The edit tools support discovery, dry-run planning, apply, validate, and rollback. Apply remains disabled by default through UEPI project settings; when the live bridge and write flags are explicitly enabled, the alpha executor allows scoped Blueprint variables, components, custom events, function graphs, common graph nodes, pin links, Actor spawn/transform/property edits, Material Instance create/parameter/apply edits, scoped `/Game` Content operations, basic UMG Widget Blueprint edits, and Enhanced Input asset/key-mapping edits when that plugin is enabled. It never saves packages by default.
+The edit tools support discovery, dry-run planning, apply, validate, and rollback. When the live bridge is online, the default settings allow scoped Blueprint variables, components, custom events, function graphs, common graph nodes, pin links, Actor spawn/transform/property edits, Material Instance create/parameter/apply edits, scoped `/Game` Content operations, basic UMG Widget Blueprint edits, and Enhanced Input asset/key-mapping edits when that plugin is enabled. It never saves packages by default.
 
 ## Snapshot Modes
 
@@ -149,7 +149,7 @@ SQLite cache files are derived data and can be deleted. UEPI can rebuild them fr
 - Animation Blueprint final runtime pose is not available.
 - Editor or commandlet collection is required to refresh Snapshots.
 - Editor-closed mode uses the latest saved Snapshot only.
-- Optional live editor bridge and edit apply are disabled by default.
+- The live editor bridge and guarded edit apply are Agent-ready by default; `uepi_edit_apply` still requires preview, explicit approval, validation, and rollback/diff reporting.
 
 ## Validation Status
 

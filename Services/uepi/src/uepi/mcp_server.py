@@ -157,7 +157,7 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "uepi_edit_apply",
-        "description": "Apply an approved UEPI edit plan through the optional live editor bridge when write alpha settings allow it.",
+        "description": "Apply an approved UEPI edit plan through the live editor bridge when preview and approval gates pass.",
         "inputSchema": object_schema({"transaction_id": {"type": "string"}, "approved": {"type": "boolean"}}),
     },
     {
@@ -172,7 +172,7 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     },
 ]
 
-SERVER_INSTRUCTIONS = """UEPI is a project-local Unreal Engine 5.3.2 MCP. Always call uepi_status before other tools. Prefer uepi_context to build bounded evidence before answering project questions. Treat Blueprint pin links and evidence as the source of truth. Distinguish live, saved, stale, and refresh_requested data. The Codex profile exposes read and edit tools together so the agent can choose, but edits are disabled by default and must never be applied without edit_preview, explicit user approval, validate, and post-edit diff. Never guess Blueprint pin names; use returned pins and GUIDs.
+SERVER_INSTRUCTIONS = """UEPI is a project-local Unreal Engine 5.3.2 MCP. Always call uepi_status before other tools. Prefer uepi_context to build bounded evidence before answering project questions. Treat Blueprint pin links and evidence as the source of truth. Distinguish live, saved, stale, and refresh_requested data. The Codex profile exposes read and edit tools together so the agent can choose. Edit apply may be available when the editor bridge is online, but it must never run without edit_preview, explicit user approval, validate, and post-edit diff. Never guess Blueprint pin names; use returned pins and GUIDs.
 
 Use uepi_search or uepi_context to identify the minimum set of assets needed for the user's question.
 uepi_context supports routes such as auto, project_overview, input_to_gameplay, blueprint_behavior, animation_playback, ui_flow, asset_dependency_impact, data_driven_behavior, gas_ability_flow, ai_behavior_flow, and network_replication_flow.

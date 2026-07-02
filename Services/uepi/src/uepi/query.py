@@ -420,7 +420,7 @@ class UEPIQueryEngine:
                 "code": error.get("code") or "UEPI_BRIDGE_REFRESH_UNAVAILABLE",
                 "message": error.get("message") or "The optional live editor bridge could not queue a forced refresh.",
                 "recoverable": True,
-                "recommended_user_action": "Enable the UEPI live bridge or use Run Snapshot Scan.",
+                "recommended_user_action": "Open or restart the editor so the UEPI live bridge can start, or use Run Snapshot Scan.",
                 "recommended_agent_action": {"tool": "uepi_status"},
             }
         ]
@@ -1030,7 +1030,7 @@ class UEPIQueryEngine:
                         "code": "UEPI_BRIDGE_LIVE_CONTEXT_UNAVAILABLE",
                         "message": "uepi_context requested live editor context, but the optional bridge is not connected.",
                         "recoverable": True,
-                        "recommended_user_action": "Enable the UEPI live bridge in project settings and keep the editor open.",
+                        "recommended_user_action": "Keep the editor open, or restart it so the UEPI live bridge can start.",
                         "recommended_agent_action": {"tool": "uepi_status"},
                     }
                 )

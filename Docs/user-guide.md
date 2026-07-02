@@ -74,7 +74,7 @@ __PROJECT_ROOT__/__PROJECT_NAME__.uproject
 codex
 ```
 
-This single profile exposes read tools and guarded edit tools together. You do not need a separate write profile. Edit apply remains disabled until the editor live bridge, UEPI write settings, and explicit user approval are all present.
+This single profile exposes read tools and guarded edit tools together. You do not need a separate write profile. Edit apply is available when the editor live bridge is online, and it still requires a preview plan plus explicit user approval.
 
 Working directory:
 

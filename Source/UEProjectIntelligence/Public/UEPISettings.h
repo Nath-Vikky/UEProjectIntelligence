@@ -33,45 +33,45 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category="Budgets", meta=(ClampMin="1"))
 	int32 MaxInlineCollectionItems;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Live Bridge")
+	UPROPERTY(Config, EditAnywhere, Category="Agent Live Bridge")
 	bool bEnableLiveEditorBridge;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Live Bridge", meta=(ClampMin="0", ClampMax="65535"))
+	UPROPERTY(Config, EditAnywhere, Category="Agent Live Bridge", meta=(ClampMin="0", ClampMax="65535"))
 	int32 LiveEditorBridgePort;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply")
 	bool bEnableWriteTools;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply")
 	bool bAllowBlueprintEdits;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply")
 	bool bAllowActorEdits;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply")
 	bool bAllowContentEdits;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply")
 	bool bAllowMaterialEdits;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply")
 	bool bAllowUMGEdits;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply")
 	bool bAllowInputEdits;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply")
 	bool bAllowSavingPackages;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply")
 	bool bRequirePreviewBeforeApply;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety")
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply")
 	bool bRequireSnapshotDiffAfterApply;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety", meta=(ClampMin="1", ClampMax="50"))
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply", meta=(ClampMin="1", ClampMax="50"))
 	int32 MaxWriteOperationsPerTransaction;
 
-	UPROPERTY(Config, EditAnywhere, Category="Experimental Write Safety", meta=(ClampMin="1", ClampMax="20"))
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply", meta=(ClampMin="1", ClampMax="20"))
 	int32 MaxWriteAssetsPerTransaction;
 };

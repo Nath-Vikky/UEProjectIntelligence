@@ -24,7 +24,7 @@ UEPI_EDIT_BLUEPRINT_DISABLED
 UEPI_EDIT_APPROVAL_REQUIRED
 ```
 
-When the live bridge and write settings are enabled, apply supports:
+When the live bridge is online and the user has approved the preview, apply supports:
 
 ```text
 blueprint.add_variable

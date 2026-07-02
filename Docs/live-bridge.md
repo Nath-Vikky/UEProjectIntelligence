@@ -2,7 +2,7 @@
 
 The stable UEPI read path does not require a daemon, worker, Web UI, HTTP service, or live bridge.
 
-The optional live bridge is reserved for editor-online read capabilities:
+The live bridge starts with the editor by default and is reserved for editor-online read capabilities plus guarded edit apply:
 
 ```text
 editor.get_status
@@ -27,7 +27,7 @@ capabilities
 diagnostics
 ```
 
-In the current build, the Unreal side can start a disabled-by-default localhost TCP bridge when `bEnableLiveEditorBridge` is enabled. It writes a session file and token file, then accepts length-prefixed JSON requests.
+In the current build, the Unreal side starts a localhost TCP bridge by default when the editor session starts. It writes a session file and token file, then accepts length-prefixed JSON requests. Users can still opt out in Project Settings.
 
 Implemented commands:
 
@@ -76,4 +76,4 @@ Expected future schema:
 - Use a per-session capability token.
 - Execute editor commands sequentially on the game thread.
 - Return structured errors and timeouts.
-- Keep edit apply behind explicit UEPI write settings, preview, user approval, validation, and rollback/diff reporting.
+- Keep edit apply behind preview, user approval, validation, and rollback/diff reporting.

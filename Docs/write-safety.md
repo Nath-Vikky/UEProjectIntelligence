@@ -16,15 +16,16 @@ UEPI write support must never bypass these rules.
 - Return `uepi_diff` evidence after apply.
 - Keep rollback available for every applied transaction.
 
-## Default-Off Gates
+## Always-On Safety Gates
 
-Project settings include disabled-by-default experimental gates:
+Project settings are Agent-ready by default, while the non-negotiable gates remain on:
 
 ```text
-bEnableLiveEditorBridge = false
-bEnableWriteTools = false
+bEnableLiveEditorBridge = true
+bEnableWriteTools = true
 bRequirePreviewBeforeApply = true
 bRequireSnapshotDiffAfterApply = true
+bAllowSavingPackages = false
 ```
 
 ## Rejected Commands

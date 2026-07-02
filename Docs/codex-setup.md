@@ -20,7 +20,7 @@ The default block uses:
 
 The `codex` profile does not require the Unreal Editor to be open when `Saved/UEProjectIntelligence/store/manifests/saved.json` exists.
 
-Edit apply still requires the Unreal Editor, the live editor bridge, explicit UEPI write settings, and user approval. Without those gates, edit tools return structured rejection diagnostics and do not mutate assets.
+Edit apply still requires the Unreal Editor, the live editor bridge, a preview plan, and explicit user approval. Without those gates, edit tools return structured rejection diagnostics and do not mutate assets.
 
 ## Recommended Prompt Rule
 
@@ -57,4 +57,4 @@ uepi_edit_rollback
 
 These tools are part of the default `codex` profile. `codex_write_alpha` remains accepted as a legacy alias, but new installs should use only the single `codex` MCP server.
 
-`uepi_edit_apply` is disabled by default by UEPI project settings. Enable the live editor bridge and the explicit write flags only in a test project or sandbox directory, then use preview -> user approval -> apply -> validate -> refresh/diff.
+`uepi_edit_apply` is Agent-ready by default when the editor bridge is online, but the safe workflow is still preview -> user approval -> apply -> validate -> refresh/diff. Use the project settings only when you want to opt out of a write domain or disable package saving/bridge behavior.

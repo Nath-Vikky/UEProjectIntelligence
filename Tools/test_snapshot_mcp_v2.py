@@ -633,6 +633,7 @@ def main() -> int:
             assert discover["tool"] == "uepi_edit_discover"
             assert discover["result"]["profile"] == "codex"
             assert discover["result"]["legacy_profile_alias"] == "codex_write_alpha"
+            assert discover["result"]["default_enabled"] is True
             assert discover["result"]["apply_enabled"] is False
             preview = request(
                 process,
@@ -701,6 +702,7 @@ def main() -> int:
             assert discover["tool"] == "uepi_edit_discover"
             assert discover["result"]["profile"] == "codex"
             assert discover["result"]["legacy_profile_alias"] == "codex_write_alpha"
+            assert discover["result"]["default_enabled"] is True
             assert discover["result"]["apply_enabled"] is False
             preview = request(
                 write_process,
