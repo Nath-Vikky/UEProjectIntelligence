@@ -1,5 +1,7 @@
 # Copy this block into .codex/config.toml in a trusted Unreal project.
 # Replace every __PLACEHOLDER__ before running Codex.
+# The single codex profile exposes read tools plus safe edit-planning/apply tools.
+# Edit apply still rejects until the UE live bridge, UEPI write settings, and user approval are all present.
 
 [mcp_servers.uepi]
 command = "__PYTHON_EXE__"
@@ -28,22 +30,4 @@ enabled = true
 #   "uepi_impact",
 # ]
 
-# Experimental write-planning profile.
-# This exposes the ten read-only tools plus five edit tools.
-# edit_apply rejects by default in this foundation build.
-#
-# [mcp_servers.uepi_write_alpha]
-# command = "__PYTHON_EXE__"
-# args = [
-#   "-B",
-#   "__PROJECT_ROOT__/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py",
-#   "--project",
-#   "__PROJECT_ROOT__/__PROJECT_NAME__.uproject",
-#   "--tool-profile",
-#   "codex_write_alpha",
-# ]
-# cwd = "__PROJECT_ROOT__"
-# startup_timeout_sec = 20
-# tool_timeout_sec = 60
-# required = false
-# enabled = false
+# Legacy note: codex_write_alpha remains accepted as an alias, but new installs should use only this single server block.

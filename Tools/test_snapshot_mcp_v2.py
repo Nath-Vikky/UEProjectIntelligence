@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "Services" / "uepi" / "src" / "uepi" / "mcp_server.py"
 PYTHONPATH = ROOT / "Services" / "uepi" / "src"
 
-EXPECTED_TOOLS = {
+READ_TOOLS = {
     "uepi_status",
     "uepi_overview",
     "uepi_search",
@@ -26,6 +26,16 @@ EXPECTED_TOOLS = {
     "uepi_impact",
     "uepi_diff",
 }
+
+EDIT_TOOLS = {
+    "uepi_edit_discover",
+    "uepi_edit_preview",
+    "uepi_edit_apply",
+    "uepi_edit_validate",
+    "uepi_edit_rollback",
+}
+
+EXPECTED_TOOLS = READ_TOOLS | EDIT_TOOLS
 
 
 def assert_envelope(value: dict[str, Any]) -> None:
@@ -617,6 +627,48 @@ def main() -> int:
             assert any("/Game/BP_MetadataOnly.BP_MetadataOnly" in request.get("target_object_paths", []) for request in metadata_requests)
             unknown = request(process, 6, "tools/call", {"name": "uepi_missing", "arguments": {}})["structuredContent"]
             assert unknown["error"]["code"] == "UEPI_UNKNOWN_TOOL"
+            assert set(unknown["error"]["candidates"]) == EXPECTED_TOOLS
+            discover = request(process, 62, "tools/call", {"name": "uepi_edit_discover", "arguments": {}})["structuredContent"]
+            assert_envelope(discover)
+            assert discover["tool"] == "uepi_edit_discover"
+            assert discover["result"]["profile"] == "codex"
+            assert discover["result"]["legacy_profile_alias"] == "codex_write_alpha"
+            assert discover["result"]["apply_enabled"] is False
+            preview = request(
+                process,
+                63,
+                "tools/call",
+                {
+                    "name": "uepi_edit_preview",
+                    "arguments": {
+                        "intent": "Add a safe test variable",
+                        "operations": [
+                            {
+                                "type": "blueprint.add_variable",
+                                "params": {
+                                    "asset": "/Game/BP_Hero.BP_Hero",
+                                    "name": "Health",
+                                    "pin_type": "float",
+                                },
+                            }
+                        ],
+                    },
+                },
+            )["structuredContent"]
+            assert_envelope(preview)
+            assert preview["result"]["plan"]["schema_version"] == "uepi.edit_plan.v1"
+            apply_without_bridge = request(
+                process,
+                64,
+                "tools/call",
+                {
+                    "name": "uepi_edit_apply",
+                    "arguments": {"transaction_id": preview["result"]["plan"]["transaction_id"], "approved": True},
+                },
+            )["structuredContent"]
+            assert_envelope(apply_without_bridge)
+            assert apply_without_bridge["ok"] is False
+            assert apply_without_bridge["error"]["code"] == "UEPI_EDIT_BRIDGE_REQUIRED"
         finally:
             if process.stdin:
                 process.stdin.close()
@@ -643,17 +695,12 @@ def main() -> int:
             assert "resources" not in write_init["capabilities"]
             write_tools = request(write_process, 61, "tools/list")["tools"]
             write_names = {tool["name"] for tool in write_tools}
-            assert EXPECTED_TOOLS.issubset(write_names)
-            assert {
-                "uepi_edit_discover",
-                "uepi_edit_preview",
-                "uepi_edit_apply",
-                "uepi_edit_validate",
-                "uepi_edit_rollback",
-            }.issubset(write_names)
+            assert write_names == EXPECTED_TOOLS
             discover = request(write_process, 62, "tools/call", {"name": "uepi_edit_discover", "arguments": {}})["structuredContent"]
             assert_envelope(discover)
             assert discover["tool"] == "uepi_edit_discover"
+            assert discover["result"]["profile"] == "codex"
+            assert discover["result"]["legacy_profile_alias"] == "codex_write_alpha"
             assert discover["result"]["apply_enabled"] is False
             preview = request(
                 write_process,
@@ -690,7 +737,8 @@ def main() -> int:
             )["structuredContent"]
             assert_envelope(rejected)
             assert rejected["ok"] is False
-            assert rejected["error"]["code"] in {"UEPI_EDIT_BRIDGE_APPLY_FAILED", "UEPI_BRIDGE_NOT_CONFIGURED", "UEPI_BRIDGE_NOT_READY"}
+            assert rejected["error"]["code"] == "UEPI_EDIT_BRIDGE_REQUIRED"
+            assert rejected["error"]["bridge_error_code"] in {"UEPI_BRIDGE_NOT_CONFIGURED", "UEPI_BRIDGE_NOT_READY"}
         finally:
             if write_process.stdin:
                 write_process.stdin.close()

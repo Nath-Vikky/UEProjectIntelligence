@@ -1,6 +1,6 @@
 # Developer Architecture
 
-UEPI 2.0-dev has one default read path:
+UEPI 2.0-dev has one default read path and one guarded edit path:
 
 ```text
 UE Editor Plugin / UEPIIndex Commandlet
@@ -8,6 +8,16 @@ UE Editor Plugin / UEPIIndex Commandlet
   -> Rebuildable SQLite query cache
   -> Services/uepi stdio MCP
   -> AI client
+```
+
+```text
+AI client
+  -> uepi_edit_preview
+  -> user approval
+  -> Services/uepi edit_apply
+  -> localhost live editor bridge
+  -> UE editor transaction
+  -> validation + targeted refresh + diff report
 ```
 
 ## Components
@@ -22,8 +32,9 @@ UE Editor Plugin / UEPIIndex Commandlet
 ## Boundaries
 
 - Unreal code is the only layer that loads assets.
-- MCP never writes project assets, config, or source.
-- MCP may write only UEPI-owned refresh request files under `Saved/UEProjectIntelligence/store/requests`.
+- MCP never directly loads or mutates Unreal UObjects.
+- MCP may write only UEPI-owned artifacts under `Saved/UEProjectIntelligence`, such as refresh requests, edit plans, backups, and audit logs.
+- Approved asset edits are executed only by the Unreal Editor live bridge on the editor side, behind explicit UEPI write settings and user approval.
 - SQLite is a rebuildable query cache for MCP routing, not a fact source.
 - Daemon, HTTP, Web UI, worker queue, and extension SDK code are not part of the default product.
 

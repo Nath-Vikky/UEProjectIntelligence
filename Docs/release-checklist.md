@@ -28,7 +28,7 @@
 - [ ] `.codex/config.toml` template works.
 - [ ] Codex shows UEPI MCP.
 - [ ] `uepi_status` works.
-- [ ] Exactly ten public tools are listed under `--tool-profile codex`.
+- [ ] Unified `--tool-profile codex` lists ten read tools plus five guarded edit tools.
 - [ ] Example question set in `Docs/codex-example-questions.md` passes.
 
 ## Snapshot Correctness

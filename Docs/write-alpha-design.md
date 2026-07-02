@@ -1,6 +1,6 @@
 # Write Alpha Design
 
-The stable product remains read-only. Write support is an experimental profile with a small tool surface:
+The stable read path remains Snapshot-first and non-mutating. Guarded write support shares the default Codex profile but keeps a small tool surface:
 
 ```text
 uepi_edit_discover
@@ -14,7 +14,7 @@ No low-level tools such as `add_node`, `connect_pin`, `save_asset`, `run_python`
 
 ## Current Alpha Behavior
 
-`codex_write_alpha` is available for operation catalog, dry-run plan testing, and explicitly enabled live-bridge alpha edits.
+The default `codex` profile exposes the operation catalog, dry-run plan testing, and explicitly enabled live-bridge alpha edits alongside the stable read tools. `codex_write_alpha` remains accepted as a legacy alias only.
 
 `uepi_edit_apply` is settings-gated by default:
 

@@ -1,6 +1,6 @@
 # UE Project Intelligence
 
-UE Project Intelligence is a self-contained, read-only, Codex-first MCP server and Unreal Editor plugin for helping AI agents understand, navigate, and explain Unreal Engine 5.3.2 projects from UEPI snapshots.
+UE Project Intelligence is a self-contained, Codex-first MCP server and Unreal Editor plugin for helping AI agents understand, navigate, explain, and safely edit Unreal Engine 5.3.2 projects from UEPI snapshots.
 
 UEPI does not depend on Epic's UE5.8 ModelContextProtocol plugin. The official UE5.8 MCP implementation is only used as a design reference.
 
@@ -9,11 +9,14 @@ UEPI does not depend on Epic's UE5.8 ModelContextProtocol plugin. The official U
 - An Unreal Editor plugin that reads project assets, Blueprints, animations, worlds, data, UI, AI, audio, render, and material metadata.
 - A Snapshot Store under `Saved/UEProjectIntelligence` that keeps saved and live project observations.
 - A Python stdio MCP server under `Services/uepi` for Codex.
+- A unified Agent profile that exposes read tools and guarded edit tools together so the Agent can choose the right workflow.
 - A rebuildable SQLite query cache derived from Snapshot fragments.
 
 ## What It Does Not Do
 
-UEPI is read-only. It does not provide tools to save, delete, rename, move, create, compile, run PIE, execute arbitrary code, or mutate Unreal assets.
+UEPI does not provide tools to run PIE, execute arbitrary Python/shell/console commands, enable plugins, submit source control, save all packages, or perform broad destructive project edits.
+
+Write operations are disabled by default and are guarded by preview plans, explicit user approval, live editor bridge availability, and UEPI project settings. Package saving remains disabled by default.
 
 The default product path does not use a daemon, HTTP API, worker queue, Web UI, or remote service registration.
 
@@ -21,7 +24,7 @@ The default product path does not use a daemon, HTTP API, worker queue, Web UI, 
 
 - Unreal Engine 5.3.2.
 - Python 3.11+ for the stdio MCP server.
-- Codex as the primary supported MCP client for the current read-only line.
+- Codex as the primary supported MCP client.
 - A project-local install at `__PROJECT_ROOT__/Plugins/UEProjectIntelligence`.
 
 Optional Unreal plugins such as EnhancedInput, GameplayAbilities, Niagara, PCG, CommonUI, StateTree, IKRig, ControlRig, and MetaSound are compile-gated and are not required for ordinary projects.
@@ -82,15 +85,17 @@ The MCP command should point to:
 __PROJECT_ROOT__/Plugins/UEProjectIntelligence/Services/uepi/src/uepi/mcp_server.py
 ```
 
-## Ask Questions
+## Ask Questions Or Request Safe Edits
 
 Recommended Codex flow:
 
 1. Call `uepi_status`.
 2. Use `uepi_overview`, `uepi_search`, or `uepi_context` to identify evidence.
 3. Use the narrow domain tool for the question.
-4. If diagnostics include `UEPI_REFRESH_REQUESTED`, wait for the editor plugin to process the targeted request and retry.
-5. If diagnostics include `UEPI_SNAPSHOT_STALE`, open the editor/plugin or run a commandlet scan for realtime freshness.
+4. If the user asks to modify the project, use `uepi_edit_discover`, then `uepi_edit_preview`.
+5. Apply only after explicit user approval, then validate and refresh/diff.
+6. If diagnostics include `UEPI_REFRESH_REQUESTED`, wait for the editor plugin to process the targeted request and retry.
+7. If diagnostics include `UEPI_SNAPSHOT_STALE`, open the editor/plugin or run a commandlet scan for realtime freshness.
 
 ## MCP Tools
 
@@ -104,8 +109,13 @@ Recommended Codex flow:
 - `uepi_animation`
 - `uepi_impact`
 - `uepi_diff`
+- `uepi_edit_discover`
+- `uepi_edit_preview`
+- `uepi_edit_apply`
+- `uepi_edit_validate`
+- `uepi_edit_rollback`
 
-Codex profile exposes only these ten read-only tools.
+The single `codex` profile exposes these read and edit tools together. `codex_write_alpha` is still accepted as a legacy alias, but new installs should not require switching profiles.
 
 `uepi_context` can route questions through:
 
@@ -120,7 +130,7 @@ Codex profile exposes only these ten read-only tools.
 - `ai_behavior_flow`
 - `network_replication_flow`
 
-The experimental `codex_write_alpha` profile exposes five additional edit tools for discovery, dry-run planning, apply, validate, and rollback. Apply remains disabled by default through UEPI project settings; when the live bridge and write flags are explicitly enabled, the alpha executor allows scoped Blueprint variables, components, custom events, function graphs, common graph nodes, pin links, Actor spawn/transform/property edits, Material Instance create/parameter/apply edits, scoped `/Game` Content operations, basic UMG Widget Blueprint edits, and Enhanced Input asset/key-mapping edits when that plugin is enabled. It never saves packages by default.
+The edit tools support discovery, dry-run planning, apply, validate, and rollback. Apply remains disabled by default through UEPI project settings; when the live bridge and write flags are explicitly enabled, the alpha executor allows scoped Blueprint variables, components, custom events, function graphs, common graph nodes, pin links, Actor spawn/transform/property edits, Material Instance create/parameter/apply edits, scoped `/Game` Content operations, basic UMG Widget Blueprint edits, and Enhanced Input asset/key-mapping edits when that plugin is enabled. It never saves packages by default.
 
 ## Snapshot Modes
 
@@ -134,18 +144,18 @@ SQLite cache files are derived data and can be deleted. UEPI can rebuild them fr
 ## Limitations
 
 - Current primary target is UE5.3.2.
-- Current version is read-only and Codex-first.
+- Current version is Codex-first, with read tools stable and edit tools in guarded alpha.
 - Animation data is static summary and sampled context, not a full per-frame dump.
 - Animation Blueprint final runtime pose is not available.
 - Editor or commandlet collection is required to refresh Snapshots.
 - Editor-closed mode uses the latest saved Snapshot only.
-- Optional live editor bridge and write tools are disabled by default.
+- Optional live editor bridge and edit apply are disabled by default.
 
 ## Validation Status
 
 - Real-machine Codex MCP read loop validated on UE5.3.2 project `GasDemo`.
 - Snapshot/live/cache/tombstone smoke tests pass through `Tools/test_snapshot_mcp_v2.py`.
-- The stable `codex` profile remains exactly ten read-only tools.
+- The `codex` profile now exposes read and guarded edit tools together for one-step Agent setup.
 
 ## Troubleshooting
 

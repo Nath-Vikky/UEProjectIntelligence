@@ -141,7 +141,7 @@ TOOLS: list[dict[str, Any]] = [
 WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_edit_discover",
-        "description": "Discover the experimental codex_write_alpha operation catalog without modifying Unreal assets.",
+        "description": "Discover the experimental UEPI edit operation catalog without modifying Unreal assets.",
         "inputSchema": object_schema({}),
     },
     {
@@ -172,13 +172,17 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     },
 ]
 
-SERVER_INSTRUCTIONS = """UEPI is a project-local Unreal Engine 5.3.2 MCP. Always call uepi_status before other tools. Prefer uepi_context to build bounded evidence before answering project questions. Treat Blueprint pin links and evidence as the source of truth. Distinguish live, saved, stale, and refresh_requested data. In read-only profile, never claim you can edit assets. In write profile, never apply edits without edit_preview, user approval, validate, and post-edit diff. Never guess Blueprint pin names; use returned pins and GUIDs.
+SERVER_INSTRUCTIONS = """UEPI is a project-local Unreal Engine 5.3.2 MCP. Always call uepi_status before other tools. Prefer uepi_context to build bounded evidence before answering project questions. Treat Blueprint pin links and evidence as the source of truth. Distinguish live, saved, stale, and refresh_requested data. The Codex profile exposes read and edit tools together so the agent can choose, but edits are disabled by default and must never be applied without edit_preview, explicit user approval, validate, and post-edit diff. Never guess Blueprint pin names; use returned pins and GUIDs.
 
 Use uepi_search or uepi_context to identify the minimum set of assets needed for the user's question.
 uepi_context supports routes such as auto, project_overview, input_to_gameplay, blueprint_behavior, animation_playback, ui_flow, asset_dependency_impact, data_driven_behavior, gas_ability_flow, ai_behavior_flow, and network_replication_flow.
 Then call the narrow domain tool: uepi_asset for local context, uepi_blueprint for Blueprint graph/node/pin semantic summaries, uepi_blueprint_trace for static flow paths, uepi_animation for animation/skeleton/track summaries, and uepi_impact for dependency impact.
 Reads never require the Unreal Editor when the snapshot/cache is current. If a read response includes diagnostic code UEPI_REFRESH_REQUESTED, a targeted editor refresh request has been queued under the Snapshot Store; retry the same read after the editor processes it. If UEPI_SNAPSHOT_STALE appears, ask the user to open the editor/plugin before expecting realtime data.
 Treat uepi_diff as a generation-level saved snapshot comparison, not a live editor diff."""
+
+
+def profile_includes_edit_tools(profile: str) -> bool:
+    return profile in {"full", "codex", "codex_write_alpha"}
 
 
 def read_message(stdin: BinaryIO) -> tuple[dict[str, Any], str] | None:
@@ -240,7 +244,7 @@ class UEPIMCPServer:
         }
 
     def tools(self) -> list[dict[str, Any]]:
-        exposed_tools = TOOLS + (WRITE_ALPHA_TOOLS if self.args.tool_profile == "codex_write_alpha" else [])
+        exposed_tools = TOOLS + (WRITE_ALPHA_TOOLS if profile_includes_edit_tools(self.args.tool_profile) else [])
         if not self.args.include_output_schema:
             return exposed_tools
         tools: list[dict[str, Any]] = []
@@ -325,7 +329,7 @@ class UEPIMCPServer:
                         to_generation=arguments.get("to_generation") if isinstance(arguments.get("to_generation"), int) else None,
                     )
                 )
-            if self.args.tool_profile == "codex_write_alpha":
+            if profile_includes_edit_tools(self.args.tool_profile):
                 if name == "uepi_edit_discover":
                     return tool_response(edit.discover(engine.store))
                 if name == "uepi_edit_preview":
@@ -358,7 +362,7 @@ class UEPIMCPServer:
                         "code": "UEPI_UNKNOWN_TOOL",
                         "message": f"Unknown UEPI tool: {name}",
                         "retryable": False,
-                        "candidates": [tool["name"] for tool in TOOLS],
+                        "candidates": [tool["name"] for tool in self.tools()],
                     },
                     "diagnostics": [],
                 }
@@ -460,7 +464,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--store", type=Path, help="Path to Saved/UEProjectIntelligence or its store directory.")
     parser.add_argument("--db", type=Path, help="Legacy compatibility: derive Saved/UEProjectIntelligence from this DB path's parent.")
     parser.add_argument("--token-budget", type=int, default=4000, help="Accepted for compatibility; v2 tools are bounded by tool arguments.")
-    parser.add_argument("--tool-profile", choices=["full", "codex", "codex_write_alpha"], default="full")
+    parser.add_argument("--tool-profile", choices=["full", "codex", "codex_write_alpha"], default="codex")
     parser.add_argument("--include-output-schema", action="store_true")
     parser.add_argument("--trace-file", type=Path, help="Accepted for compatibility; currently unused.")
     return parser

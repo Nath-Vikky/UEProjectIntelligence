@@ -376,7 +376,8 @@ def discover(store: SnapshotStore) -> dict[str, Any]:
         operation="discover",
         result={
             "schema_version": "uepi.edit-discover.v1",
-            "profile": "codex_write_alpha",
+            "profile": "codex",
+            "legacy_profile_alias": "codex_write_alpha",
             "default_enabled": False,
             "apply_enabled": apply_enabled,
             "bridge": {
@@ -513,7 +514,7 @@ def reject_apply(store: SnapshotStore, transaction_id: str = "") -> dict[str, An
         operation="apply",
         error={
             "code": "UEPI_EDIT_APPLY_DISABLED",
-            "message": "codex_write_alpha apply requires the live editor bridge, user approval, and explicit UEPI write settings.",
+            "message": "UEPI edit apply requires the live editor bridge, user approval, and explicit UEPI write settings.",
             "retryable": False,
             "candidates": [],
         },
@@ -597,13 +598,17 @@ def apply(store: SnapshotStore, transaction_id: str = "", approved: bool = False
         },
     )
     if not bridge_result.get("ok"):
+        bridge_error = bridge_result.get("error") or {}
+        bridge_code = str(bridge_error.get("code") or "")
+        edit_code = "UEPI_EDIT_BRIDGE_REQUIRED" if bridge_code.startswith("UEPI_BRIDGE_") else bridge_code or "UEPI_EDIT_BRIDGE_APPLY_FAILED"
         return _response(
             store,
             tool="uepi_edit_apply",
             operation="apply",
             error={
-                "code": (bridge_result.get("error") or {}).get("code") or "UEPI_EDIT_BRIDGE_APPLY_FAILED",
-                "message": (bridge_result.get("error") or {}).get("message") or "Editor bridge rejected or failed edit.apply.",
+                "code": edit_code,
+                "message": bridge_error.get("message") or "Editor bridge rejected or failed edit.apply.",
+                "bridge_error_code": bridge_code,
                 "retryable": False,
                 "candidates": [],
             },

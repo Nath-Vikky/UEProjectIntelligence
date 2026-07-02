@@ -76,4 +76,4 @@ Expected future schema:
 - Use a per-session capability token.
 - Execute editor commands sequentially on the game thread.
 - Return structured errors and timeouts.
-- Keep write commands behind `codex_write_alpha` and explicit user approval.
+- Keep edit apply behind explicit UEPI write settings, preview, user approval, validation, and rollback/diff reporting.

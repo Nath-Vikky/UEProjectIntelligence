@@ -1,6 +1,6 @@
 # UEPI 2.0-dev User Guide (Codex Example)
 
-UE Project Intelligence is a read-only MCP bridge for Unreal Engine projects. The default flow is:
+UE Project Intelligence is a Codex-first MCP bridge for Unreal Engine projects. The default flow is:
 
 ```text
 Generate or update a UEPI Snapshot
@@ -8,6 +8,7 @@ Generate or update a UEPI Snapshot
   -> Codex starts the UEPI stdio MCP server
   -> The agent chooses only the tools needed for the user's question
   -> Tool results are cached for offline analysis
+  -> If the user asks for edits, the agent previews, asks approval, applies through the live editor bridge, validates, and reports diff evidence
 ```
 
 No daemon, HTTP server, Web UI, worker queue, or global proxy exception is required.
@@ -73,6 +74,8 @@ __PROJECT_ROOT__/__PROJECT_NAME__.uproject
 codex
 ```
 
+This single profile exposes read tools and guarded edit tools together. You do not need a separate write profile. Edit apply remains disabled until the editor live bridge, UEPI write settings, and explicit user approval are all present.
+
 Working directory:
 
 ```text
@@ -84,7 +87,7 @@ __PROJECT_ROOT__
 After connecting UEPI MCP, start with:
 
 ```text
-Use UEPI first. Call uepi_status, then uepi_overview. When answering project-specific Unreal questions, use uepi_context or uepi_search before guessing asset paths. Treat all results as static read-only snapshot evidence unless UEPI says data_mode is live.
+Use UEPI first. Call uepi_status, then uepi_overview. When answering project-specific Unreal questions, use uepi_context or uepi_search before guessing asset paths. Treat read results as snapshot evidence unless UEPI says data_mode is live. Use edit tools only for explicit project-change requests, and always preview before apply.
 ```
 
 ## Recommended Agent Flow
@@ -92,8 +95,10 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 1. Call `uepi_status`.
 2. Use `uepi_search` or `uepi_context` to identify candidate assets.
 3. Call the narrow read tool needed by the question.
-4. If diagnostics include `UEPI_REFRESH_REQUESTED`, wait briefly and retry the same tool.
-5. If diagnostics include `UEPI_SNAPSHOT_STALE`, open the editor/plugin for realtime refresh or run a commandlet scan.
+4. If the user asks for a project change, call `uepi_edit_discover`, then `uepi_edit_preview`, and wait for explicit approval before `uepi_edit_apply`.
+5. After apply, call `uepi_edit_validate`, refresh/read the changed asset, and use `uepi_diff` where applicable.
+6. If diagnostics include `UEPI_REFRESH_REQUESTED`, wait briefly and retry the same tool.
+7. If diagnostics include `UEPI_SNAPSHOT_STALE`, open the editor/plugin for realtime refresh or run a commandlet scan.
 
 ## Tools
 
@@ -107,6 +112,11 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 - `uepi_animation`: read animation, skeleton, track, notify, curve, and motion-summary data captured in Snapshot.
 - `uepi_impact`: inspect incoming/outgoing dependency impact.
 - `uepi_diff`: compare saved Snapshot generations.
+- `uepi_edit_discover`: discover supported guarded edit operations.
+- `uepi_edit_preview`: create a dry-run operation plan without modifying assets.
+- `uepi_edit_apply`: apply an approved plan through the live editor bridge when write gates allow it.
+- `uepi_edit_validate`: validate a transaction.
+- `uepi_edit_rollback`: undo the last applied UEPI transaction in the editor session.
 
 ## Verify
 

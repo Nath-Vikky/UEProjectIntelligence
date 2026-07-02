@@ -39,6 +39,6 @@ snapshot MCP v2 assertions ok
 Notes:
 
 ```text
-The default codex profile remains read-only and exposes exactly ten tools.
-The codex_write_alpha profile exposes five extra edit tools. edit_apply requires the live bridge, user approval, and explicit write settings; the current alpha executor covers Blueprint variables, components, custom events, function graphs, common graph nodes, pin connections, Actor spawn/transform/property edits, Material Instance create/parameter/apply edits, scoped /Game Content operations, basic UMG Widget Blueprint edits, and Enhanced Input asset/key-mapping edits when EnhancedInput is enabled.
+The default codex profile exposes read and guarded edit tools together so the Agent can choose the workflow without profile switching.
+edit_apply requires the live bridge, user approval, and explicit write settings; the current alpha executor covers Blueprint variables, components, custom events, function graphs, common graph nodes, pin connections, Actor spawn/transform/property edits, Material Instance create/parameter/apply edits, scoped /Game Content operations, basic UMG Widget Blueprint edits, and Enhanced Input asset/key-mapping edits when EnhancedInput is enabled.
 ```

@@ -30,7 +30,7 @@
 - Current-view Snapshot merge applies saved/live fragments and tombstones before cache generation.
 - Relation identity no longer includes descriptive attributes; IDs are based on project, relation type, from ID, and to ID.
 - Blueprint derived projections now report `confidence_basis` and use sub-1.0 confidence for static derived flows.
-- Ten-tool stdio MCP server: status, overview, search, context, asset, blueprint, blueprint trace, animation, impact, diff.
+- Unified Codex stdio MCP profile: ten stable read tools plus five guarded edit tools in one server configuration.
 - Unified MCP envelope fields: `ok`, `tool`, `operation`, `data_mode`, `project`, `snapshot`, `result`, `evidence`, `diagnostics`, and `next_actions`, while retaining legacy-compatible `state`, `omissions`, `truncation`, and `continuation`.
 - `uepi_status` reports optional live bridge readiness fields without requiring a bridge to exist.
 - `uepi_context` routes natural-language questions through project overview, input-to-gameplay, Blueprint behavior, animation playback, UI, dependency impact, data-driven, GAS, AI, and networking routes.
@@ -39,9 +39,9 @@
 - Optional live editor bridge uses localhost length-prefixed TCP JSON when enabled, with token validation and read commands for status, selection, viewport screenshot artifacts, output log tail, and refresh request creation.
 - `uepi_context(live=true)` can include live editor bridge status, selection, and output log sections when the bridge is connected.
 - `uepi_asset`, `uepi_blueprint`, and `uepi_animation` accept `refresh="force"` and use the live bridge to queue immediate targeted refresh when available.
-- Experimental `codex_write_alpha` profile exposes edit discover/preview/apply/validate/rollback tools. Apply is disabled by default in settings; when explicitly enabled, the bridge supports Blueprint variables/components/functions/custom events/common nodes/pin links, Actor spawn/transform/property, Material Instance create/parameter/apply operations, scoped Content operations, basic UMG Widget Blueprint edits including Button bound events, and Enhanced Input asset/key-mapping edits without package saving.
+- Guarded edit tools expose discover/preview/apply/validate/rollback alongside the read tools. Apply is disabled by default in settings; when explicitly enabled, the bridge supports Blueprint variables/components/functions/custom events/common nodes/pin links, Actor spawn/transform/property, Material Instance create/parameter/apply operations, scoped Content operations, basic UMG Widget Blueprint edits including Button bound events, and Enhanced Input asset/key-mapping edits without package saving.
 - Disabled-by-default UE settings now reserve live bridge and write safety gates.
-- C++ write foundation now includes `IUEPIEditOperation`, `FUEPIEditOperationRegistry`, and a dry-run-aware transaction scope skeleton without registering any asset mutation operations.
+- C++ write foundation now includes `IUEPIEditOperation`, `FUEPIEditOperationRegistry`, a dry-run-aware transaction scope skeleton, and guarded bridge executors for the current alpha operation catalog.
 - v2 MCP smoke test without daemon, worker, HTTP, Web UI, or SQLite service, including saved+live overlay merge, tombstones, cache sync, initialize instructions, and targeted refresh request creation.
 - MCP smoke test now also covers context routes, Blueprint semantic summary, bridge readiness fields, and write-alpha rejection behavior.
 - Synthetic Snapshot MCP fixture now covers deleted assets and renamed old-path tombstones with a valid new-path fragment.
@@ -63,5 +63,5 @@
 ## Next
 
 - Broader real-project verification across blank, template, and feature sample projects.
-- Future write-operation expansion should remain behind explicit non-default profiles and settings, separate from the stable read-only MCP contract.
+- Future write-operation expansion should remain behind explicit settings, approval, validation, and rollback gates.
 - Post-apply semantic diff is still an Agent workflow step after targeted refresh rather than a single bridge-side chained operation.

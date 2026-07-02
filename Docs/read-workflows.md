@@ -1,6 +1,6 @@
 # Read Workflows
 
-UEPI's default path is read-only Snapshot Query. A saved Snapshot is enough for offline analysis.
+UEPI's read workflow is Snapshot Query. A saved Snapshot is enough for offline analysis, and the unified Codex profile can still choose guarded edit tools only when the user asks for a project change.
 
 ## Status First
 

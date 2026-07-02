@@ -1,6 +1,6 @@
 # Codex Setup
 
-UEPI is project-local and uses a Python stdio MCP server. The stable Codex profile is read-only and exposes exactly ten tools.
+UEPI is project-local and uses a Python stdio MCP server. The Codex profile is a unified Agent profile: it exposes read tools and guarded edit tools together so Codex can choose the right workflow without profile switching.
 
 ## Template
 
@@ -20,10 +20,12 @@ The default block uses:
 
 The `codex` profile does not require the Unreal Editor to be open when `Saved/UEProjectIntelligence/store/manifests/saved.json` exists.
 
+Edit apply still requires the Unreal Editor, the live editor bridge, explicit UEPI write settings, and user approval. Without those gates, edit tools return structured rejection diagnostics and do not mutate assets.
+
 ## Recommended Prompt Rule
 
 ```text
-Use UEPI first. Call uepi_status before other UEPI tools. Use uepi_context to build bounded evidence before answering Unreal project questions. Treat Blueprint pin links, GUIDs, and evidence as source of truth. Do not claim write ability in the read-only profile.
+Use UEPI first. Call uepi_status before other UEPI tools. Use uepi_context to build bounded evidence before answering Unreal project questions. Treat Blueprint pin links, GUIDs, and evidence as source of truth. For edits, always preview first, wait for explicit user approval, then apply, validate, refresh/diff, and report the result.
 ```
 
 ## Quick Check
@@ -43,9 +45,7 @@ llm_readiness.can_query_snapshot = true
 llm_readiness.requires_daemon = false
 ```
 
-## Experimental Write Profile
-
-`codex_write_alpha` exposes the ten read-only tools plus five edit tools:
+## Edit Tools
 
 ```text
 uepi_edit_discover
@@ -55,4 +55,6 @@ uepi_edit_validate
 uepi_edit_rollback
 ```
 
-`uepi_edit_apply` is still disabled by default by UEPI project settings. Enable the live editor bridge and the explicit write flags only in a test project or sandbox directory, then use preview -> user approval -> apply -> validate -> refresh/diff.
+These tools are part of the default `codex` profile. `codex_write_alpha` remains accepted as a legacy alias, but new installs should use only the single `codex` MCP server.
+
+`uepi_edit_apply` is disabled by default by UEPI project settings. Enable the live editor bridge and the explicit write flags only in a test project or sandbox directory, then use preview -> user approval -> apply -> validate -> refresh/diff.
