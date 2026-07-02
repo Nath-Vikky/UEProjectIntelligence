@@ -123,7 +123,8 @@ namespace UE::ProjectIntelligence
 		{
 			const FString ProjectFile = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
 			const FString ProjectHash = FMD5::HashAnsiString(*ProjectFile).Left(12);
-			const FString FileName = FPaths::MakeValidFileName(FString::Printf(TEXT("%s-%s.json"), *FApp::GetProjectName(), *ProjectHash));
+			const FString ProjectName(FApp::GetProjectName());
+			const FString FileName = FPaths::MakeValidFileName(FString::Printf(TEXT("%s-%s.json"), *ProjectName, *ProjectHash));
 			return FPaths::Combine(UEPIGlobalSessionsDirectory(), FileName);
 		}
 
