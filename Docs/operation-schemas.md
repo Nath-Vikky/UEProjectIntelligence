@@ -88,6 +88,8 @@ Legacy-compatible fields such as `state`, `omissions`, `truncation`, and `contin
 
 Graph write operations are carried inside the edit plan `operations` array and are applied only by `uepi_edit_apply` after preview and user approval.
 
+Agents should build the complete intended graph edit in one `uepi_edit_preview` plan whenever possible. If later operations need nodes created earlier in the same transaction, give the node-creating operation a stable `ref` or `node_ref`, then connect pins by that `node_ref`. This keeps the user approval flow to one review and one `uepi_edit_apply` call.
+
 Create a function graph:
 
 ```json
@@ -100,7 +102,7 @@ Create a function graph:
 }
 ```
 
-Add a PrintString node and return real pin evidence:
+Add a PrintString node and make it available to later operations in the same plan:
 
 ```json
 {
@@ -108,13 +110,14 @@ Add a PrintString node and return real pin evidence:
   "params": {
     "asset": "/Game/Blueprints/BP_Test.BP_Test",
     "graph": "EventGraph",
+    "ref": "countdown.print3",
     "message": "Hello from UEPI",
     "position": {"x": 600, "y": 120}
   }
 }
 ```
 
-Connect pins using returned node GUIDs and pin names or pin IDs:
+Connect pins using existing node GUIDs, returned node GUIDs, pin names, pin IDs, or transaction-local `node_ref` aliases:
 
 ```json
 {
@@ -122,13 +125,52 @@ Connect pins using returned node GUIDs and pin names or pin IDs:
   "params": {
     "asset": "/Game/Blueprints/BP_Test.BP_Test",
     "graph": "EventGraph",
-    "source": {"node_guid": "...", "pin_name": "then"},
-    "target": {"node_guid": "...", "pin_name": "execute"}
+    "source": {"node_guid": "...existing node...", "pin_name": "then"},
+    "target": {"node_ref": "countdown.print3", "pin_name": "execute"}
   }
 }
 ```
 
 Successful node operations return a `detail.node` object with `node_guid`, `graph`, `class`, `title`, and a `pins` array containing `pin_id`, `name`, `direction`, `category`, `default_value`, and `linked_to`.
+
+A complete single-approval countdown plan can include node creation, intra-plan connections, and compile in the same preview:
+
+```json
+[
+  {
+    "type": "blueprint.add_print_string_node",
+    "params": {
+      "asset": "/Game/Blueprints/BP_Test.BP_Test",
+      "graph": "EventGraph",
+      "ref": "countdown.print3",
+      "message": "Game starts in 3..."
+    }
+  },
+  {
+    "type": "blueprint.add_function_call_node",
+    "params": {
+      "asset": "/Game/Blueprints/BP_Test.BP_Test",
+      "graph": "EventGraph",
+      "ref": "countdown.delay3",
+      "function_path": "/Script/Engine.KismetSystemLibrary:Delay",
+      "defaults": {"Duration": 1.0}
+    }
+  },
+  {
+    "type": "blueprint.connect_pins",
+    "params": {
+      "asset": "/Game/Blueprints/BP_Test.BP_Test",
+      "graph": "EventGraph",
+      "source": {"node_ref": "countdown.print3", "pin_name": "then"},
+      "target": {"node_ref": "countdown.delay3", "pin_name": "execute"}
+    }
+  },
+  {
+    "type": "blueprint.compile",
+    "params": {"asset": "/Game/Blueprints/BP_Test.BP_Test"}
+  }
+]
+```
 
 ## Editor Content Write Operations
 

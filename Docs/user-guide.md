@@ -101,8 +101,8 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 1. Call `uepi_status`.
 2. Use `uepi_search` or `uepi_context` to identify candidate assets.
 3. Call the narrow read tool needed by the question.
-4. If the user asks for a project change, call `uepi_edit_discover`, then `uepi_edit_preview`, and wait for explicit approval before `uepi_edit_apply`.
-5. After apply, call `uepi_edit_validate`, refresh/read the changed asset, and use `uepi_diff` where applicable.
+4. If the user asks for a project change, call `uepi_edit_discover`, then create one complete `uepi_edit_preview` plan for the intended edit.
+5. Ask for explicit approval once; after approval, call `uepi_edit_apply`, `uepi_edit_validate`, refresh/read the changed asset, and use `uepi_diff` where applicable without more approval prompts unless the plan changes.
 6. If diagnostics include `UEPI_REFRESH_REQUESTED`, wait briefly and retry the same tool.
 7. If diagnostics include `UEPI_SNAPSHOT_STALE`, open the editor/plugin for realtime refresh or run a commandlet scan.
 

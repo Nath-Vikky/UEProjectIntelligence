@@ -69,7 +69,7 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply")
 	bool bRequireSnapshotDiffAfterApply;
 
-	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply", meta=(ClampMin="1", ClampMax="50"))
+	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply", meta=(ClampMin="1", ClampMax="100"))
 	int32 MaxWriteOperationsPerTransaction;
 
 	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply", meta=(ClampMin="1", ClampMax="20"))

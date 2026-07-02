@@ -469,7 +469,7 @@ def write_fixture(root: Path) -> None:
             "data_mode": "live",
             "writer_mode": "editor",
             "session_id": "session-live",
-            "generation": 1,
+            "generation": 2,
             "base_saved_generation": 1,
             "is_overlay": True,
             "merge_strategy": "replace",
@@ -478,6 +478,7 @@ def write_fixture(root: Path) -> None:
         }
     )
     (manifests / "live.json").write_text(json.dumps(live_manifest, ensure_ascii=False), encoding="utf-8")
+    (manifests / "live-2.json").write_text(json.dumps(live_manifest, ensure_ascii=False), encoding="utf-8")
     (sessions / "editor-session.json").write_text(
         json.dumps(
             {
@@ -602,6 +603,13 @@ def main() -> int:
             overview = request(process, 45, "tools/call", {"name": "uepi_overview", "arguments": {"limit": 10}})["structuredContent"]
             assert_envelope(overview)
             assert "cpp_symbols" in overview["result"]
+            diff = request(process, 47, "tools/call", {"name": "uepi_diff", "arguments": {"from_generation": 1, "to_generation": 2}})["structuredContent"]
+            assert_envelope(diff)
+            assert diff["ok"] is True
+            assert diff["result"]["from_data_mode"] == "saved"
+            assert diff["result"]["to_data_mode"] == "live"
+            assert diff["result"]["to_manifest_path"].endswith(("live.json", "live-2.json"))
+            assert "node-live-print" in diff["result"]["entities"]["added"]
             search = request(process, 4, "tools/call", {"name": "uepi_search", "arguments": {"query": "BP_Hero"}})["structuredContent"]
             assert_envelope(search)
             assert search["result"]["match_count"] >= 1

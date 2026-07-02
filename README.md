@@ -94,8 +94,8 @@ Recommended Codex flow:
 1. Call `uepi_status`.
 2. Use `uepi_overview`, `uepi_search`, or `uepi_context` to identify evidence.
 3. Use the narrow domain tool for the question.
-4. If the user asks to modify the project, use `uepi_edit_discover`, then `uepi_edit_preview`.
-5. Apply only after explicit user approval, then validate and refresh/diff.
+4. If the user asks to modify the project, use `uepi_edit_discover`, then create one complete `uepi_edit_preview` plan for the intended edit.
+5. Ask for explicit user approval once, then apply, validate, and refresh/diff without additional approval prompts unless the plan changes.
 6. If diagnostics include `UEPI_REFRESH_REQUESTED`, wait for the editor plugin to process the targeted request and retry.
 7. If diagnostics include `UEPI_SNAPSHOT_STALE`, open the editor/plugin or run a commandlet scan for realtime freshness.
 

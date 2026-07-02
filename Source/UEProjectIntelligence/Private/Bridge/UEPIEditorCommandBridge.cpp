@@ -788,13 +788,38 @@ namespace UE::ProjectIntelligence
 			return nullptr;
 		}
 
-		UEdGraphPin* ResolveEndpointPin(UEdGraph* Graph, const TSharedPtr<FJsonObject>& Params, const TCHAR* Prefix, const FString& DefaultDirection, UEdGraphNode*& OutNode, FString& OutError)
+		void AddNodeReference(TMap<FString, UEdGraphNode*>& NodeRefs, const FString& Reference, UEdGraphNode* Node)
+		{
+			const FString CleanReference = Reference.TrimStartAndEnd();
+			if (!CleanReference.IsEmpty() && Node)
+			{
+				NodeRefs.Add(CleanReference, Node);
+			}
+		}
+
+		void RegisterNodeReferences(TMap<FString, UEdGraphNode*>& NodeRefs, const TSharedPtr<FJsonObject>& Operation, const TSharedPtr<FJsonObject>& Params, UEdGraphNode* Node)
+		{
+			if (!Node)
+			{
+				return;
+			}
+			AddNodeReference(NodeRefs, JsonString(Operation, TEXT("ref")), Node);
+			AddNodeReference(NodeRefs, JsonString(Operation, TEXT("node_ref")), Node);
+			AddNodeReference(NodeRefs, JsonString(Operation, TEXT("result_ref")), Node);
+			AddNodeReference(NodeRefs, JsonString(Params, TEXT("ref")), Node);
+			AddNodeReference(NodeRefs, JsonString(Params, TEXT("node_ref")), Node);
+			AddNodeReference(NodeRefs, JsonString(Params, TEXT("result_ref")), Node);
+		}
+
+		UEdGraphPin* ResolveEndpointPin(UEdGraph* Graph, const TSharedPtr<FJsonObject>& Params, const TCHAR* Prefix, const FString& DefaultDirection, const TMap<FString, UEdGraphNode*>& NodeRefs, UEdGraphNode*& OutNode, FString& OutError)
 		{
 			OutNode = nullptr;
 			const TSharedPtr<FJsonObject> Endpoint = JsonObjectField(Params, Prefix);
 			const FString PrefixString(Prefix);
 			const FString NodeGuidKey = PrefixString + TEXT("_node_guid");
 			const FString NodeIdKey = PrefixString + TEXT("_node_id");
+			const FString NodeRefKey = PrefixString + TEXT("_node_ref");
+			const FString RefKey = PrefixString + TEXT("_ref");
 			const FString PinNameKey = PrefixString + TEXT("_pin_name");
 			const FString PinKey = PrefixString + TEXT("_pin");
 			const FString PinIdKey = PrefixString + TEXT("_pin_id");
@@ -804,6 +829,11 @@ namespace UE::ProjectIntelligence
 			{
 				NodeGuid = JsonString(Params, *NodeGuidKey, JsonString(Params, *NodeIdKey));
 			}
+			FString NodeRef = JsonString(Endpoint, TEXT("node_ref"), JsonString(Endpoint, TEXT("ref")));
+			if (NodeRef.IsEmpty())
+			{
+				NodeRef = JsonString(Params, *NodeRefKey, JsonString(Params, *RefKey));
+			}
 			FString PinText = JsonString(Endpoint, TEXT("pin_name"), JsonString(Endpoint, TEXT("pin"), JsonString(Endpoint, TEXT("pin_id"))));
 			if (PinText.IsEmpty())
 			{
@@ -811,12 +841,30 @@ namespace UE::ProjectIntelligence
 			}
 			const FString Direction = JsonString(Endpoint, TEXT("direction"), DefaultDirection);
 
-			if (NodeGuid.IsEmpty() || PinText.IsEmpty())
+			if ((NodeGuid.IsEmpty() && NodeRef.IsEmpty()) || PinText.IsEmpty())
 			{
-				OutError = FString::Printf(TEXT("%s endpoint requires node_guid/node_id and pin_name/pin/pin_id."), Prefix);
+				OutError = FString::Printf(TEXT("%s endpoint requires node_guid/node_id/node_ref and pin_name/pin/pin_id."), Prefix);
 				return nullptr;
 			}
-			OutNode = FindNodeByGuid(Graph, NodeGuid);
+			if (!NodeRef.IsEmpty())
+			{
+				UEdGraphNode* const* RefNode = NodeRefs.Find(NodeRef);
+				OutNode = RefNode ? *RefNode : nullptr;
+				if (!OutNode)
+				{
+					OutError = FString::Printf(TEXT("%s node_ref was not found in this transaction: %s"), Prefix, *NodeRef);
+					return nullptr;
+				}
+				if (OutNode->GetGraph() != Graph)
+				{
+					OutError = FString::Printf(TEXT("%s node_ref belongs to a different graph: %s"), Prefix, *NodeRef);
+					return nullptr;
+				}
+			}
+			else
+			{
+				OutNode = FindNodeByGuid(Graph, NodeGuid);
+			}
 			if (!OutNode)
 			{
 				OutError = FString::Printf(TEXT("%s node was not found in graph %s: %s"), Prefix, Graph ? *Graph->GetName() : TEXT("<null>"), *NodeGuid);
@@ -2241,6 +2289,7 @@ namespace UE::ProjectIntelligence
 		bool bMutated = false;
 		FString FailureMessage;
 		TSet<UBlueprint*> TouchedBlueprints;
+		TMap<FString, UEdGraphNode*> NodeRefs;
 
 		const FText TransactionText = FText::FromString(TransactionId.IsEmpty() ? FString(TEXT("UEPI edit transaction")) : FString::Printf(TEXT("UEPI edit %s"), *TransactionId));
 		FScopedTransaction Transaction(TEXT("UEProjectIntelligence"), TransactionText, nullptr, true);
@@ -2529,6 +2578,7 @@ namespace UE::ProjectIntelligence
 				Detail->SetStringField(TEXT("asset"), Blueprint->GetPathName());
 				Detail->SetStringField(TEXT("event"), EventNameText);
 				Detail->SetObjectField(TEXT("node"), NodeToJson(Node, Graph));
+				RegisterNodeReferences(NodeRefs, Operation, OpParams, Node);
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("Custom event node added."), Detail);
 				bMutated = true;
 				TouchedBlueprints.Add(Blueprint);
@@ -2582,6 +2632,7 @@ namespace UE::ProjectIntelligence
 				Detail->SetStringField(TEXT("asset"), Blueprint->GetPathName());
 				Detail->SetStringField(TEXT("function"), Function ? Function->GetPathName() : SelfMemberName.ToString());
 				Detail->SetObjectField(TEXT("node"), NodeToJson(Node, Graph));
+				RegisterNodeReferences(NodeRefs, Operation, OpParams, Node);
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("Function call node added."), Detail);
 				bMutated = true;
 				TouchedBlueprints.Add(Blueprint);
@@ -2657,6 +2708,7 @@ namespace UE::ProjectIntelligence
 				Detail->SetStringField(TEXT("asset"), Blueprint->GetPathName());
 				Detail->SetStringField(TEXT("variable"), VariableNameText);
 				Detail->SetObjectField(TEXT("node"), NodeToJson(Node, Graph));
+				RegisterNodeReferences(NodeRefs, Operation, OpParams, Node);
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("Blueprint variable node added."), Detail);
 				bMutated = true;
 				TouchedBlueprints.Add(Blueprint);
@@ -2690,6 +2742,7 @@ namespace UE::ProjectIntelligence
 				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
 				Detail->SetStringField(TEXT("asset"), Blueprint->GetPathName());
 				Detail->SetObjectField(TEXT("node"), NodeToJson(Node, Graph));
+				RegisterNodeReferences(NodeRefs, Operation, OpParams, Node);
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("Branch node added."), Detail);
 				bMutated = true;
 				TouchedBlueprints.Add(Blueprint);
@@ -2742,6 +2795,7 @@ namespace UE::ProjectIntelligence
 				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
 				Detail->SetStringField(TEXT("asset"), Blueprint->GetPathName());
 				Detail->SetObjectField(TEXT("node"), NodeToJson(Node, Graph));
+				RegisterNodeReferences(NodeRefs, Operation, OpParams, Node);
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("PrintString node added."), Detail);
 				bMutated = true;
 				TouchedBlueprints.Add(Blueprint);
@@ -2759,7 +2813,7 @@ namespace UE::ProjectIntelligence
 				}
 				UEdGraphNode* SourceNode = nullptr;
 				UEdGraphNode* TargetNode = nullptr;
-				UEdGraphPin* SourcePin = ResolveEndpointPin(Graph, OpParams, TEXT("source"), TEXT("output"), SourceNode, Error);
+				UEdGraphPin* SourcePin = ResolveEndpointPin(Graph, OpParams, TEXT("source"), TEXT("output"), NodeRefs, SourceNode, Error);
 				if (!SourcePin)
 				{
 					bAllOk = false;
@@ -2767,7 +2821,7 @@ namespace UE::ProjectIntelligence
 					AddOperationResult(OperationResults, Index, Type, false, Error);
 					break;
 				}
-				UEdGraphPin* TargetPin = ResolveEndpointPin(Graph, OpParams, TEXT("target"), TEXT("input"), TargetNode, Error);
+				UEdGraphPin* TargetPin = ResolveEndpointPin(Graph, OpParams, TEXT("target"), TEXT("input"), NodeRefs, TargetNode, Error);
 				if (!TargetPin)
 				{
 					bAllOk = false;

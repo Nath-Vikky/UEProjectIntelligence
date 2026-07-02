@@ -388,6 +388,8 @@ def discover(store: SnapshotStore) -> dict[str, Any]:
             "operations": operations,
             "safety_rules": [
                 "No low-level write operation is exposed as an MCP tool.",
+                "Build the complete intended edit as one edit_preview plan whenever possible, then ask for one user approval before edit_apply.",
+                "Use operation refs/node_ref endpoints when later operations need nodes created earlier in the same plan.",
                 "edit_preview must produce a transaction_id before edit_apply.",
                 "edit_apply requires the live editor bridge and approved=true after user review.",
                 "Forbidden operations include arbitrary Python, console commands, deletes, save_all, PIE, config writes, and source-control submit.",
@@ -457,7 +459,7 @@ def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None
             "Run scoped transaction.",
             "Compile or validate touched assets.",
             "Run targeted Snapshot refresh.",
-            "Return uepi_diff against the previous generation.",
+            "Return uepi_diff or equivalent live Snapshot evidence against the previous generation.",
         ],
         "rollback_plan": {
             "strategy": "transaction_undo_or_backup_restore",

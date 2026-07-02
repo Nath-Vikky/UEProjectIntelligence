@@ -18,7 +18,7 @@ UUEPISettings::UUEPISettings()
 	, bAllowSavingPackages(false)
 	, bRequirePreviewBeforeApply(true)
 	, bRequireSnapshotDiffAfterApply(true)
-	, MaxWriteOperationsPerTransaction(8)
+	, MaxWriteOperationsPerTransaction(32)
 	, MaxWriteAssetsPerTransaction(3)
 {
 }

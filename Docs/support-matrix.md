@@ -22,7 +22,7 @@
 ## Experimental Write Alpha
 
 - Blueprint write alpha can add variables, set variable defaults, add simple components, set simple component properties, and compile through the live bridge after preview and user approval.
-- Blueprint graph write alpha can create function graphs, add custom events, add function-call, variable get/set, branch, and PrintString nodes, and connect pins by node GUID plus pin name/id.
+- Blueprint graph write alpha can create function graphs, add custom events, add function-call, variable get/set, branch, and PrintString nodes, and connect pins by node GUID or same-transaction `node_ref` plus pin name/id.
 - Actor write alpha can spawn actors, set transforms, and set simple reflected actor properties after preview and user approval.
 - Material write alpha can create `UMaterialInstanceConstant` assets, set scalar/vector/texture parameters, and apply materials to actor or Blueprint component targets after preview and user approval.
 - Content write alpha can create `/Game` folders, duplicate assets, rename assets, and run automated allowlisted imports after preview and user approval.

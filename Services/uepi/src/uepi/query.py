@@ -955,12 +955,18 @@ class UEPIQueryEngine:
             )
 
         try:
-            from_manifest = _load_json(self.store.versioned_manifest(from_generation))
-            to_manifest = _load_json(self.store.versioned_manifest(to_generation))
-            from_scan = self.store.load_project_scan(SnapshotState(self.store.root, self.store.versioned_manifest(from_generation), from_manifest))
-            to_scan = self.store.load_project_scan(SnapshotState(self.store.root, self.store.versioned_manifest(to_generation), to_manifest))
+            from_state = self._load_generation_state(from_generation)
+            to_state = self._load_generation_state(to_generation)
+            from_scan = self.store.load_project_scan(from_state)
+            to_scan = self.store.load_project_scan(to_state)
         except SnapshotStoreError as exc:
-            return self._error("UEPI_DIFF_INPUT_MISSING", str(exc), tool="uepi_diff", operation="generation_diff")
+            return self._error(
+                "UEPI_DIFF_INPUT_MISSING",
+                str(exc),
+                self._available_generation_candidates(),
+                tool="uepi_diff",
+                operation="generation_diff",
+            )
 
         def ids(scan: dict[str, Any], key: str) -> set[str]:
             return {str(item.get("id")) for item in _as_list(scan.get(key)) if isinstance(item, dict) and item.get("id")}
@@ -973,6 +979,10 @@ class UEPIQueryEngine:
             {
                 "from_generation": from_generation,
                 "to_generation": to_generation,
+                "from_data_mode": from_state.data_mode,
+                "to_data_mode": to_state.data_mode,
+                "from_manifest_path": str(from_state.manifest_path),
+                "to_manifest_path": str(to_state.manifest_path),
                 "entities": {
                     "added": sorted(to_entities - from_entities)[:100],
                     "removed": sorted(from_entities - to_entities)[:100],
@@ -989,6 +999,58 @@ class UEPIQueryEngine:
             tool="uepi_diff",
             operation="generation_diff",
         )
+
+    def _load_generation_state(self, generation: int) -> SnapshotState:
+        candidates: list[tuple[Path, str]] = []
+        preferred_modes = ["live", "saved"] if self.state.data_mode == "live" else ["saved", "live"]
+        if self.state.generation == generation:
+            candidates.append((self.state.manifest_path, self.state.data_mode))
+        for mode in preferred_modes:
+            candidates.append((self.store.versioned_manifest(generation, mode), mode))
+        for mode in preferred_modes:
+            candidates.append((self.store.manifest_path(mode), mode))
+
+        seen: set[str] = set()
+        checked: list[str] = []
+        for path, data_mode in candidates:
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            checked.append(key)
+            try:
+                manifest = _load_json(path)
+            except SnapshotStoreError:
+                continue
+            if int(manifest.get("generation") or 0) != generation:
+                continue
+            if manifest.get("schema_version") != "uepi.snapshot-manifest.v2":
+                continue
+            return SnapshotState(self.store.root, path, manifest)
+
+        raise SnapshotStoreError(f"Snapshot generation {generation} was not found. Checked: {checked}")
+
+    def _available_generation_candidates(self) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        if not self.store.manifests_dir.exists():
+            return candidates
+        for path in sorted(self.store.manifests_dir.glob("*.json")):
+            try:
+                manifest = _load_json(path)
+            except SnapshotStoreError:
+                continue
+            generation = manifest.get("generation")
+            if generation is None:
+                continue
+            candidates.append(
+                {
+                    "generation": generation,
+                    "data_mode": manifest.get("data_mode") or ("live" if path.name.startswith("live") else "saved"),
+                    "path": str(path),
+                }
+            )
+        candidates.sort(key=lambda item: (int(item.get("generation") or 0), str(item.get("data_mode") or ""), str(item.get("path") or "")), reverse=True)
+        return candidates[:20]
 
     def context(self, question: str, scope: list[str] | None = None, max_items: int = 40, route: str = "auto", live: bool = False) -> dict[str, Any]:
         from .context_ranker import select_route

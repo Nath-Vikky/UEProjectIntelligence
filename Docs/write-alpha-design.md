@@ -64,7 +64,7 @@ input.add_key_mapping
 input.remove_key_mapping
 ```
 
-Blueprint graph operations return the created node GUIDs, pin IDs, pin names, directions, and links so the Agent can connect pins without guessing UI labels.
+Blueprint graph operations return the created node GUIDs, pin IDs, pin names, directions, and links so the Agent can connect pins without guessing UI labels. Plans may also assign transaction-local `ref` / `node_ref` aliases to newly created nodes so creation, connection, and compile operations can run in one approved transaction.
 `blueprint.add_event_node` is intentionally limited to custom events in this alpha.
 
 Package saving remains disabled by default. Content operations are limited to `/Game` paths, automated imports use an extension allowlist, and broad deletes/save-all operations remain blocked.
@@ -72,13 +72,13 @@ UMG operations are limited to Widget Blueprint creation, TextBlock/Button insert
 Enhanced Input operations are available only when the project enables the EnhancedInput plugin; otherwise discover reports them as apply-unsupported and apply returns a safe unsupported diagnostic.
 Unsupported or out-of-scope operations return structured diagnostics instead of partially editing assets.
 
-## Future Transaction Flow
+## Recommended Transaction Flow
 
 ```text
 read evidence
 edit_discover
-edit_preview
-user approval
+edit_preview with the complete intended plan
+one user approval
 edit_apply
 edit_validate
 targeted Snapshot refresh

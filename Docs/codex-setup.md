@@ -31,7 +31,7 @@ When no online editor session is available, the MCP server falls back to the exp
 ## Recommended Prompt Rule
 
 ```text
-Use UEPI first. Call uepi_status before other UEPI tools. Use uepi_context to build bounded evidence before answering Unreal project questions. Treat Blueprint pin links, GUIDs, and evidence as source of truth. For edits, always preview first, wait for explicit user approval, then apply, validate, refresh/diff, and report the result.
+Use UEPI first. Call uepi_status before other UEPI tools. Use uepi_context to build bounded evidence before answering Unreal project questions. Treat Blueprint pin links, GUIDs, refs, and evidence as source of truth. For edits, build one complete preview plan, ask for explicit user approval once, then apply, validate, refresh/diff, and report the result without additional approval prompts unless the plan changes.
 ```
 
 ## Quick Check
@@ -63,4 +63,4 @@ uepi_edit_rollback
 
 These tools are part of the default `codex` profile. `codex_write_alpha` remains accepted as a legacy alias, but new installs should use only the single `codex` MCP server.
 
-`uepi_edit_apply` is Agent-ready by default when the editor bridge is online, but the safe workflow is still preview -> user approval -> apply -> validate -> refresh/diff. Use the project settings only when you want to opt out of a write domain or disable package saving/bridge behavior.
+`uepi_edit_apply` is Agent-ready by default when the editor bridge is online, but the safe workflow is still preview -> one user approval -> apply -> validate -> refresh/diff. For complex Blueprint graph edits, use operation `ref` / endpoint `node_ref` aliases so one preview can create nodes, connect pins, and compile in a single approved transaction. Use the project settings only when you want to opt out of a write domain or disable package saving/bridge behavior.
