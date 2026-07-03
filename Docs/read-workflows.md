@@ -50,6 +50,18 @@ Saved/UEProjectIntelligence/store/artifacts/animation_bone_motion/
 
 The profile separates `initial_pose`, `end_pose`, `driver_bones`, `inherited_motion_bones`, `motion_intent_groups`, and sorted `changed_bones`. For procedural animation generation, start with `driver_bones` and `motion_intent_groups` to identify locally keyed controls, then use `changed_bones` samples as supporting evidence for interpolation and end-effector follow-through.
 
+When the user wants to recreate an animation in code, prefer `include: ["reconstruction_profile"]` or `include: ["driver_track_curves"]`. Reconstruction profiles are written under:
+
+```text
+Saved/UEProjectIntelligence/store/artifacts/animation_reconstruction/
+```
+
+They contain `driver_track_curves` with local FK keyframes over `normalized_time`, `phase_estimates`, and reconstruction guidelines. Use `include: ["full_pose_artifact"]` only when you need all-bone local/component pose samples for validation or high-fidelity retargeting; those artifacts are written under:
+
+```text
+Saved/UEProjectIntelligence/store/artifacts/animation_full_pose_samples/
+```
+
 ## Impact Questions
 
 Use `uepi_impact` before planning changes. It returns incoming/outgoing relations and affected entities from Snapshot evidence.

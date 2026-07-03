@@ -1141,6 +1141,431 @@ TSharedRef<FJsonObject> WriteAnimationBoneMotionProfileArtifact(
 	return Manifest;
 }
 
+FString AnimationReconstructionArtifactRoot()
+{
+	return FPaths::Combine(
+		FPaths::ProjectSavedDir(),
+		TEXT("UEProjectIntelligence"),
+		TEXT("store"),
+		TEXT("artifacts"),
+		TEXT("animation_reconstruction"));
+}
+
+FString AnimationFullPoseArtifactRoot()
+{
+	return FPaths::Combine(
+		FPaths::ProjectSavedDir(),
+		TEXT("UEProjectIntelligence"),
+		TEXT("store"),
+		TEXT("artifacts"),
+		TEXT("animation_full_pose_samples"));
+}
+
+TArray<int32> AnimSequenceKeyFrameNumbers(const IAnimationDataModel& DataModel, int32 MaxSamples, bool& bOutDownsampled)
+{
+	TArray<int32> FrameNumbers;
+	const int32 LastKeyFrame = FMath::Max(0, DataModel.GetNumberOfKeys() - 1);
+	const int32 DesiredSampleCount = FMath::Clamp(MaxSamples, 1, FMath::Max(1, LastKeyFrame + 1));
+	bOutDownsampled = LastKeyFrame + 1 > DesiredSampleCount;
+	if (!bOutDownsampled)
+	{
+		for (int32 FrameNumber = 0; FrameNumber <= LastKeyFrame; ++FrameNumber)
+		{
+			FrameNumbers.Add(FrameNumber);
+		}
+		return FrameNumbers;
+	}
+
+	for (int32 SampleIndex = 0; SampleIndex < DesiredSampleCount; ++SampleIndex)
+	{
+		const double Alpha = DesiredSampleCount <= 1
+			? 0.0
+			: static_cast<double>(SampleIndex) / static_cast<double>(DesiredSampleCount - 1);
+		FrameNumbers.AddUnique(FMath::Clamp(FMath::RoundToInt(static_cast<double>(LastKeyFrame) * Alpha), 0, LastKeyFrame));
+	}
+	FrameNumbers.AddUnique(0);
+	FrameNumbers.AddUnique(LastKeyFrame);
+	FrameNumbers.Sort();
+	return FrameNumbers;
+}
+
+struct FAnimReconstructionDriverCandidate
+{
+	FName BoneName;
+	int32 BoneIndex = INDEX_NONE;
+	int32 ParentIndex = INDEX_NONE;
+	int32 TrackIndex = INDEX_NONE;
+	double DriverScore = 0.0;
+	FAnimTrackMotionMetrics Metrics;
+};
+
+double AnimReconstructionDriverScore(const FAnimTrackMotionMetrics& Metrics)
+{
+	return Metrics.TranslationRange + Metrics.RotationRangeDegrees + (Metrics.ScaleRange * 10.0);
+}
+
+TArray<FAnimReconstructionDriverCandidate> BuildReconstructionDriverCandidates(
+	const FReferenceSkeleton& RefSkeleton,
+	const TArray<FAnimTrackMotionMetrics>& MotionMetrics)
+{
+	TArray<FAnimReconstructionDriverCandidate> Candidates;
+	for (const FAnimTrackMotionMetrics& Metrics : MotionMetrics)
+	{
+		if (!Metrics.Changes())
+		{
+			continue;
+		}
+
+		const int32 BoneIndex = RefSkeleton.FindBoneIndex(Metrics.BoneName);
+		if (!RefSkeleton.IsValidIndex(BoneIndex))
+		{
+			continue;
+		}
+
+		FAnimReconstructionDriverCandidate Candidate;
+		Candidate.BoneName = Metrics.BoneName;
+		Candidate.BoneIndex = BoneIndex;
+		Candidate.ParentIndex = RefSkeleton.GetParentIndex(BoneIndex);
+		Candidate.TrackIndex = Metrics.TrackIndex;
+		Candidate.DriverScore = AnimReconstructionDriverScore(Metrics);
+		Candidate.Metrics = Metrics;
+		Candidates.Add(MoveTemp(Candidate));
+	}
+
+	Candidates.Sort([](const FAnimReconstructionDriverCandidate& Left, const FAnimReconstructionDriverCandidate& Right)
+	{
+		return Left.DriverScore > Right.DriverScore;
+	});
+	return Candidates;
+}
+
+TSharedRef<FJsonObject> AnimCurveKeyJson(
+	int32 FrameNumber,
+	double TimeSeconds,
+	double NormalizedTime,
+	const FTransform& Transform,
+	const FTransform& InitialTransform)
+{
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetNumberField(TEXT("frame_number"), FrameNumber);
+	Object->SetNumberField(TEXT("time_seconds"), TimeSeconds);
+	Object->SetNumberField(TEXT("normalized_time"), NormalizedTime);
+	Object->SetObjectField(TEXT("local_transform"), AnimTransformForLLMObject(Transform));
+	Object->SetObjectField(TEXT("local_translation_delta_from_initial"), AnimVectorDeltaObject(Transform.GetTranslation() - InitialTransform.GetTranslation()));
+	Object->SetNumberField(TEXT("local_rotation_delta_degrees_from_initial"), QuatAngularDistanceDegrees(InitialTransform.GetRotation(), Transform.GetRotation()));
+	return Object;
+}
+
+TSharedRef<FJsonObject> AnimDriverCurveJson(
+	const UAnimSequence& Sequence,
+	const IAnimationDataModel& DataModel,
+	const FFrameRate& DataFrameRate,
+	const FAnimReconstructionDriverCandidate& Candidate,
+	const TArray<int32>& FrameNumbers,
+	int32 Rank)
+{
+	const double PlayLength = FMath::Max(Sequence.GetPlayLength(), 0.0f);
+	const FTransform InitialTransform = FrameNumbers.Num() > 0
+		? DataModel.GetBoneTrackTransform(Candidate.BoneName, FFrameNumber(FrameNumbers[0]))
+		: FTransform::Identity;
+
+	TArray<TSharedPtr<FJsonValue>> KeyValues;
+	double PreviousRotationDelta = 0.0;
+	double PreviousSlopeSign = 0.0;
+	int32 RotationExtremaCount = 0;
+	for (int32 KeyIndex = 0; KeyIndex < FrameNumbers.Num(); ++KeyIndex)
+	{
+		const int32 FrameNumber = FrameNumbers[KeyIndex];
+		const double TimeSeconds = AnimFrameSeconds(DataFrameRate, FrameNumber);
+		const FTransform Transform = DataModel.GetBoneTrackTransform(Candidate.BoneName, FFrameNumber(FrameNumber));
+		const double RotationDelta = QuatAngularDistanceDegrees(InitialTransform.GetRotation(), Transform.GetRotation());
+		if (KeyIndex > 0)
+		{
+			const double Slope = RotationDelta - PreviousRotationDelta;
+			const double SlopeSign = FMath::Abs(Slope) > 0.25 ? FMath::Sign(Slope) : 0.0;
+			if (PreviousSlopeSign != 0.0 && SlopeSign != 0.0 && PreviousSlopeSign != SlopeSign)
+			{
+				++RotationExtremaCount;
+			}
+			if (SlopeSign != 0.0)
+			{
+				PreviousSlopeSign = SlopeSign;
+			}
+		}
+		PreviousRotationDelta = RotationDelta;
+		KeyValues.Add(MakeShared<FJsonValueObject>(AnimCurveKeyJson(
+			FrameNumber,
+			TimeSeconds,
+			PlayLength > 0.0 ? TimeSeconds / PlayLength : 0.0,
+			Transform,
+			InitialTransform)));
+	}
+
+	const FString CurveSemantics = RotationExtremaCount >= 2
+		? TEXT("oscillating_rotation")
+		: TEXT("direct_fk_keyframes");
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetNumberField(TEXT("rank"), Rank);
+	Object->SetStringField(TEXT("bone_name"), Candidate.BoneName.ToString());
+	Object->SetNumberField(TEXT("bone_index"), Candidate.BoneIndex);
+	Object->SetNumberField(TEXT("parent_index"), Candidate.ParentIndex);
+	Object->SetStringField(TEXT("intent_group"), AnimBoneIntentGroupId(Candidate.BoneName));
+	Object->SetNumberField(TEXT("track_index"), Candidate.TrackIndex);
+	Object->SetNumberField(TEXT("driver_score"), Candidate.DriverScore);
+	Object->SetNumberField(TEXT("source_raw_key_count"), Candidate.Metrics.KeyCount);
+	Object->SetNumberField(TEXT("key_count"), KeyValues.Num());
+	Object->SetNumberField(TEXT("local_translation_range"), Candidate.Metrics.TranslationRange);
+	Object->SetNumberField(TEXT("local_rotation_range_degrees"), Candidate.Metrics.RotationRangeDegrees);
+	Object->SetNumberField(TEXT("local_scale_range"), Candidate.Metrics.ScaleRange);
+	Object->SetNumberField(TEXT("rotation_extrema_count"), RotationExtremaCount);
+	Object->SetStringField(TEXT("curve_semantics"), CurveSemantics);
+	Object->SetStringField(TEXT("programmatic_recipe_hint"), CurveSemantics == TEXT("oscillating_rotation")
+		? TEXT("Use these local FK keys directly, or fit a periodic/spline curve through rotation_euler_degrees over normalized_time.")
+		: TEXT("Use these local FK keys as the driver track for this bone; interpolate by normalized_time."));
+	Object->SetArrayField(TEXT("skeleton_chain"), AnimBoneChainValues(Sequence.GetSkeleton()->GetReferenceSkeleton(), Candidate.BoneIndex));
+	Object->SetArrayField(TEXT("keyframes"), MoveTemp(KeyValues));
+	return Object;
+}
+
+TSharedRef<FJsonObject> AnimationFullPoseSamplesObject(
+	const UAnimSequence& Sequence,
+	const TArray<FName>& TrackNames)
+{
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetStringField(TEXT("schema_version"), TEXT("uepi.animation_full_pose_samples.v1"));
+	Object->SetStringField(TEXT("intended_reader"), TEXT("tool_or_llm_when_high_fidelity_pose_data_is_needed"));
+	Object->SetStringField(TEXT("coordinate_space_note"), TEXT("Each sample contains every skeleton bone with parent-relative local_transform and skeleton component-space component_transform in Unreal centimeters."));
+	Object->SetStringField(TEXT("sequence_path"), Sequence.GetPathName());
+	Object->SetStringField(TEXT("sequence_name"), Sequence.GetName());
+	Object->SetStringField(TEXT("skeleton_path"), Sequence.GetSkeleton() ? Sequence.GetSkeleton()->GetPathName() : FString());
+	Object->SetNumberField(TEXT("play_length_seconds"), Sequence.GetPlayLength());
+	const IAnimationDataModel* DataModel = Sequence.GetDataModel();
+	const USkeleton* Skeleton = Sequence.GetSkeleton();
+	if (!DataModel || !Skeleton)
+	{
+		Object->SetStringField(TEXT("analysis_state"), TEXT("unavailable"));
+		Object->SetStringField(TEXT("unavailable_reason"), !DataModel ? TEXT("missing_animation_data_model") : TEXT("missing_skeleton"));
+		Object->SetStringField(TEXT("sample_policy"), TEXT("unavailable"));
+		Object->SetNumberField(TEXT("sample_count"), 0);
+		Object->SetNumberField(TEXT("bone_count"), 0);
+		return Object;
+	}
+
+	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+	bool bDownsampled = false;
+	constexpr int32 MaxFullPoseSamples = 180;
+	const TArray<int32> FrameNumbers = AnimSequenceKeyFrameNumbers(*DataModel, MaxFullPoseSamples, bDownsampled);
+	const FFrameRate DataFrameRate = DataModel->GetFrameRate();
+	const double PlayLength = FMath::Max(Sequence.GetPlayLength(), 0.0f);
+	TArray<TSharedPtr<FJsonValue>> SampleValues;
+	for (const int32 FrameNumber : FrameNumbers)
+	{
+		const double TimeSeconds = AnimFrameSeconds(DataFrameRate, FrameNumber);
+		const TArray<FTransform> LocalPose = BuildLocalBonePoseForFrame(*DataModel, TrackNames, RefSkeleton, FrameNumber);
+		const TArray<FTransform> ComponentPose = BuildComponentSpacePose(RefSkeleton, LocalPose);
+		TArray<TSharedPtr<FJsonValue>> BoneValues;
+		for (int32 BoneIndex = 0; BoneIndex < RefSkeleton.GetNum(); ++BoneIndex)
+		{
+			BoneValues.Add(MakeShared<FJsonValueObject>(AnimTransformEntryForLLMJson(
+				BoneIndex,
+				RefSkeleton.GetBoneName(BoneIndex),
+				LocalPose.IsValidIndex(BoneIndex) ? LocalPose[BoneIndex] : FTransform::Identity,
+				ComponentPose.IsValidIndex(BoneIndex) ? ComponentPose[BoneIndex] : FTransform::Identity)));
+		}
+
+		TSharedRef<FJsonObject> SampleObject = MakeShared<FJsonObject>();
+		SampleObject->SetNumberField(TEXT("frame_number"), FrameNumber);
+		SampleObject->SetNumberField(TEXT("time_seconds"), TimeSeconds);
+		SampleObject->SetNumberField(TEXT("normalized_time"), PlayLength > 0.0 ? TimeSeconds / PlayLength : 0.0);
+		SampleObject->SetNumberField(TEXT("bone_count"), BoneValues.Num());
+		SampleObject->SetArrayField(TEXT("bones"), MoveTemp(BoneValues));
+		SampleValues.Add(MakeShared<FJsonValueObject>(SampleObject));
+	}
+
+	Object->SetStringField(TEXT("analysis_state"), TEXT("ready"));
+	Object->SetStringField(TEXT("sample_policy"), bDownsampled ? TEXT("evenly_downsampled_animation_keys") : TEXT("all_animation_keys"));
+	Object->SetNumberField(TEXT("source_key_count"), DataModel->GetNumberOfKeys());
+	Object->SetNumberField(TEXT("source_frame_count"), DataModel->GetNumberOfFrames());
+	Object->SetNumberField(TEXT("sample_count"), SampleValues.Num());
+	Object->SetNumberField(TEXT("bone_count"), RefSkeleton.GetNum());
+	Object->SetArrayField(TEXT("samples"), MoveTemp(SampleValues));
+	return Object;
+}
+
+TSharedRef<FJsonObject> WriteAnimationFullPoseSamplesArtifact(
+	const FString& ProjectId,
+	const UAnimSequence& Sequence,
+	const TArray<FName>& TrackNames)
+{
+	const FString ArtifactId = MakeStableId(ProjectId, TEXT("animation_full_pose_samples"), Sequence.GetPathName());
+	const FString ArtifactDir = AnimationFullPoseArtifactRoot();
+	const FString ArtifactPath = FPaths::Combine(ArtifactDir, ArtifactId + TEXT(".json"));
+	TSharedRef<FJsonObject> Payload = AnimationFullPoseSamplesObject(Sequence, TrackNames);
+	Payload->SetStringField(TEXT("artifact_id"), ArtifactId);
+	Payload->SetStringField(TEXT("artifact_uri"), TEXT("uepi://animation-full-pose-samples/") + ArtifactId);
+	Payload->SetStringField(TEXT("generated_at_utc"), FDateTime::UtcNow().ToIso8601());
+
+	FString Json;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Json);
+	FJsonSerializer::Serialize(Payload, Writer);
+
+	TSharedRef<FJsonObject> Manifest = MakeShared<FJsonObject>();
+	Manifest->SetStringField(TEXT("schema_version"), TEXT("uepi.animation_full_pose_samples_manifest.v1"));
+	Manifest->SetStringField(TEXT("profile_schema_version"), TEXT("uepi.animation_full_pose_samples.v1"));
+	Manifest->SetStringField(TEXT("artifact_id"), ArtifactId);
+	Manifest->SetStringField(TEXT("artifact_uri"), TEXT("uepi://animation-full-pose-samples/") + ArtifactId);
+	Manifest->SetStringField(TEXT("storage"), TEXT("snapshot_store_artifact_json"));
+	Manifest->SetStringField(TEXT("path"), FPaths::ConvertRelativePathToFull(ArtifactPath));
+	Manifest->SetStringField(TEXT("sequence_path"), Sequence.GetPathName());
+	Manifest->SetStringField(TEXT("skeleton_path"), Sequence.GetSkeleton() ? Sequence.GetSkeleton()->GetPathName() : FString());
+	Manifest->SetStringField(TEXT("sample_policy"), Payload->GetStringField(TEXT("sample_policy")));
+	Manifest->SetNumberField(TEXT("sample_count"), Payload->GetNumberField(TEXT("sample_count")));
+	Manifest->SetNumberField(TEXT("bone_count"), Payload->GetNumberField(TEXT("bone_count")));
+	Manifest->SetNumberField(TEXT("byte_count"), FTCHARToUTF8(*Json).Length());
+	Manifest->SetStringField(TEXT("encoding"), TEXT("json"));
+
+	IFileManager::Get().MakeDirectory(*ArtifactDir, true);
+	if (!FFileHelper::SaveStringToFile(Json, *ArtifactPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	{
+		Manifest->SetStringField(TEXT("storage"), TEXT("snapshot_store_artifact_json_write_failed"));
+		Manifest->SetStringField(TEXT("write_error"), FString::Printf(TEXT("Failed to write animation full pose sample artifact: %s"), *ArtifactPath));
+	}
+	return Manifest;
+}
+
+TSharedRef<FJsonObject> AnimationReconstructionProfileObject(
+	const UAnimSequence& Sequence,
+	const TArray<FName>& TrackNames,
+	const TArray<FAnimTrackMotionMetrics>& MotionMetrics,
+	const TSharedRef<FJsonObject>& FullPoseManifest)
+{
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetStringField(TEXT("schema_version"), TEXT("uepi.animation_reconstruction_profile.v1"));
+	Object->SetStringField(TEXT("intended_reader"), TEXT("LLM_or_tool_generating_procedural_animation"));
+	Object->SetStringField(TEXT("reconstruction_goal"), TEXT("Recreate this animation by driving selected local FK bone tracks, then validate against end-effectors or full pose samples if needed."));
+	Object->SetStringField(TEXT("sequence_path"), Sequence.GetPathName());
+	Object->SetStringField(TEXT("sequence_name"), Sequence.GetName());
+	Object->SetStringField(TEXT("skeleton_path"), Sequence.GetSkeleton() ? Sequence.GetSkeleton()->GetPathName() : FString());
+	Object->SetNumberField(TEXT("play_length_seconds"), Sequence.GetPlayLength());
+	Object->SetStringField(TEXT("sampling_frame_rate"), AnimFrameRateString(Sequence.GetSamplingFrameRate()));
+	Object->SetObjectField(TEXT("full_pose_sample_artifact"), FullPoseManifest);
+
+	const IAnimationDataModel* DataModel = Sequence.GetDataModel();
+	const USkeleton* Skeleton = Sequence.GetSkeleton();
+	if (!DataModel || !Skeleton)
+	{
+		Object->SetStringField(TEXT("analysis_state"), TEXT("unavailable"));
+		Object->SetStringField(TEXT("unavailable_reason"), !DataModel ? TEXT("missing_animation_data_model") : TEXT("missing_skeleton"));
+		Object->SetNumberField(TEXT("driver_curve_count"), 0);
+		Object->SetNumberField(TEXT("driver_key_count"), 0);
+		return Object;
+	}
+
+	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+	TArray<FAnimReconstructionDriverCandidate> Candidates = BuildReconstructionDriverCandidates(RefSkeleton, MotionMetrics);
+	constexpr int32 MaxDriverCurves = 32;
+	const int32 SelectedCount = FMath::Min(Candidates.Num(), MaxDriverCurves);
+	bool bDriverKeysDownsampled = false;
+	constexpr int32 MaxDriverKeySamples = 300;
+	const TArray<int32> DriverFrameNumbers = AnimSequenceKeyFrameNumbers(*DataModel, MaxDriverKeySamples, bDriverKeysDownsampled);
+	const FFrameRate DataFrameRate = DataModel->GetFrameRate();
+	TArray<TSharedPtr<FJsonValue>> DriverCurveValues;
+	TArray<FString> DriverBoneNames;
+	TArray<FAnimMotionIntentGroupSummary> IntentGroups;
+	for (int32 Index = 0; Index < SelectedCount; ++Index)
+	{
+		const FAnimReconstructionDriverCandidate& Candidate = Candidates[Index];
+		DriverCurveValues.Add(MakeShared<FJsonValueObject>(AnimDriverCurveJson(Sequence, *DataModel, DataFrameRate, Candidate, DriverFrameNumbers, Index)));
+		DriverBoneNames.Add(Candidate.BoneName.ToString());
+		FAnimMotionIntentGroupSummary& Group = FindOrAddMotionIntentGroup(IntentGroups, AnimBoneIntentGroupId(Candidate.BoneName));
+		++Group.DriverCount;
+		Group.DriverScore += Candidate.DriverScore;
+		if (Group.DominantDriverBones.Num() < 8)
+		{
+			Group.DominantDriverBones.Add(Candidate.BoneName.ToString());
+		}
+	}
+
+	TArray<TSharedPtr<FJsonValue>> PhaseValues;
+	const TCHAR* PhaseNames[] = { TEXT("establish_start_pose"), TEXT("main_motion"), TEXT("return_or_settle") };
+	const double PhaseStarts[] = { 0.0, 0.2, 0.8 };
+	const double PhaseEnds[] = { 0.2, 0.8, 1.0 };
+	for (int32 PhaseIndex = 0; PhaseIndex < 3; ++PhaseIndex)
+	{
+		TSharedRef<FJsonObject> PhaseObject = MakeShared<FJsonObject>();
+		PhaseObject->SetStringField(TEXT("name"), PhaseNames[PhaseIndex]);
+		PhaseObject->SetNumberField(TEXT("normalized_start"), PhaseStarts[PhaseIndex]);
+		PhaseObject->SetNumberField(TEXT("normalized_end"), PhaseEnds[PhaseIndex]);
+		PhaseObject->SetStringField(TEXT("note"), PhaseIndex == 1
+			? TEXT("Use driver_track_curves in this interval to reproduce the recognizable action.")
+			: TEXT("Use driver_track_curves to match the source pose transition for this interval."));
+		PhaseValues.Add(MakeShared<FJsonValueObject>(PhaseObject));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> GuidelineValues;
+	GuidelineValues.Add(MakeShared<FJsonValueString>(TEXT("For programmatic recreation, drive the bones in driver_track_curves using local_transform keyframes over normalized_time.")));
+	GuidelineValues.Add(MakeShared<FJsonValueString>(TEXT("Use driver_track_curves first; use full_pose_sample_artifact only for high-fidelity validation, retargeting, or debugging.")));
+	GuidelineValues.Add(MakeShared<FJsonValueString>(TEXT("If curve_semantics is oscillating_rotation, a fitted sine/spline can approximate the source, but direct keyframes are the most faithful.")));
+
+	Object->SetStringField(TEXT("analysis_state"), TEXT("ready"));
+	Object->SetNumberField(TEXT("source_key_count"), DataModel->GetNumberOfKeys());
+	Object->SetNumberField(TEXT("source_frame_count"), DataModel->GetNumberOfFrames());
+	Object->SetNumberField(TEXT("driver_curve_count"), DriverCurveValues.Num());
+	Object->SetNumberField(TEXT("driver_key_count"), DriverFrameNumbers.Num());
+	Object->SetStringField(TEXT("driver_key_sample_policy"), bDriverKeysDownsampled ? TEXT("evenly_downsampled_animation_keys") : TEXT("all_animation_keys"));
+	Object->SetNumberField(TEXT("candidate_driver_bone_count"), Candidates.Num());
+	Object->SetArrayField(TEXT("recommended_driver_bones"), AnimStringArrayValues(DriverBoneNames));
+	Object->SetArrayField(TEXT("motion_intent_groups"), AnimMotionIntentGroupValues(IntentGroups));
+	Object->SetArrayField(TEXT("phase_estimates"), MoveTemp(PhaseValues));
+	Object->SetArrayField(TEXT("driver_track_curves"), MoveTemp(DriverCurveValues));
+	Object->SetArrayField(TEXT("reconstruction_guidelines"), MoveTemp(GuidelineValues));
+	return Object;
+}
+
+TSharedRef<FJsonObject> WriteAnimationReconstructionProfileArtifact(
+	const FString& ProjectId,
+	const UAnimSequence& Sequence,
+	const TArray<FName>& TrackNames,
+	const TArray<FAnimTrackMotionMetrics>& MotionMetrics)
+{
+	const TSharedRef<FJsonObject> FullPoseManifest = WriteAnimationFullPoseSamplesArtifact(ProjectId, Sequence, TrackNames);
+	const FString ArtifactId = MakeStableId(ProjectId, TEXT("animation_reconstruction_profile"), Sequence.GetPathName());
+	const FString ArtifactDir = AnimationReconstructionArtifactRoot();
+	const FString ArtifactPath = FPaths::Combine(ArtifactDir, ArtifactId + TEXT(".json"));
+	TSharedRef<FJsonObject> Payload = AnimationReconstructionProfileObject(Sequence, TrackNames, MotionMetrics, FullPoseManifest);
+	Payload->SetStringField(TEXT("artifact_id"), ArtifactId);
+	Payload->SetStringField(TEXT("artifact_uri"), TEXT("uepi://animation-reconstruction-profile/") + ArtifactId);
+	Payload->SetStringField(TEXT("generated_at_utc"), FDateTime::UtcNow().ToIso8601());
+
+	FString Json;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Json);
+	FJsonSerializer::Serialize(Payload, Writer);
+
+	TSharedRef<FJsonObject> Manifest = MakeShared<FJsonObject>();
+	Manifest->SetStringField(TEXT("schema_version"), TEXT("uepi.animation_reconstruction_profile_manifest.v1"));
+	Manifest->SetStringField(TEXT("profile_schema_version"), TEXT("uepi.animation_reconstruction_profile.v1"));
+	Manifest->SetStringField(TEXT("artifact_id"), ArtifactId);
+	Manifest->SetStringField(TEXT("artifact_uri"), TEXT("uepi://animation-reconstruction-profile/") + ArtifactId);
+	Manifest->SetStringField(TEXT("storage"), TEXT("snapshot_store_artifact_json"));
+	Manifest->SetStringField(TEXT("path"), FPaths::ConvertRelativePathToFull(ArtifactPath));
+	Manifest->SetStringField(TEXT("sequence_path"), Sequence.GetPathName());
+	Manifest->SetStringField(TEXT("skeleton_path"), Sequence.GetSkeleton() ? Sequence.GetSkeleton()->GetPathName() : FString());
+	Manifest->SetNumberField(TEXT("driver_curve_count"), Payload->GetNumberField(TEXT("driver_curve_count")));
+	Manifest->SetNumberField(TEXT("driver_key_count"), Payload->GetNumberField(TEXT("driver_key_count")));
+	Manifest->SetStringField(TEXT("full_pose_artifact_uri"), FullPoseManifest->GetStringField(TEXT("artifact_uri")));
+	Manifest->SetNumberField(TEXT("full_pose_sample_count"), FullPoseManifest->GetNumberField(TEXT("sample_count")));
+	Manifest->SetNumberField(TEXT("byte_count"), FTCHARToUTF8(*Json).Length());
+	Manifest->SetStringField(TEXT("encoding"), TEXT("json"));
+
+	IFileManager::Get().MakeDirectory(*ArtifactDir, true);
+	if (!FFileHelper::SaveStringToFile(Json, *ArtifactPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	{
+		Manifest->SetStringField(TEXT("storage"), TEXT("snapshot_store_artifact_json_write_failed"));
+		Manifest->SetStringField(TEXT("write_error"), FString::Printf(TEXT("Failed to write animation reconstruction profile artifact: %s"), *ArtifactPath));
+	}
+	return Manifest;
+}
+
 TSharedRef<FJsonObject> AnimTransformEntryJson(
 	int32 Index,
 	const FName& BoneName,
@@ -1696,7 +2121,7 @@ FString AddAnimationSequenceEntity(
 	Entity.Attributes.Add(TEXT("curve_count"), DataModel ? FString::FromInt(DataModel->GetNumberOfFloatCurves() + DataModel->GetNumberOfTransformCurves()) : TEXT("0"));
 	Entity.Attributes.Add(TEXT("collection_level"), LexToString(ECollectionLevel::Structural));
 	Entity.Completeness.State = ECompletenessState::Partial;
-	Entity.Completeness.Covered = { TEXT("sequence_metadata"), TEXT("bone_track_metadata"), TEXT("frame_time_samples"), TEXT("raw_local_track_samples"), TEXT("component_space_pose_samples"), TEXT("root_motion_metadata"), TEXT("additive_metadata"), TEXT("notify_metadata"), TEXT("curve_counts"), TEXT("motion_summary"), TEXT("bone_motion_profile_artifact") };
+	Entity.Completeness.Covered = { TEXT("sequence_metadata"), TEXT("bone_track_metadata"), TEXT("frame_time_samples"), TEXT("raw_local_track_samples"), TEXT("component_space_pose_samples"), TEXT("root_motion_metadata"), TEXT("additive_metadata"), TEXT("notify_metadata"), TEXT("curve_counts"), TEXT("motion_summary"), TEXT("bone_motion_profile_artifact"), TEXT("reconstruction_profile_artifact") };
 	Entity.Completeness.Omitted = { TEXT("full_per_frame_pose_samples"), TEXT("raw_curve_keys"), TEXT("compressed_track_data") };
 	AddAnimEvidence(Entity, SequencePath, TEXT("UAnimSequence metadata read through Animation Data Model."));
 	OutEntities.Add(MoveTemp(Entity));
@@ -3555,6 +3980,7 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 	}
 	const TSharedRef<FJsonObject> MotionSummaryObject = AnimationMotionSummaryObject(Sequence, MotionMetricsValues);
 	const TSharedRef<FJsonObject> BoneMotionProfileManifest = WriteAnimationBoneMotionProfileArtifact(ProjectId, Sequence, TrackNames, MotionMetricsValues);
+	const TSharedRef<FJsonObject> ReconstructionProfileManifest = WriteAnimationReconstructionProfileArtifact(ProjectId, Sequence, TrackNames, MotionMetricsValues);
 	if (FEntityRecord* SequenceEntity = FindEntity(OutEntities, SequenceId))
 	{
 		int32 ChangingBoneCount = 0;
@@ -3572,8 +3998,13 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 		SequenceEntity->Attributes.Add(TEXT("bone_motion_profile_position_changed_bone_count"), FString::FromInt(static_cast<int32>(BoneMotionProfileManifest->GetNumberField(TEXT("position_changed_bone_count")))));
 		SequenceEntity->Attributes.Add(TEXT("bone_motion_profile_driver_bone_count"), FString::FromInt(static_cast<int32>(BoneMotionProfileManifest->GetNumberField(TEXT("driver_bone_count")))));
 		SequenceEntity->Attributes.Add(TEXT("bone_motion_profile_inherited_motion_bone_count"), FString::FromInt(static_cast<int32>(BoneMotionProfileManifest->GetNumberField(TEXT("inherited_motion_bone_count")))));
+		SequenceEntity->Attributes.Add(TEXT("reconstruction_profile_artifact_uri"), ReconstructionProfileManifest->GetStringField(TEXT("artifact_uri")));
+		SequenceEntity->Attributes.Add(TEXT("reconstruction_profile_driver_curve_count"), FString::FromInt(static_cast<int32>(ReconstructionProfileManifest->GetNumberField(TEXT("driver_curve_count")))));
+		SequenceEntity->Attributes.Add(TEXT("reconstruction_profile_driver_key_count"), FString::FromInt(static_cast<int32>(ReconstructionProfileManifest->GetNumberField(TEXT("driver_key_count")))));
+		SequenceEntity->Attributes.Add(TEXT("reconstruction_profile_full_pose_artifact_uri"), ReconstructionProfileManifest->GetStringField(TEXT("full_pose_artifact_uri")));
 		SequenceEntity->Completeness.Covered.AddUnique(TEXT("motion_summary"));
 		SequenceEntity->Completeness.Covered.AddUnique(TEXT("bone_motion_profile_artifact"));
+		SequenceEntity->Completeness.Covered.AddUnique(TEXT("reconstruction_profile_artifact"));
 	}
 
 	TArray<TSharedPtr<FJsonValue>> NotifyValues;
@@ -3677,6 +4108,7 @@ TSharedRef<FJsonObject> AnimationSequenceSnapshot(
 	Object->SetArrayField(TEXT("tracks"), TrackValues);
 	Object->SetObjectField(TEXT("motion_summary"), MotionSummaryObject);
 	Object->SetObjectField(TEXT("bone_motion_profile"), BoneMotionProfileManifest);
+	Object->SetObjectField(TEXT("reconstruction_profile"), ReconstructionProfileManifest);
 	Object->SetArrayField(TEXT("notifies"), NotifyValues);
 	Object->SetArrayField(TEXT("pose_samples"), MoveTemp(PoseSampleValues));
 	return Object;

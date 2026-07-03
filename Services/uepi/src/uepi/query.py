@@ -928,10 +928,19 @@ class UEPIQueryEngine:
             )
         domain_entities = self._domain_entities_for_asset(entity, ANIMATION_KINDS, max(1, min(limit, 1000)))
         snapshot = _as_dict(entity.get("snapshot"))
-        requested = include or ["summary", "tracks", "notifies", "curves", "relations", "bone_motion_profile_manifest"]
+        requested = include or [
+            "summary",
+            "tracks",
+            "notifies",
+            "curves",
+            "relations",
+            "bone_motion_profile_manifest",
+            "reconstruction_profile_manifest",
+        ]
         sequence_snapshot = snapshot.get("animation_sequence") or (snapshot if snapshot.get("schema_version") == "uepi.anim_sequence.v1" else None)
         sequence_snapshot = sequence_snapshot if isinstance(sequence_snapshot, dict) else None
         bone_motion_profile_manifest = _as_dict(sequence_snapshot.get("bone_motion_profile")) if sequence_snapshot else {}
+        reconstruction_profile_manifest = _as_dict(sequence_snapshot.get("reconstruction_profile")) if sequence_snapshot else {}
         result = {
             "asset": _short_entity(entity, include_snapshot=True),
             "include": requested,
@@ -939,6 +948,7 @@ class UEPIQueryEngine:
             "motion_summary": snapshot.get("animation_motion_summary") or snapshot.get("motion_summary"),
             "sequence": sequence_snapshot,
             "bone_motion_profile_manifest": bone_motion_profile_manifest or None,
+            "reconstruction_profile_manifest": reconstruction_profile_manifest or None,
             "resolution_candidates": candidates,
             "query_source": "sqlite_cache" if self.cache else "snapshot_fragments",
         }
@@ -957,6 +967,42 @@ class UEPIQueryEngine:
                     omissions.append("bone_motion_profile_artifact_unreadable")
             else:
                 omissions.append("bone_motion_profile_artifact_not_present_in_snapshot")
+        reconstruction_profile: dict[str, Any] | None = None
+        if any(name in requested for name in ("reconstruction_profile", "driver_track_curves", "full_pose_artifact", "full_pose_samples")):
+            if reconstruction_profile_manifest:
+                payload, reconstruction_diagnostics = self._load_artifact_payload(
+                    reconstruction_profile_manifest,
+                    expected_schema="uepi.animation_reconstruction_profile.v1",
+                    diagnostic_code="UEPI_ANIMATION_RECONSTRUCTION_PROFILE_UNAVAILABLE",
+                )
+                artifact_diagnostics.extend(reconstruction_diagnostics)
+                if payload:
+                    reconstruction_profile = payload
+                    if "reconstruction_profile" in requested:
+                        result["reconstruction_profile"] = payload
+                    if "driver_track_curves" in requested:
+                        result["driver_track_curves"] = payload.get("driver_track_curves") or []
+                        result["reconstruction_guidelines"] = payload.get("reconstruction_guidelines") or []
+                        result["phase_estimates"] = payload.get("phase_estimates") or []
+                else:
+                    omissions.append("reconstruction_profile_artifact_unreadable")
+            else:
+                omissions.append("reconstruction_profile_artifact_not_present_in_snapshot")
+        if any(name in requested for name in ("full_pose_artifact", "full_pose_samples")):
+            full_pose_manifest = _as_dict((reconstruction_profile or {}).get("full_pose_sample_artifact"))
+            if full_pose_manifest:
+                payload, full_pose_diagnostics = self._load_artifact_payload(
+                    full_pose_manifest,
+                    expected_schema="uepi.animation_full_pose_samples.v1",
+                    diagnostic_code="UEPI_ANIMATION_FULL_POSE_SAMPLES_UNAVAILABLE",
+                )
+                artifact_diagnostics.extend(full_pose_diagnostics)
+                if payload:
+                    result["full_pose_artifact"] = payload
+                else:
+                    omissions.append("full_pose_artifact_unreadable")
+            elif reconstruction_profile is not None:
+                omissions.append("full_pose_artifact_not_present_in_reconstruction_profile")
         if not domain_entities and not snapshot:
             omissions.append("animation_details_not_present_in_snapshot")
             freshness, diagnostics = self._domain_refresh_for_missing_snapshot(

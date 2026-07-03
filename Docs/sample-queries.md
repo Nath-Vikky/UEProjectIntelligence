@@ -43,6 +43,18 @@ Read an LLM-ready bone motion profile artifact:
 uepi_animation {"asset": "Waving", "include": ["summary", "bone_motion_profile"]}
 ```
 
+Read programmatic reconstruction curves for recreating an animation:
+
+```text
+uepi_animation {"asset": "Waving", "include": ["driver_track_curves"]}
+```
+
+Read the full-pose validation artifact only when all-bone samples are needed:
+
+```text
+uepi_animation {"asset": "Waving", "include": ["full_pose_artifact"]}
+```
+
 Build a context bundle:
 
 ```text

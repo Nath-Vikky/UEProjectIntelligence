@@ -104,7 +104,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "uepi_animation",
-        "description": "Read indexed animation, skeleton, track, notify, curve, motion-summary, and optional bone-motion profile artifacts.",
+        "description": "Read indexed animation, skeleton, track, notify, curve, motion-summary, optional bone-motion profiles, reconstruction profiles, driver track curves, and full-pose sample artifacts.",
         "inputSchema": object_schema(
             {
                 "asset": {"type": "string"},
@@ -176,7 +176,7 @@ SERVER_INSTRUCTIONS = """UEPI is a project-local Unreal Engine 5.3.2 MCP. Always
 
 Use uepi_search or uepi_context to identify the minimum set of assets needed for the user's question.
 uepi_context supports routes such as auto, project_overview, input_to_gameplay, blueprint_behavior, animation_playback, ui_flow, asset_dependency_impact, data_driven_behavior, gas_ability_flow, ai_behavior_flow, and network_replication_flow.
-Then call the narrow domain tool: uepi_asset for local context, uepi_blueprint for Blueprint graph/node/pin semantic summaries, uepi_blueprint_trace for static flow paths, uepi_animation for animation/skeleton/track summaries and include=["bone_motion_profile"] when the user asks how bones move over time. In animation bone-motion profiles, start from driver_bones and motion_intent_groups for procedural generation decisions, then use changed_bones as sampled evidence. Use uepi_impact for dependency impact.
+Then call the narrow domain tool: uepi_asset for local context, uepi_blueprint for Blueprint graph/node/pin semantic summaries, uepi_blueprint_trace for static flow paths, uepi_animation for animation/skeleton/track summaries and include=["bone_motion_profile"] when the user asks how bones move over time. For procedural animation recreation, call uepi_animation with include=["reconstruction_profile"] or include=["driver_track_curves"]; use include=["full_pose_artifact"] only when high-fidelity all-bone pose samples are needed. In animation bone-motion profiles, start from driver_bones and motion_intent_groups for procedural generation decisions, then use changed_bones as sampled evidence. Use uepi_impact for dependency impact.
 Reads never require the Unreal Editor when the snapshot/cache is current. If a read response includes diagnostic code UEPI_REFRESH_REQUESTED, a targeted editor refresh request has been queued under the Snapshot Store; retry the same read after the editor processes it. If UEPI_SNAPSHOT_STALE appears, ask the user to open the editor/plugin before expecting realtime data.
 Treat uepi_diff as a generation-level saved snapshot comparison, not a live editor diff.
 

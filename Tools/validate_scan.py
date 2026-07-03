@@ -5411,6 +5411,39 @@ class ScanValidator:
                 self.expect_non_negative_integer(value.get(key), f"{path}.{key}")
         self.expect_string(value.get("encoding"), f"{path}.encoding", allow_empty=False)
 
+    def validate_animation_reconstruction_profile_manifest(self, value: Any, path: str) -> None:
+        if not self.require_keys(
+            value,
+            path,
+            [
+                "schema_version",
+                "profile_schema_version",
+                "artifact_id",
+                "artifact_uri",
+                "storage",
+                "path",
+                "sequence_path",
+                "skeleton_path",
+                "driver_curve_count",
+                "driver_key_count",
+                "full_pose_artifact_uri",
+                "full_pose_sample_count",
+                "byte_count",
+                "encoding",
+            ],
+        ):
+            return
+        if value.get("schema_version") != "uepi.animation_reconstruction_profile_manifest.v1":
+            self.error(f"{path}.schema_version", "expected uepi.animation_reconstruction_profile_manifest.v1")
+        if value.get("profile_schema_version") != "uepi.animation_reconstruction_profile.v1":
+            self.error(f"{path}.profile_schema_version", "expected uepi.animation_reconstruction_profile.v1")
+        self.expect_hex64(value.get("artifact_id"), f"{path}.artifact_id")
+        for key in ("artifact_uri", "storage", "path", "sequence_path", "full_pose_artifact_uri", "encoding"):
+            self.expect_string(value.get(key), f"{path}.{key}", allow_empty=False)
+        self.expect_string(value.get("skeleton_path"), f"{path}.skeleton_path")
+        for key in ("driver_curve_count", "driver_key_count", "full_pose_sample_count", "byte_count"):
+            self.expect_non_negative_integer(value.get(key), f"{path}.{key}")
+
     def validate_animation_sequence_snapshot(self, value: Any, path: str) -> None:
         if not self.require_keys(
             value,
@@ -5534,6 +5567,8 @@ class ScanValidator:
                     self.validate_animation_pose_sample(sample, f"{path}.pose_samples[{sample_index}]")
         if "bone_motion_profile" in value:
             self.validate_animation_bone_motion_profile_manifest(value.get("bone_motion_profile"), f"{path}.bone_motion_profile")
+        if "reconstruction_profile" in value:
+            self.validate_animation_reconstruction_profile_manifest(value.get("reconstruction_profile"), f"{path}.reconstruction_profile")
 
     def validate_animation_segment(self, value: Any, path: str, expected_index: int | None = None) -> None:
         if not self.require_keys(

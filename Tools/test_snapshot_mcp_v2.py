@@ -101,11 +101,15 @@ def request(process: subprocess.Popen[bytes], request_id: int, method: str, para
 def write_fixture(root: Path) -> None:
     store = root / "store"
     objects = store / "objects" / "aa"
-    artifacts = store / "artifacts" / "animation_bone_motion"
+    animation_motion_artifacts = store / "artifacts" / "animation_bone_motion"
+    reconstruction_artifacts = store / "artifacts" / "animation_reconstruction"
+    full_pose_artifacts = store / "artifacts" / "animation_full_pose_samples"
     manifests = store / "manifests"
     sessions = store / "sessions"
     objects.mkdir(parents=True)
-    artifacts.mkdir(parents=True)
+    animation_motion_artifacts.mkdir(parents=True)
+    reconstruction_artifacts.mkdir(parents=True)
+    full_pose_artifacts.mkdir(parents=True)
     manifests.mkdir(parents=True)
     sessions.mkdir(parents=True)
 
@@ -113,6 +117,8 @@ def write_fixture(root: Path) -> None:
     animation_asset_id = "asset-waving"
     animation_sequence_id = "anim-sequence-waving"
     animation_artifact_id = "a" * 64
+    reconstruction_artifact_id = "b" * 64
+    full_pose_artifact_id = "c" * 64
     project_entity_id = "project-root"
     node_id = "node-beginplay"
     relation_id = "rel-contains-node"
@@ -221,7 +227,7 @@ def write_fixture(root: Path) -> None:
     asset_fragment_path = objects / "aaassetfragment.json"
     asset_fragment_path.write_text(json.dumps(asset_fragment, ensure_ascii=False), encoding="utf-8")
 
-    animation_profile_path = artifacts / f"{animation_artifact_id}.json"
+    animation_profile_path = animation_motion_artifacts / f"{animation_artifact_id}.json"
     animation_profile = {
         "schema_version": "uepi.animation_bone_motion_profile.v1",
         "artifact_id": animation_artifact_id,
@@ -345,6 +351,131 @@ def write_fixture(root: Path) -> None:
         ],
     }
     animation_profile_path.write_text(json.dumps(animation_profile, ensure_ascii=False), encoding="utf-8")
+
+    full_pose_path = full_pose_artifacts / f"{full_pose_artifact_id}.json"
+    full_pose_profile = {
+        "schema_version": "uepi.animation_full_pose_samples.v1",
+        "artifact_id": full_pose_artifact_id,
+        "artifact_uri": f"uepi://animation-full-pose-samples/{full_pose_artifact_id}",
+        "intended_reader": "tool_or_llm_when_high_fidelity_pose_data_is_needed",
+        "sequence_path": "/Game/Animations/Waving.Waving",
+        "sequence_name": "Waving",
+        "skeleton_path": "/Game/Characters/Mannequins/Meshes/SK_Mannequin.SK_Mannequin",
+        "analysis_state": "ready",
+        "sample_policy": "all_animation_keys",
+        "source_key_count": 3,
+        "source_frame_count": 2,
+        "sample_count": 2,
+        "bone_count": 2,
+        "samples": [
+            {
+                "frame_number": 0,
+                "time_seconds": 0.0,
+                "normalized_time": 0.0,
+                "bone_count": 2,
+                "bones": [
+                    {"index": 0, "bone_name": "upperarm_r", "local_transform": {}, "component_transform": {}},
+                    {"index": 1, "bone_name": "hand_r", "local_transform": {}, "component_transform": {}},
+                ],
+            },
+            {
+                "frame_number": 30,
+                "time_seconds": 1.0,
+                "normalized_time": 1.0,
+                "bone_count": 2,
+                "bones": [
+                    {"index": 0, "bone_name": "upperarm_r", "local_transform": {}, "component_transform": {}},
+                    {"index": 1, "bone_name": "hand_r", "local_transform": {}, "component_transform": {}},
+                ],
+            },
+        ],
+    }
+    full_pose_path.write_text(json.dumps(full_pose_profile, ensure_ascii=False), encoding="utf-8")
+    full_pose_manifest = {
+        "schema_version": "uepi.animation_full_pose_samples_manifest.v1",
+        "profile_schema_version": "uepi.animation_full_pose_samples.v1",
+        "artifact_id": full_pose_artifact_id,
+        "artifact_uri": f"uepi://animation-full-pose-samples/{full_pose_artifact_id}",
+        "storage": "snapshot_store_artifact_json",
+        "path": str(full_pose_path),
+        "sequence_path": "/Game/Animations/Waving.Waving",
+        "skeleton_path": "/Game/Characters/Mannequins/Meshes/SK_Mannequin.SK_Mannequin",
+        "sample_policy": "all_animation_keys",
+        "sample_count": 2,
+        "bone_count": 2,
+        "byte_count": full_pose_path.stat().st_size,
+        "encoding": "json",
+    }
+    reconstruction_path = reconstruction_artifacts / f"{reconstruction_artifact_id}.json"
+    reconstruction_profile = {
+        "schema_version": "uepi.animation_reconstruction_profile.v1",
+        "artifact_id": reconstruction_artifact_id,
+        "artifact_uri": f"uepi://animation-reconstruction-profile/{reconstruction_artifact_id}",
+        "intended_reader": "LLM_or_tool_generating_procedural_animation",
+        "reconstruction_goal": "Recreate this animation by driving selected local FK bone tracks.",
+        "sequence_path": "/Game/Animations/Waving.Waving",
+        "sequence_name": "Waving",
+        "skeleton_path": "/Game/Characters/Mannequins/Meshes/SK_Mannequin.SK_Mannequin",
+        "analysis_state": "ready",
+        "play_length_seconds": 1.0,
+        "sampling_frame_rate": "30/1",
+        "source_key_count": 3,
+        "source_frame_count": 2,
+        "driver_curve_count": 1,
+        "driver_key_count": 3,
+        "driver_key_sample_policy": "all_animation_keys",
+        "candidate_driver_bone_count": 1,
+        "recommended_driver_bones": ["hand_r"],
+        "motion_intent_groups": [{"id": "right_arm_hand", "dominant_driver_bones": ["hand_r"]}],
+        "phase_estimates": [{"name": "main_motion", "normalized_start": 0.2, "normalized_end": 0.8}],
+        "driver_track_curves": [
+            {
+                "rank": 0,
+                "bone_name": "hand_r",
+                "bone_index": 1,
+                "parent_index": 0,
+                "intent_group": "right_arm_hand",
+                "track_index": 0,
+                "driver_score": 55.0,
+                "source_raw_key_count": 3,
+                "key_count": 3,
+                "local_translation_range": 0.0,
+                "local_rotation_range_degrees": 55.0,
+                "local_scale_range": 0.0,
+                "rotation_extrema_count": 2,
+                "curve_semantics": "oscillating_rotation",
+                "programmatic_recipe_hint": "Use these local FK keys directly.",
+                "skeleton_chain": [
+                    {"bone_index": 0, "bone_name": "upperarm_r"},
+                    {"bone_index": 1, "bone_name": "hand_r"},
+                ],
+                "keyframes": [
+                    {"frame_number": 0, "time_seconds": 0.0, "normalized_time": 0.0, "local_transform": {}},
+                    {"frame_number": 15, "time_seconds": 0.5, "normalized_time": 0.5, "local_transform": {}},
+                    {"frame_number": 30, "time_seconds": 1.0, "normalized_time": 1.0, "local_transform": {}},
+                ],
+            }
+        ],
+        "reconstruction_guidelines": ["For programmatic recreation, drive driver_track_curves over normalized_time."],
+        "full_pose_sample_artifact": full_pose_manifest,
+    }
+    reconstruction_path.write_text(json.dumps(reconstruction_profile, ensure_ascii=False), encoding="utf-8")
+    reconstruction_manifest = {
+        "schema_version": "uepi.animation_reconstruction_profile_manifest.v1",
+        "profile_schema_version": "uepi.animation_reconstruction_profile.v1",
+        "artifact_id": reconstruction_artifact_id,
+        "artifact_uri": f"uepi://animation-reconstruction-profile/{reconstruction_artifact_id}",
+        "storage": "snapshot_store_artifact_json",
+        "path": str(reconstruction_path),
+        "sequence_path": "/Game/Animations/Waving.Waving",
+        "skeleton_path": "/Game/Characters/Mannequins/Meshes/SK_Mannequin.SK_Mannequin",
+        "driver_curve_count": 1,
+        "driver_key_count": 3,
+        "full_pose_artifact_uri": f"uepi://animation-full-pose-samples/{full_pose_artifact_id}",
+        "full_pose_sample_count": 2,
+        "byte_count": reconstruction_path.stat().st_size,
+        "encoding": "json",
+    }
     bone_motion_profile_manifest = {
         "schema_version": "uepi.animation_bone_motion_profile_manifest.v1",
         "profile_schema_version": "uepi.animation_bone_motion_profile.v1",
@@ -407,6 +538,7 @@ def write_fixture(root: Path) -> None:
                     "changing_bones": [],
                 },
                 "bone_motion_profile": bone_motion_profile_manifest,
+                "reconstruction_profile": reconstruction_manifest,
                 "notifies": [],
                 "pose_samples": [],
             }
@@ -423,8 +555,12 @@ def write_fixture(root: Path) -> None:
             "bone_motion_profile_artifact_uri": f"uepi://animation-bone-motion-profile/{animation_artifact_id}",
             "bone_motion_profile_driver_bone_count": "1",
             "bone_motion_profile_inherited_motion_bone_count": "0",
+            "reconstruction_profile_artifact_uri": f"uepi://animation-reconstruction-profile/{reconstruction_artifact_id}",
+            "reconstruction_profile_driver_curve_count": "1",
+            "reconstruction_profile_driver_key_count": "3",
+            "reconstruction_profile_full_pose_artifact_uri": f"uepi://animation-full-pose-samples/{full_pose_artifact_id}",
         },
-        "completeness": {"state": "partial", "covered": ["motion_summary", "bone_motion_profile_artifact"], "omitted": [], "warnings": []},
+        "completeness": {"state": "partial", "covered": ["motion_summary", "bone_motion_profile_artifact", "reconstruction_profile_artifact"], "omitted": [], "warnings": []},
         "diagnostics": [],
         "evidence": [],
     }
@@ -870,6 +1006,19 @@ def main() -> int:
             assert animation["result"]["bone_motion_profile"]["driver_bones"][0]["bone_name"] == "hand_r"
             assert animation["result"]["bone_motion_profile"]["driver_bones"][0]["motion_role"] == "direct_driver"
             assert animation["result"]["bone_motion_profile"]["motion_intent_groups"][0]["id"] == "right_arm_hand"
+            reconstruction = request(
+                process,
+                49,
+                "tools/call",
+                {"name": "uepi_animation", "arguments": {"asset": "Waving", "include": ["driver_track_curves", "full_pose_artifact"]}},
+            )["structuredContent"]
+            assert_envelope(reconstruction)
+            assert reconstruction["ok"] is True
+            assert reconstruction["result"]["reconstruction_profile_manifest"]["artifact_id"] == "b" * 64
+            assert reconstruction["result"]["driver_track_curves"][0]["bone_name"] == "hand_r"
+            assert reconstruction["result"]["driver_track_curves"][0]["curve_semantics"] == "oscillating_rotation"
+            assert reconstruction["result"]["full_pose_artifact"]["schema_version"] == "uepi.animation_full_pose_samples.v1"
+            assert reconstruction["result"]["full_pose_artifact"]["sample_count"] == 2
             context = request(
                 process,
                 44,
