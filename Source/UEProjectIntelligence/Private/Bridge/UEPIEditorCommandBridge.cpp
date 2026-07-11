@@ -302,6 +302,66 @@ namespace UE::ProjectIntelligence
 			return Object->TryGetObjectField(Field, Value) && Value ? *Value : nullptr;
 		}
 
+		FString OperationId(const TSharedPtr<FJsonObject>& Operation)
+		{
+			return JsonString(Operation, TEXT("operation_id"), JsonString(Operation, TEXT("id"), JsonString(Operation, TEXT("ref"))));
+		}
+
+		FString ResolveOperationAsset(const TSharedPtr<FJsonObject>& Params, const TCHAR* Field, const TMap<FString, FString>& OperationAssets)
+		{
+			const FString Direct = JsonString(Params, Field);
+			if (!Direct.IsEmpty())
+			{
+				return Direct;
+			}
+			const TSharedPtr<FJsonObject> Reference = JsonObjectField(Params, Field);
+			FString Ref = JsonString(Reference, TEXT("$ref"));
+			int32 FragmentIndex = INDEX_NONE;
+			if (Ref.FindChar(TEXT('#'), FragmentIndex))
+			{
+				Ref = Ref.Left(FragmentIndex);
+			}
+			if (const FString* Resolved = OperationAssets.Find(Ref))
+			{
+				return *Resolved;
+			}
+			return FString();
+		}
+
+		TSharedPtr<FJsonObject> PropertyWritesObject(const TSharedPtr<FJsonObject>& Params, FString& OutError)
+		{
+			if (const TSharedPtr<FJsonObject> Properties = JsonObjectField(Params, TEXT("properties")))
+			{
+				return Properties;
+			}
+			const TArray<TSharedPtr<FJsonValue>>* Writes = JsonArray(Params, TEXT("writes"));
+			if (!Writes)
+			{
+				OutError = TEXT("asset.set_properties requires properties or writes.");
+				return nullptr;
+			}
+			TSharedRef<FJsonObject> Properties = MakeShared<FJsonObject>();
+			for (const TSharedPtr<FJsonValue>& Value : *Writes)
+			{
+				const TSharedPtr<FJsonObject> Write = Value.IsValid() ? Value->AsObject() : nullptr;
+				const FString Path = JsonString(Write, TEXT("path"));
+				const FString Mode = JsonString(Write, TEXT("mode"), TEXT("replace"));
+				const TSharedPtr<FJsonValue> TypedValue = Write.IsValid() ? Write->TryGetField(TEXT("value")) : nullptr;
+				if (!Write.IsValid() || Path.IsEmpty() || !TypedValue.IsValid())
+				{
+					OutError = TEXT("Each property write requires path, mode, and value.");
+					return nullptr;
+				}
+				if (Mode != TEXT("replace") && Mode != TEXT("set_field"))
+				{
+					OutError = FString::Printf(TEXT("Property write mode is not supported in this operation: %s"), *Mode);
+					return nullptr;
+				}
+				Properties->SetField(Path, TypedValue);
+			}
+			return Properties;
+		}
+
 		FString BlueprintStatusString(const UBlueprint* Blueprint)
 		{
 			if (!Blueprint)
@@ -877,6 +937,7 @@ namespace UE::ProjectIntelligence
 			AddNodeReference(NodeRefs, JsonString(Operation, TEXT("ref")), Node);
 			AddNodeReference(NodeRefs, JsonString(Operation, TEXT("node_ref")), Node);
 			AddNodeReference(NodeRefs, JsonString(Operation, TEXT("result_ref")), Node);
+			AddNodeReference(NodeRefs, OperationId(Operation), Node);
 			AddNodeReference(NodeRefs, JsonString(Params, TEXT("ref")), Node);
 			AddNodeReference(NodeRefs, JsonString(Params, TEXT("node_ref")), Node);
 			AddNodeReference(NodeRefs, JsonString(Params, TEXT("result_ref")), Node);
@@ -916,6 +977,8 @@ namespace UE::ProjectIntelligence
 			const FString PinIdKey = PrefixString + TEXT("_pin_id");
 
 			FString NodeGuid = JsonString(Endpoint, TEXT("node_guid"), JsonString(Endpoint, TEXT("node_id")));
+			const TSharedPtr<FJsonObject> NestedNode = JsonObjectField(Endpoint, TEXT("node"));
+			if (NodeGuid.IsEmpty()) NodeGuid = JsonString(NestedNode, TEXT("node_guid"), JsonString(NestedNode, TEXT("node_id")));
 			if (NodeGuid.IsEmpty())
 			{
 				NodeGuid = JsonString(Params, *NodeGuidKey, JsonString(Params, *NodeIdKey));
@@ -923,9 +986,20 @@ namespace UE::ProjectIntelligence
 			FString NodeRef = JsonString(Endpoint, TEXT("node_ref"), JsonString(Endpoint, TEXT("ref")));
 			if (NodeRef.IsEmpty())
 			{
+				NodeRef = JsonString(NestedNode, TEXT("node_ref"), JsonString(NestedNode, TEXT("ref"), JsonString(NestedNode, TEXT("$ref"))));
+				int32 Fragment = INDEX_NONE;
+				if (NodeRef.FindChar(TEXT('#'), Fragment)) NodeRef = NodeRef.Left(Fragment);
+			}
+			if (NodeRef.IsEmpty())
+			{
 				NodeRef = JsonString(Params, *NodeRefKey, JsonString(Params, *RefKey));
 			}
 			FString PinText = JsonString(Endpoint, TEXT("pin_name"), JsonString(Endpoint, TEXT("pin"), JsonString(Endpoint, TEXT("pin_id"))));
+			if (PinText.IsEmpty())
+			{
+				const TSharedPtr<FJsonObject> NestedPin = JsonObjectField(Endpoint, TEXT("pin"));
+				PinText = JsonString(NestedPin, TEXT("pin_id"), JsonString(NestedPin, TEXT("name_internal"), JsonString(NestedPin, TEXT("name"))));
+			}
 			if (PinText.IsEmpty())
 			{
 				PinText = JsonString(Params, *PinNameKey, JsonString(Params, *PinKey, JsonString(Params, *PinIdKey)));
@@ -2341,7 +2415,7 @@ namespace UE::ProjectIntelligence
 			{
 				return ErrorResponse(RequestId, TEXT("UEPI_SCHEMA_ASSET_NOT_FOUND"), FString::Printf(TEXT("Asset was not found: %s"), *AssetPath));
 			}
-			TSharedRef<FJsonObject> Result = FUEPIPropertyCodec::BuildSchema(Object->GetClass(), MaxDepth);
+			TSharedRef<FJsonObject> Result = FUEPIPropertyCodec::BuildObjectSchema(Object, MaxDepth);
 			Result->SetStringField(TEXT("asset"), Object->GetPathName());
 			return SuccessResponse(RequestId, Result);
 		}
@@ -2557,18 +2631,47 @@ namespace UE::ProjectIntelligence
 			const bool bApplySupported = bDomainEnabled || ((Descriptor.Domain == TEXT("animgraph") || Descriptor.Domain == TEXT("animation")) && bBlueprintApplyEnabled);
 			TSharedRef<FJsonObject> Operation = MakeShared<FJsonObject>();
 			Operation->SetStringField(TEXT("name"), Descriptor.Name);
+			Operation->SetNumberField(TEXT("version"), Descriptor.Version);
 			Operation->SetStringField(TEXT("domain"), Descriptor.Domain);
+			Operation->SetStringField(TEXT("summary"), Descriptor.Summary);
 			Operation->SetStringField(TEXT("risk"), Descriptor.Risk);
 			Operation->SetStringField(TEXT("rollback_mode"), Descriptor.RollbackMode);
 			Operation->SetStringField(TEXT("validation_mode"), Descriptor.ValidationMode);
+			Operation->SetStringField(TEXT("validation_behavior"), Descriptor.ValidationMode);
+			Operation->SetStringField(TEXT("rollback_behavior"), Descriptor.RollbackMode);
+			Operation->SetStringField(TEXT("save_behavior"), Descriptor.SaveBehavior);
+			Operation->SetStringField(TEXT("idempotency_behavior"), Descriptor.IdempotencyBehavior);
+			Operation->SetStringField(TEXT("required_plugin"), Descriptor.RequiredPlugin);
 			Operation->SetBoolField(TEXT("requires_save"), Descriptor.bRequiresSave);
 			Operation->SetBoolField(TEXT("atomic_supported"), Descriptor.bAtomicSupported);
 			Operation->SetBoolField(TEXT("preview_supported"), true);
 			Operation->SetBoolField(TEXT("apply_supported"), bApplySupported);
 			Operation->SetArrayField(TEXT("target_fields"), StringArrayToJsonValues(Descriptor.TargetFields));
+			Operation->SetArrayField(TEXT("required_capabilities"), StringArrayToJsonValues(Descriptor.RequiredCapabilities));
+			Operation->SetArrayField(TEXT("supported_engine_versions"), StringArrayToJsonValues(Descriptor.SupportedEngineVersions));
+			Operation->SetArrayField(TEXT("supported_asset_classes"), StringArrayToJsonValues(Descriptor.SupportedAssetClasses));
+			Operation->SetArrayField(TEXT("supported_graph_schemas"), StringArrayToJsonValues(Descriptor.SupportedGraphSchemas));
 			TSharedRef<FJsonObject> InputSchema = MakeShared<FJsonObject>();
 			InputSchema->SetStringField(TEXT("type"), TEXT("object"));
+			TSharedRef<FJsonObject> InputProperties = MakeShared<FJsonObject>();
+			for (const FString& TargetField : Descriptor.TargetFields)
+			{
+				TSharedRef<FJsonObject> TargetSchema = MakeShared<FJsonObject>();
+				TargetSchema->SetArrayField(TEXT("type"), { MakeShared<FJsonValueString>(TEXT("string")), MakeShared<FJsonValueString>(TEXT("object")), MakeShared<FJsonValueString>(TEXT("array")) });
+				InputProperties->SetObjectField(TargetField, TargetSchema);
+			}
+			InputSchema->SetObjectField(TEXT("properties"), InputProperties);
+			InputSchema->SetBoolField(TEXT("additionalProperties"), true);
 			Operation->SetObjectField(TEXT("input_schema"), InputSchema);
+			TSharedRef<FJsonObject> OutputSchema = MakeShared<FJsonObject>();
+			OutputSchema->SetStringField(TEXT("type"), TEXT("object"));
+			Operation->SetObjectField(TEXT("output_schema"), OutputSchema);
+			Operation->SetArrayField(TEXT("examples"), EmptyJsonArray());
+			TSharedRef<FJsonObject> Availability = MakeShared<FJsonObject>();
+			Availability->SetBoolField(TEXT("preview"), true);
+			Availability->SetBoolField(TEXT("apply"), bApplySupported);
+			Availability->SetStringField(TEXT("reason"), bApplySupported ? TEXT("available") : TEXT("disabled_by_project_capability"));
+			Operation->SetObjectField(TEXT("availability"), Availability);
 			Operations.Add(MakeShared<FJsonValueObject>(Operation));
 		}
 
@@ -2683,6 +2786,8 @@ namespace UE::ProjectIntelligence
 		{
 			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TOO_MANY_ASSETS"), FString::Printf(TEXT("Affected asset count %d exceeds MaxWriteAssetsPerTransaction=%d before modification."), AffectedAssets.Num(), Settings->MaxWriteAssetsPerTransaction));
 		}
+		TMap<FString, UClass*> PlannedAssetClasses;
+		TMap<FString, FString> PlannedAssetPaths;
 		for (int32 Index = 0; Index < Operations->Num(); ++Index)
 		{
 			const TSharedPtr<FJsonObject> Operation = (*Operations)[Index].IsValid() ? (*Operations)[Index]->AsObject() : nullptr;
@@ -2695,14 +2800,26 @@ namespace UE::ProjectIntelligence
 			if (!OpParams.IsValid()) OpParams = Operation;
 			if (Type == TEXT("asset.set_properties"))
 			{
-				const FString AssetPath = JsonString(OpParams, TEXT("asset"));
-				UObject* Object = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
-				const TSharedPtr<FJsonObject> Properties = JsonObjectField(OpParams, TEXT("properties"));
-				if (!Object || !Properties.IsValid())
+				const FString AssetPath = ResolveOperationAsset(OpParams, TEXT("asset"), PlannedAssetPaths);
+				UObject* Object = AssetPath.IsEmpty() ? nullptr : StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
+				UObject* Probe = Object ? DuplicateObject(Object, GetTransientPackage()) : nullptr;
+				if (!Probe)
 				{
-					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_PROPERTY_PREFLIGHT_FAILED"), TEXT("asset.set_properties requires a valid asset and properties object."));
+					const TSharedPtr<FJsonObject> Reference = JsonObjectField(OpParams, TEXT("asset"));
+					FString Ref = JsonString(Reference, TEXT("$ref"));
+					int32 Fragment = INDEX_NONE;
+					if (Ref.FindChar(TEXT('#'), Fragment)) Ref = Ref.Left(Fragment);
+					if (UClass* const* PlannedClass = PlannedAssetClasses.Find(Ref))
+					{
+						Probe = NewObject<UObject>(GetTransientPackage(), *PlannedClass);
+					}
 				}
-				UObject* Probe = DuplicateObject(Object, GetTransientPackage());
+				FString WriteError;
+				const TSharedPtr<FJsonObject> Properties = PropertyWritesObject(OpParams, WriteError);
+				if (!Probe || !Properties.IsValid())
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_PROPERTY_PREFLIGHT_FAILED"), WriteError.IsEmpty() ? TEXT("asset.set_properties requires a valid asset/reference and property writes.") : WriteError);
+				}
 				for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
 				{
 					TSharedPtr<FJsonValue> Before;
@@ -2716,11 +2833,24 @@ namespace UE::ProjectIntelligence
 			}
 			else if (Type == TEXT("content.create_asset"))
 			{
-				const FString ClassPath = JsonString(OpParams, TEXT("class_path"));
+				const FString ClassPath = JsonString(OpParams, TEXT("asset_class"), JsonString(OpParams, TEXT("class_path")));
 				UClass* AssetClass = LoadObject<UClass>(nullptr, *ClassPath);
-				if (!AssetClass || !AssetClass->IsChildOf(UDataAsset::StaticClass()))
+				if (!AssetClass || !AssetClass->IsChildOf(UDataAsset::StaticClass()) || AssetClass->HasAnyClassFlags(CLASS_Abstract))
 				{
 					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_ASSET_CLASS_UNSUPPORTED"), FString::Printf(TEXT("P0 content.create_asset requires a UDataAsset/UPrimaryDataAsset class: %s"), *ClassPath));
+				}
+				FString PackagePath;
+				FString AssetName;
+				FString DestinationError;
+				if (!SplitDestinationPath(OpParams, TEXT("DA_UEPIAsset"), PackagePath, AssetName, DestinationError))
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_DESTINATION_INVALID"), DestinationError);
+				}
+				const FString OpId = OperationId(Operation);
+				if (!OpId.IsEmpty())
+				{
+					PlannedAssetClasses.Add(OpId, AssetClass);
+					PlannedAssetPaths.Add(OpId, FString::Printf(TEXT("%s/%s.%s"), *PackagePath, *AssetName, *AssetName));
 				}
 			}
 		}
@@ -2797,6 +2927,7 @@ namespace UE::ProjectIntelligence
 		FString FailureMessage;
 		TSet<UBlueprint*> TouchedBlueprints;
 		TMap<FString, UEdGraphNode*> NodeRefs;
+		TMap<FString, FString> OperationAssets;
 
 		const FText TransactionText = FText::FromString(TransactionId.IsEmpty() ? FString(TEXT("UEPI edit transaction")) : FString::Printf(TEXT("UEPI edit %s"), *TransactionId));
 		FScopedTransaction Transaction(TEXT("UEProjectIntelligence"), TransactionText, nullptr, true);
@@ -2823,9 +2954,28 @@ namespace UE::ProjectIntelligence
 					bAllOk = false; FailureMessage = FString::Printf(TEXT("Unsupported blueprint.add_node kind: %s"), *Kind); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
 				}
 			}
-			else if (Type == TEXT("animgraph.connect_pose"))
+			else if (Type == TEXT("animation.register_slot"))
 			{
+				Type = TEXT("animation.create_slot_group");
+			}
+			else if (Type == TEXT("animgraph.add_slot"))
+			{
+				Type = TEXT("animgraph.add_slot_node");
+			}
+			else if (Type == TEXT("animgraph.connect_pose") || Type == TEXT("animgraph.connect_pose_pins"))
+			{
+				if (const TSharedPtr<FJsonObject> From = JsonObjectField(OpParams, TEXT("from"))) OpParams->SetObjectField(TEXT("source"), From.ToSharedRef());
+				if (const TSharedPtr<FJsonObject> To = JsonObjectField(OpParams, TEXT("to"))) OpParams->SetObjectField(TEXT("target"), To.ToSharedRef());
 				Type = TEXT("blueprint.connect_pins");
+			}
+			else if (Type == TEXT("animgraph.disconnect_pose_pins")) Type = TEXT("blueprint.disconnect_pins");
+			else if (Type == TEXT("animgraph.remove_node")) Type = TEXT("blueprint.remove_node");
+			else if (Type == TEXT("animgraph.compile")) Type = TEXT("blueprint.compile");
+			else if (Type == TEXT("widget.add_widget"))
+			{
+				const FString WidgetClass = JsonString(OpParams, TEXT("widget_class"), JsonString(OpParams, TEXT("kind")));
+				if (WidgetClass.Contains(TEXT("TextBlock"), ESearchCase::IgnoreCase) || WidgetClass.Equals(TEXT("text"), ESearchCase::IgnoreCase)) Type = TEXT("widget.add_text");
+				else if (WidgetClass.Contains(TEXT("Button"), ESearchCase::IgnoreCase) || WidgetClass.Equals(TEXT("button"), ESearchCase::IgnoreCase)) Type = TEXT("widget.add_button");
 			}
 
 			if (!Operation.IsValid() || Type.IsEmpty())
@@ -2851,7 +3001,7 @@ namespace UE::ProjectIntelligence
 				{
 					bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break;
 				}
-				UClass* AssetClass = LoadObject<UClass>(nullptr, *JsonString(OpParams, TEXT("class_path")));
+				UClass* AssetClass = LoadObject<UClass>(nullptr, *JsonString(OpParams, TEXT("asset_class"), JsonString(OpParams, TEXT("class_path"))));
 				UDataAssetFactory* Factory = NewObject<UDataAssetFactory>();
 				Factory->DataAssetClass = AssetClass;
 				UObject* NewAsset = FAssetToolsModule::GetModule().Get().CreateAsset(AssetName, PackagePath, AssetClass, Factory, TEXT("UEPI"));
@@ -2861,9 +3011,17 @@ namespace UE::ProjectIntelligence
 				}
 				NewAsset->MarkPackageDirty();
 				AffectedAssets.AddUnique(NewAsset->GetPathName());
+				if (const FString OpId = OperationId(Operation); !OpId.IsEmpty()) OperationAssets.Add(OpId, NewAsset->GetPathName());
 				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetObjectField(TEXT("asset"), ObjectToJson(NewAsset));
+				Detail->SetStringField(TEXT("asset_path"), NewAsset->GetPathName());
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("DataAsset created."), Detail);
 				bMutated = true;
+				continue;
+			}
+			if (Type == TEXT("content.save_assets"))
+			{
+				for (const FString& ExplicitAsset : JsonStringArray(OpParams, TEXT("assets"))) AffectedAssets.AddUnique(ExplicitAsset);
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Touched assets are scheduled for save after validation."));
 				continue;
 			}
 			if (Type == TEXT("asset.set_properties"))
@@ -2872,9 +3030,9 @@ namespace UE::ProjectIntelligence
 				{
 					bAllOk = false; FailureMessage = TEXT("Content edits are disabled."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
 				}
-				AssetPath = JsonString(OpParams, TEXT("asset"));
+				AssetPath = ResolveOperationAsset(OpParams, TEXT("asset"), OperationAssets);
 				UObject* Object = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
-				const TSharedPtr<FJsonObject> Properties = JsonObjectField(OpParams, TEXT("properties"));
+				const TSharedPtr<FJsonObject> Properties = PropertyWritesObject(OpParams, Error);
 				if (!Object || !Properties.IsValid())
 				{
 					bAllOk = false; FailureMessage = TEXT("Asset or properties object is invalid."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
@@ -2928,6 +3086,27 @@ namespace UE::ProjectIntelligence
 					break;
 				}
 				AffectedAssets.AddUnique(AssetPath);
+			}
+
+			if (Type == TEXT("animgraph.set_node_property"))
+			{
+				FString GraphName;
+				UEdGraph* Graph = ResolveGraphForEdit(Blueprint, OpParams, GraphName, Error);
+				UEdGraphNode* Node = Graph ? ResolveNodeReference(Graph, OpParams, NodeRefs, Error) : nullptr;
+				const FString PropertyPath = JsonString(OpParams, TEXT("property_path"), JsonString(OpParams, TEXT("property")));
+				const TSharedPtr<FJsonValue> Value = OpParams->TryGetField(TEXT("value"));
+				TSharedPtr<FJsonValue> Before;
+				TSharedPtr<FJsonValue> After;
+				if (Node) Node->Modify();
+				if (!Node || PropertyPath.IsEmpty() || !Value.IsValid() || !FUEPIPropertyCodec::SetPropertyPath(Node, PropertyPath, Value, Before, After, Error))
+				{
+					bAllOk = false; FailureMessage = Error.IsEmpty() ? TEXT("AnimGraph node property request is invalid.") : Error; AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
+				}
+				Node->ReconstructNode();
+				FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+				TouchedBlueprints.Add(Blueprint);
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetStringField(TEXT("property_path"), PropertyPath); Detail->SetField(TEXT("before"), Before); Detail->SetField(TEXT("after"), After);
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("AnimGraph node property updated."), Detail); bMutated = true; continue;
 			}
 
 			if (Type == TEXT("blueprint.add_node"))
@@ -3115,6 +3294,26 @@ namespace UE::ProjectIntelligence
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("Component property updated."), Detail);
 				bMutated = true;
 				TouchedBlueprints.Add(Blueprint);
+			}
+			else if (Type == TEXT("blueprint.set_component_properties"))
+			{
+				const FString ComponentNameText = JsonString(OpParams, TEXT("component"), JsonString(OpParams, TEXT("component_name")));
+				USCS_Node* Node = Blueprint->SimpleConstructionScript ? Blueprint->SimpleConstructionScript->FindSCSNode(FName(*ComponentNameText)) : nullptr;
+				UObject* Template = Node ? Node->ComponentTemplate : nullptr;
+				const TSharedPtr<FJsonObject> Properties = PropertyWritesObject(OpParams, Error);
+				if (!Template || !Properties.IsValid()) { bAllOk = false; FailureMessage = Error.IsEmpty() ? TEXT("Component template or typed writes are invalid.") : Error; AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+				Template->Modify();
+				TArray<TSharedPtr<FJsonValue>> PropertyDiffs;
+				for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
+				{
+					TSharedPtr<FJsonValue> Before; TSharedPtr<FJsonValue> After;
+					if (!FUEPIPropertyCodec::SetPropertyPath(Template, Pair.Key, Pair.Value, Before, After, Error)) { bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break; }
+					TSharedRef<FJsonObject> Diff = MakeShared<FJsonObject>(); Diff->SetStringField(TEXT("property_path"), Pair.Key); Diff->SetField(TEXT("before"), Before); Diff->SetField(TEXT("after"), After); PropertyDiffs.Add(MakeShared<FJsonValueObject>(Diff));
+				}
+				if (!bAllOk) break;
+				Template->PostEditChange(); FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetStringField(TEXT("component"), ComponentNameText); Detail->SetArrayField(TEXT("property_diff"), PropertyDiffs);
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Component typed properties updated."), Detail); bMutated = true; TouchedBlueprints.Add(Blueprint);
 			}
 			else if (Type == TEXT("blueprint.create_function"))
 			{
@@ -3510,6 +3709,13 @@ namespace UE::ProjectIntelligence
 				if (!Pin) { bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break; }
 				Pin->Modify(); Pin->BreakAllPinLinks(true); FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint); AddOperationResult(OperationResults, Index, Type, true, TEXT("Pin links disconnected.")); bMutated = true; TouchedBlueprints.Add(Blueprint);
 			}
+			else if (Type == TEXT("blueprint.break_all_links"))
+			{
+				FString GraphName; UEdGraph* Graph = ResolveGraphForEdit(Blueprint, OpParams, GraphName, Error); UEdGraphNode* Node = Graph ? ResolveNodeReference(Graph, OpParams, NodeRefs, Error) : nullptr;
+				if (!Node) { bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break; }
+				Node->Modify(); for (UEdGraphPin* Pin : Node->Pins) if (Pin) { Pin->Modify(); Pin->BreakAllPinLinks(true); }
+				FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint); AddOperationResult(OperationResults, Index, Type, true, TEXT("All node pin links disconnected.")); bMutated = true; TouchedBlueprints.Add(Blueprint);
+			}
 			else if (Type == TEXT("blueprint.remove_node") || Type == TEXT("blueprint.move_node") || Type == TEXT("blueprint.set_node_comment"))
 			{
 				FString GraphName; UEdGraph* Graph = ResolveGraphForEdit(Blueprint, OpParams, GraphName, Error); UEdGraphNode* Node = Graph ? ResolveNodeReference(Graph, OpParams, NodeRefs, Error) : nullptr;
@@ -3674,6 +3880,28 @@ namespace UE::ProjectIntelligence
 				Detail->SetStringField(TEXT("property"), PropertyName);
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("Actor property updated."), Detail);
 				bMutated = true;
+			}
+			else if (Type == TEXT("actor.set_properties"))
+			{
+				if (!Settings->bAllowActorEdits) { bAllOk = false; FailureMessage = TEXT("Actor edits are disabled."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+				TArray<AActor*> Actors = ResolveActorTargets(OpParams);
+				const TSharedPtr<FJsonObject> Properties = PropertyWritesObject(OpParams, Error);
+				if (Actors.Num() == 0 || !Properties.IsValid()) { bAllOk = false; FailureMessage = Error.IsEmpty() ? TEXT("Actor targets or typed writes are invalid.") : Error; AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+				TArray<TSharedPtr<FJsonValue>> ActorDiffs;
+				for (AActor* Actor : Actors)
+				{
+					Actor->Modify(); TArray<TSharedPtr<FJsonValue>> PropertyDiffs;
+					for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
+					{
+						TSharedPtr<FJsonValue> Before; TSharedPtr<FJsonValue> After;
+						if (!FUEPIPropertyCodec::SetPropertyPath(Actor, Pair.Key, Pair.Value, Before, After, Error)) { bAllOk = false; FailureMessage = Error; break; }
+						TSharedRef<FJsonObject> Diff = MakeShared<FJsonObject>(); Diff->SetStringField(TEXT("property_path"), Pair.Key); Diff->SetField(TEXT("before"), Before); Diff->SetField(TEXT("after"), After); PropertyDiffs.Add(MakeShared<FJsonValueObject>(Diff));
+					}
+					if (!bAllOk) break;
+					Actor->PostEditChange(); TSharedRef<FJsonObject> ActorDiff = MakeShared<FJsonObject>(); ActorDiff->SetStringField(TEXT("actor"), Actor->GetPathName()); ActorDiff->SetArrayField(TEXT("property_diff"), PropertyDiffs); ActorDiffs.Add(MakeShared<FJsonValueObject>(ActorDiff));
+				}
+				if (!bAllOk) { AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetArrayField(TEXT("actors"), ActorDiffs); AddOperationResult(OperationResults, Index, Type, true, TEXT("Actor typed properties updated."), Detail); bMutated = true;
 			}
 			else if (Type == TEXT("material.create_instance"))
 			{

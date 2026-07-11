@@ -37,10 +37,10 @@ The current P0 path traversal supports nested structs and array elements. Whole 
   "type": "asset.set_properties",
   "params": {
     "asset": "/Game/Data/DA_Example.DA_Example",
-    "properties": [
-      {"path": "DisplayName", "value": "Wave"},
-      {"path": "BlendTime", "value": 0.2},
-      {"path": "Tags", "value": ["Gesture", "UpperBody"]}
+    "writes": [
+      {"path": "DisplayName", "mode": "replace", "value": {"type": "text", "value": "Wave"}},
+      {"path": "BlendTime", "mode": "replace", "value": {"type": "double", "value": 0.2}},
+      {"path": "Tags", "mode": "replace", "value": {"type": "array", "items": [{"type": "name", "value": "Gesture"}, {"type": "name", "value": "UpperBody"}]}}
     ]
   }
 }

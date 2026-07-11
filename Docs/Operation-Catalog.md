@@ -12,6 +12,7 @@ content.create_folder
 content.duplicate_asset
 content.rename_asset
 content.import
+content.save_assets
 asset.set_properties
 ```
 
@@ -22,6 +23,7 @@ blueprint.add_variable
 blueprint.set_variable_default
 blueprint.add_component
 blueprint.set_component_property
+blueprint.set_component_properties
 blueprint.create_function
 blueprint.add_event_node
 blueprint.add_function_call_node
@@ -33,6 +35,7 @@ blueprint.add_node
 blueprint.set_pin_default
 blueprint.connect_pins
 blueprint.disconnect_pins
+blueprint.break_all_links
 blueprint.remove_node
 blueprint.move_node
 blueprint.set_node_comment
@@ -43,8 +46,15 @@ Animation graph:
 
 ```text
 animation.create_slot_group
+animation.register_slot
 animgraph.add_slot_node
+animgraph.add_slot
+animgraph.set_node_property
 animgraph.connect_pose
+animgraph.connect_pose_pins
+animgraph.disconnect_pose_pins
+animgraph.remove_node
+animgraph.compile
 ```
 
 Existing domains migrated behind the guarded facade:
@@ -53,6 +63,7 @@ Existing domains migrated behind the guarded facade:
 actor.spawn
 actor.set_transform
 actor.set_property
+actor.set_properties
 material.create_instance
 material.set_scalar_parameter
 material.set_vector_parameter
@@ -62,6 +73,7 @@ material.apply_to_blueprint_component
 widget.create
 widget.add_text
 widget.add_button
+widget.add_widget
 widget.set_slot
 widget.bind_button_to_custom_event
 input.create_action

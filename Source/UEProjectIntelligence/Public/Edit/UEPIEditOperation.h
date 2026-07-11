@@ -37,11 +37,20 @@ namespace UE::ProjectIntelligence
 	struct FUEPIEditOperationDescriptor
 	{
 		FString Name;
+		int32 Version = 1;
 		FString Domain;
+		FString Summary;
 		FString Risk = TEXT("medium");
 		FString RollbackMode = TEXT("editor_transaction");
 		FString ValidationMode = TEXT("generic_uobject");
 		TArray<FString> TargetFields;
+		TArray<FString> RequiredCapabilities;
+		TArray<FString> SupportedEngineVersions = { TEXT("5.3.2") };
+		TArray<FString> SupportedAssetClasses;
+		TArray<FString> SupportedGraphSchemas;
+		FString RequiredPlugin;
+		FString SaveBehavior = TEXT("touched_only_after_validation");
+		FString IdempotencyBehavior = TEXT("transaction_and_plan_hash");
 		bool bRequiresSave = true;
 		bool bAtomicSupported = true;
 	};

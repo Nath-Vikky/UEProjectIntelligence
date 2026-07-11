@@ -100,7 +100,27 @@ def _target_values(params: dict[str, Any], descriptor: dict[str, Any]) -> list[s
         value = params.get(str(field))
         if isinstance(value, str) and value.startswith("/"):
             values.append(value)
+        elif isinstance(value, list):
+            values.extend(child for child in value if isinstance(child, str) and child.startswith("/"))
     return values
+
+
+def _destination_asset(params: dict[str, Any]) -> str | None:
+    direct = params.get("destination_asset")
+    if isinstance(direct, str) and direct.startswith("/"):
+        return direct
+    destination = params.get("destination_path")
+    name = params.get("name")
+    if isinstance(destination, str) and destination.startswith("/") and isinstance(name, str) and name:
+        package = destination.rstrip("/") + "/" + name
+        return f"{package}.{name}"
+    return None
+
+
+def _referenced_operation(value: Any) -> str | None:
+    if not isinstance(value, dict) or not isinstance(value.get("$ref"), str):
+        return None
+    return str(value["$ref"]).split("#", 1)[0] or None
 
 
 def _package_file(store: SnapshotStore, object_path: str) -> Path | None:
@@ -208,6 +228,7 @@ def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None
 
     normalized: list[dict[str, Any]] = []
     affected: list[str] = []
+    operation_assets: dict[str, str] = {}
     seen_ids: set[str] = set()
     for index, raw in enumerate(operations or []):
         op_id, op_type, params, depends_on = _operation_parts(raw, index)
@@ -221,6 +242,14 @@ def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None
         seen_ids.add(op_id)
         normalized.append({"operation_id": op_id, "type": op_type, "params": params, "depends_on": depends_on, "if_exists": str((raw or {}).get("if_exists") or "fail") if isinstance(raw, dict) else "fail"})
         affected.extend(_target_values(params, descriptor))
+        created_asset = _destination_asset(params) if op_type.startswith(("content.", "material.", "widget.", "input.")) else None
+        if created_asset:
+            operation_assets[op_id] = created_asset
+            affected.append(created_asset)
+        for candidate in (params.get("asset"), params.get("source"), params.get("context"), params.get("action")):
+            referenced = _referenced_operation(candidate)
+            if referenced and referenced in operation_assets:
+                affected.append(operation_assets[referenced])
 
     diagnostics.extend(_quality_diagnostics(normalized))
     affected = sorted(set(affected))
