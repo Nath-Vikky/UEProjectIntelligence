@@ -43,20 +43,20 @@ EXPECTED_TOOLS = READ_TOOLS | EDIT_TOOLS
 
 
 def assert_envelope(value: dict[str, Any]) -> None:
-    assert value["schema_version"] == "uepi.mcp-envelope.v1"
+    assert value["schema_version"] == "uepi.mcp-envelope.v2"
     assert "ok" in value
     assert "tool" in value
     assert "operation" in value
-    assert "data_mode" in value
     assert isinstance(value.get("project"), dict)
+    assert isinstance(value.get("editor"), dict)
     assert isinstance(value.get("snapshot"), dict)
     assert isinstance(value.get("diagnostics"), list)
     assert isinstance(value.get("evidence"), list)
     assert isinstance(value.get("next_actions"), list)
-    assert "state" in value
-    assert "data_mode" in value["state"]
-    assert "freshness" in value["state"]
     assert "truncation" in value
+    assert "item_limit_hit" in value["truncation"]
+    assert "byte_limit_hit" in value["truncation"]
+    assert "continuation" in value
 
 
 def send_message(process: subprocess.Popen[bytes], message: dict[str, Any]) -> None:
@@ -918,7 +918,7 @@ def assert_bridge_token_and_registry_resolution(root: Path) -> None:
     old_registry = os.environ.get("UEPI_SESSION_REGISTRY_DIR")
     os.environ["UEPI_SESSION_REGISTRY_DIR"] = str(registry)
     try:
-        assert resolve_store_root(project="FixtureProject") == root.resolve()
+        assert resolve_store_root(project="FixtureProject") != root.resolve()
         assert resolve_store_root(project=root.parent / "FixtureProject" / "FixtureProject.uproject") == root.resolve()
     finally:
         if old_registry is None:
@@ -970,11 +970,11 @@ def main() -> int:
 
             status = request(process, 3, "tools/call", {"name": "uepi_status", "arguments": {}})["structuredContent"]
             assert_envelope(status)
-            assert status["state"]["data_mode"] == "live"
-            assert status["state"]["editor_connected"] is True
+            assert status["snapshot"]["view_generation"] == 2
+            assert status["editor"]["connected"] is False
             assert status["result"]["llm_readiness"]["requires_daemon"] is False
             assert status["result"]["llm_readiness"]["bridge_ready"] is False
-            assert status["result"]["bridge"]["session_path"].endswith("editor-bridge.json")
+            assert status["result"]["doctor"]["project_bound"] is True
             assert status["result"]["cache"]["synced"] is True
             assert status["result"]["cache"]["schema_version"] == "uepi.sqlite-cache.v2.1"
             overview = request(process, 45, "tools/call", {"name": "uepi_overview", "arguments": {"limit": 10}})["structuredContent"]
@@ -996,7 +996,7 @@ def main() -> int:
                 process,
                 48,
                 "tools/call",
-                {"name": "uepi_animation", "arguments": {"asset": "Waving", "include": ["summary", "bone_motion_profile"]}},
+                {"name": "uepi_animation", "arguments": {"asset": "/Game/Animations/Waving.Waving", "include": ["summary", "bone_motion_profile"]}},
             )["structuredContent"]
             assert_envelope(animation)
             assert animation["ok"] is True
@@ -1010,7 +1010,7 @@ def main() -> int:
                 process,
                 49,
                 "tools/call",
-                {"name": "uepi_animation", "arguments": {"asset": "Waving", "include": ["driver_track_curves", "full_pose_artifact"]}},
+                {"name": "uepi_animation", "arguments": {"asset": "/Game/Animations/Waving.Waving", "include": ["driver_track_curves", "full_pose_artifact"]}},
             )["structuredContent"]
             assert_envelope(reconstruction)
             assert reconstruction["ok"] is True
@@ -1033,6 +1033,68 @@ def main() -> int:
             assert context["operation"] == "context_route:blueprint_behavior"
             assert context["result"]["route"] == "blueprint_behavior"
             assert "blueprint_semantic_summary" in context["result"]["sections"]
+            scoped_context = request(
+                process,
+                51,
+                "tools/call",
+                {
+                    "name": "uepi_context",
+                    "arguments": {
+                        "question": "Find unrelated AudioWidgets content",
+                        "route": "blueprint_behavior",
+                        "hard_scope": ["/Game/BP_Hero.BP_Hero"],
+                        "max_items": 20,
+                    },
+                },
+            )["structuredContent"]
+            assert_envelope(scoped_context)
+            assert scoped_context["ok"] is True
+            assert scoped_context["result"]["matches"]
+            assert all(str(item.get("canonical_key") or "").startswith("/Game/BP_Hero.BP_Hero") for item in scoped_context["result"]["matches"])
+
+            first_page = request(
+                process,
+                52,
+                "tools/call",
+                {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_Hero.BP_Hero", "page_size": 1, "compact": True}},
+            )["structuredContent"]
+            assert_envelope(first_page)
+            assert first_page["continuation"]["has_more"] is True
+            assert first_page["continuation"]["cursor"]
+            second_page = request(
+                process,
+                53,
+                "tools/call",
+                {
+                    "name": "uepi_blueprint",
+                    "arguments": {
+                        "asset": "/Game/BP_Hero.BP_Hero",
+                        "page_size": 1,
+                        "compact": True,
+                        "cursor": first_page["continuation"]["cursor"],
+                    },
+                },
+            )["structuredContent"]
+            assert_envelope(second_page)
+            assert first_page["result"]["blueprint_entities"] != second_page["result"]["blueprint_entities"]
+
+            fuzzy_exact = request(
+                process,
+                54,
+                "tools/call",
+                {"name": "uepi_animation", "arguments": {"asset": "Waving"}},
+            )["structuredContent"]
+            assert fuzzy_exact["ok"] is False
+            assert fuzzy_exact["error"]["code"] == "UEPI_ASSET_NOT_FOUND"
+
+            wrong_project = request(
+                process,
+                55,
+                "tools/call",
+                {"name": "uepi_status", "arguments": {"expected_project_file": str(root / "WrongProject.uproject")}},
+            )["structuredContent"]
+            assert wrong_project["ok"] is False
+            assert wrong_project["error"]["code"] == "UEPI_PROJECT_MISMATCH"
             live_context = request(
                 process,
                 46,
@@ -1047,20 +1109,20 @@ def main() -> int:
             assert any(item.get("code") == "UEPI_BRIDGE_LIVE_CONTEXT_UNAVAILABLE" for item in live_context["diagnostics"])
             deleted_search = request(process, 40, "tools/call", {"name": "uepi_search", "arguments": {"query": "BP_Deleted"}})["structuredContent"]
             assert deleted_search["result"]["match_count"] == 0
-            deleted_asset = request(process, 41, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "BP_Deleted"}})["structuredContent"]
+            deleted_asset = request(process, 41, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "/Game/BP_Deleted.BP_Deleted"}})["structuredContent"]
             assert_envelope(deleted_asset)
             assert deleted_asset["ok"] is False
             assert deleted_asset["error"]["code"] == "UEPI_ASSET_TOMBSTONED"
-            renamed_old = request(process, 42, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "BP_OldName"}})["structuredContent"]
+            renamed_old = request(process, 42, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "/Game/BP_OldName.BP_OldName"}})["structuredContent"]
             assert_envelope(renamed_old)
             assert renamed_old["error"]["code"] == "UEPI_ASSET_TOMBSTONED"
-            renamed_new = request(process, 43, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "BP_NewName"}})["structuredContent"]
+            renamed_new = request(process, 43, "tools/call", {"name": "uepi_asset", "arguments": {"asset": "/Game/BP_NewName.BP_NewName"}})["structuredContent"]
             assert_envelope(renamed_new)
             assert renamed_new["result"]["entity"]["display_name"] == "BP_NewName"
             blueprint = request(process, 5, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_Hero.BP_Hero"}})["structuredContent"]
             assert_envelope(blueprint)
             assert blueprint["result"]["query_source"] == "sqlite_cache"
-            assert blueprint["state"]["freshness"] == "refresh_requested"
+            assert blueprint["snapshot"]["freshness"] == "refresh_requested"
             assert blueprint["diagnostics"][0]["code"] == "UEPI_REFRESH_REQUESTED"
             blueprint_names = {item["display_name"] for item in blueprint["result"]["blueprint_entities"]}
             assert "Event BeginPlay" in blueprint_names
@@ -1069,9 +1131,9 @@ def main() -> int:
             assert any((root / "store" / "requests").glob("refresh-*.json"))
             assert "semantic_summary" in blueprint["result"]
             assert blueprint["result"]["semantic_summary"]["schema_version"] == "uepi.blueprint-semantic-summary.v1"
-            metadata_blueprint = request(process, 50, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "BP_MetadataOnly"}})["structuredContent"]
+            metadata_blueprint = request(process, 50, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_MetadataOnly.BP_MetadataOnly"}})["structuredContent"]
             assert_envelope(metadata_blueprint)
-            assert metadata_blueprint["state"]["freshness"] == "refresh_requested"
+            assert metadata_blueprint["snapshot"]["freshness"] == "refresh_requested"
             assert metadata_blueprint["diagnostics"][0]["code"] == "UEPI_REFRESH_REQUESTED"
             assert metadata_blueprint["diagnostics"][0]["target_object_path"] == "/Game/BP_MetadataOnly.BP_MetadataOnly"
             assert "blueprint_graph_entities_not_present_in_snapshot" in metadata_blueprint["omissions"]

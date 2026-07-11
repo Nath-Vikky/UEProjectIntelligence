@@ -5,7 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 
-ENVELOPE_SCHEMA_VERSION = "uepi.mcp-envelope.v1"
+ENVELOPE_SCHEMA_VERSION = "uepi.mcp-envelope.v2"
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -37,6 +37,8 @@ def snapshot_for_state(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_project(project: dict[str, Any]) -> dict[str, Any]:
+    if "project_binding_id" in project:
+        return dict(project)
     return {
         "id": project.get("id"),
         "name": project.get("name"),
@@ -55,6 +57,9 @@ def normalize_diagnostics(diagnostics: list[dict[str, Any]] | None) -> list[dict
         diagnostic = dict(item)
         code = str(diagnostic.get("code") or "")
         diagnostic.setdefault("severity", "warning" if code else "info")
+        diagnostic.setdefault("blocking", diagnostic.get("severity") in {"error", "critical"})
+        diagnostic.setdefault("phase", "query")
+        diagnostic.setdefault("retryable", False)
         if code == "UEPI_REFRESH_REQUESTED":
             diagnostic.setdefault("recoverable", True)
             diagnostic.setdefault(
@@ -170,6 +175,7 @@ def envelope(
     operation: str,
     project: dict[str, Any],
     state: dict[str, Any],
+    editor: dict[str, Any] | None = None,
     result: dict[str, Any] | None = None,
     error: dict[str, Any] | None = None,
     diagnostics: list[dict[str, Any]] | None = None,
@@ -180,26 +186,37 @@ def envelope(
     next_actions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     normalized_diagnostics = normalize_diagnostics(diagnostics)
+    normalized_error = error
+    if normalized_error is None:
+        blocking = next((item for item in normalized_diagnostics if item.get("blocking")), None)
+        if blocking:
+            normalized_error = {
+                "code": blocking.get("code") or "UEPI_BLOCKED",
+                "message": blocking.get("message") or "The request was blocked by a diagnostic.",
+                "retryable": bool(blocking.get("retryable")),
+                "candidates": [],
+            }
     body: dict[str, Any] = {
         "schema_version": ENVELOPE_SCHEMA_VERSION,
-        "ok": error is None,
+        "ok": normalized_error is None,
         "request_id": str(uuid4()),
         "tool": tool,
         "operation": operation,
-        "data_mode": data_mode_for_state(state),
         "project": normalize_project(project),
+        "editor": editor or {"connected": False, "session_id": None, "source": "snapshot"},
         "snapshot": snapshot_for_state(state),
-        "state": state,
         "diagnostics": normalized_diagnostics,
         "evidence": evidence if evidence is not None else collect_evidence(result or error or {}),
         "omissions": omissions or [],
-        "truncation": truncation or {"truncated": False, "reason": None},
-        "continuation": continuation or {"cursor": None, "has_more": False},
+        "truncation": truncation or {"truncated": False, "reason": None, "item_limit_hit": False, "byte_limit_hit": False},
+        "continuation": continuation or {"has_more": False, "cursor": None},
     }
-    if error is not None:
-        body["error"] = error
+    if normalized_error is not None:
+        body["error"] = normalized_error
+        body["result"] = None
     else:
         body["result"] = result or {}
+        body["error"] = None
     body["next_actions"] = next_actions if next_actions is not None else default_next_actions(tool, normalized_diagnostics, result)
     return body
 

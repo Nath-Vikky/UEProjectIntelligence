@@ -4,12 +4,12 @@ namespace UE::ProjectIntelligence
 {
 	const TCHAR* FUEPIBridgeProtocol::ProtocolName()
 	{
-		return TEXT("uepi-bridge-v1");
+		return TEXT("uepi-bridge-v2");
 	}
 
 	const TCHAR* FUEPIBridgeProtocol::SessionSchemaVersion()
 	{
-		return TEXT("uepi.editor-bridge-session.v1");
+		return TEXT("uepi.editor-bridge-session.v2");
 	}
 
 	TArray<FString> FUEPIBridgeProtocol::ReadCapabilities()

@@ -8,10 +8,11 @@ from typing import Any
 from uuid import uuid4
 
 from .store import SnapshotStore
+from .identity import project_identity, session_matches_identity
 
 
-BRIDGE_SESSION_SCHEMA = "uepi.editor-bridge-session.v1"
-BRIDGE_PROTOCOL = "uepi-bridge-v1"
+BRIDGE_SESSION_SCHEMAS = {"uepi.editor-bridge-session.v1", "uepi.editor-bridge-session.v2"}
+BRIDGE_PROTOCOL = "uepi-bridge-v2"
 
 
 def bridge_session_path(store: SnapshotStore) -> Path:
@@ -57,13 +58,32 @@ def _read_token(session: dict[str, Any], session_path: Path) -> str | None:
     return None
 
 
-def call_bridge(store: SnapshotStore, command: str, params: dict[str, Any] | None = None, timeout: float = 2.0) -> dict[str, Any]:
+def call_bridge(
+    store: SnapshotStore,
+    command: str,
+    params: dict[str, Any] | None = None,
+    timeout: float = 2.0,
+    *,
+    expected_identity: dict[str, Any] | None = None,
+    expected_editor_session_id: str | None = None,
+) -> dict[str, Any]:
     session_path = bridge_session_path(store)
     session = read_bridge_session(store)
-    if not session or session.get("schema_version") != BRIDGE_SESSION_SCHEMA:
+    if not session or session.get("schema_version") not in BRIDGE_SESSION_SCHEMAS:
         return {"ok": False, "error": {"code": "UEPI_BRIDGE_NOT_CONFIGURED", "message": "Bridge session file is missing."}}
     if not session.get("active") or not session.get("transport_ready"):
         return {"ok": False, "error": {"code": "UEPI_BRIDGE_NOT_READY", "message": "Bridge session exists but transport is not ready."}}
+    if expected_identity is None:
+        try:
+            state = store.load_state()
+            expected_identity = project_identity(None, state.project, store.root)
+        except Exception:
+            expected_identity = None
+    if expected_identity and not session_matches_identity(session, expected_identity):
+        return {"ok": False, "error": {"code": "UEPI_PROJECT_BINDING_MISMATCH", "message": "Bridge session belongs to a different project binding."}}
+    actual_session_id = str(session.get("editor_session_id") or session.get("session_id") or "")
+    if expected_editor_session_id and actual_session_id != expected_editor_session_id:
+        return {"ok": False, "error": {"code": "UEPI_EDITOR_SESSION_MISMATCH", "message": "Bridge session does not match the requested Editor session."}}
     token = _read_token(session, session_path)
     if not token:
         return {"ok": False, "error": {"code": "UEPI_BRIDGE_TOKEN_MISSING", "message": "Bridge token file is missing or unreadable."}}
@@ -75,10 +95,14 @@ def call_bridge(store: SnapshotStore, command: str, params: dict[str, Any] | Non
 
     request = {
         "id": f"req:{uuid4().hex}",
-        "protocol": BRIDGE_PROTOCOL,
+        "protocol": str(session.get("protocol") or BRIDGE_PROTOCOL),
         "token": token,
         "command": command,
-        "params": params or {},
+        "params": {
+            **(params or {}),
+            "expected_project_binding_id": (expected_identity or {}).get("project_binding_id"),
+            "expected_editor_session_id": expected_editor_session_id,
+        },
     }
     payload = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     try:
@@ -89,7 +113,7 @@ def call_bridge(store: SnapshotStore, command: str, params: dict[str, Any] | Non
             if len(header) != 4:
                 raise OSError("Bridge response header was incomplete.")
             size = struct.unpack(">I", header)[0]
-            if size <= 0 or size > 1024 * 1024:
+            if size <= 0 or size > 4 * 1024 * 1024:
                 raise OSError(f"Bridge response size is invalid: {size}")
             chunks: list[bytes] = []
             remaining = size
@@ -123,7 +147,7 @@ def live_context(store: SnapshotStore, include_log: bool = True) -> dict[str, An
 def bridge_status(store: SnapshotStore) -> dict[str, Any]:
     path = bridge_session_path(store)
     session = read_bridge_session(store)
-    configured = session is not None and session.get("schema_version") == BRIDGE_SESSION_SCHEMA
+    configured = session is not None and session.get("schema_version") in BRIDGE_SESSION_SCHEMAS
     active = bool(configured and session and session.get("active"))
     ready = bool(active and session and session.get("transport_ready"))
     connection_probe: dict[str, Any] | None = None

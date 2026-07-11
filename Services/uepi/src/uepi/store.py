@@ -119,7 +119,7 @@ def _active_editor_sessions() -> list[dict[str, Any]]:
                 session = _load_json(path)
             except SnapshotStoreError:
                 continue
-            if session.get("schema_version") != "uepi.editor-bridge-session.v1":
+            if session.get("schema_version") not in {"uepi.editor-bridge-session.v1", "uepi.editor-bridge-session.v2"}:
                 continue
             if not session.get("active") or not session.get("transport_ready"):
                 continue
@@ -141,28 +141,13 @@ def _active_editor_sessions() -> list[dict[str, Any]]:
 def _session_matches_project(session: dict[str, Any], project: str | Path | None) -> bool:
     if not project:
         return False
-    raw = str(project)
-    project_path = Path(project).expanduser()
-    project_values = [raw]
-    try:
-        resolved = project_path.resolve()
-        project_values.append(str(resolved))
-        if resolved.suffix.lower() == ".uproject":
-            project_values.append(str(resolved.parent))
-            project_values.append(resolved.stem)
-        else:
-            project_values.append(resolved.name)
-    except OSError:
-        pass
+    from .identity import project_binding_id
 
-    values = [
-        str(session.get("project_name") or ""),
-        str(session.get("project_file") or ""),
-        str(session.get("project_root") or ""),
-        str(session.get("store_root") or ""),
-        str(session.get("_store_root") or ""),
-    ]
-    return any(_identifier_matches_values(identifier, values) for identifier in project_values)
+    expected = project_binding_id(project)
+    actual = str(session.get("project_binding_id") or "")
+    if not actual and session.get("project_file"):
+        actual = project_binding_id(str(session["project_file"]))
+    return actual == expected
 
 
 def _active_editor_store_root(project: str | Path | None = None) -> Path | None:
@@ -174,6 +159,7 @@ def _active_editor_store_root(project: str | Path | None = None) -> Path | None:
         for session in sessions:
             if _session_matches_project(session, project):
                 return Path(str(session["_store_root"])).resolve()
+        return None
 
     if len(sessions) == 1:
         return Path(str(sessions[0]["_store_root"])).resolve()

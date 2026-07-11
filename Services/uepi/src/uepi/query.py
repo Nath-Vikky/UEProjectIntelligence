@@ -9,6 +9,8 @@ from .blueprint_semantics import summarize_blueprint_semantics
 from .cache import SQLiteSnapshotCache, cache_status, sync_cache
 from .cpp_symbols import scan_cpp_symbols
 from .bridge_client import bridge_status, call_bridge, live_context
+from .identity import project_guard_diagnostics, project_identity
+from .status import resolve_status
 from .result import envelope as make_envelope
 from .snapshot import SnapshotView
 from .store import SnapshotState, SnapshotStore, SnapshotStoreError, _load_json, _parse_utc
@@ -95,10 +97,28 @@ def _path_is_relative_to(child: Path, parent: Path) -> bool:
 
 
 class UEPIQueryEngine:
-    def __init__(self, store: SnapshotStore):
+    def __init__(self, store: SnapshotStore, configured_project: str | Path | None = None):
         self.store = store
         self.snapshot = SnapshotView.open(store)
         self.state: SnapshotState = self.snapshot.state
+        self.identity = project_identity(configured_project, self.state.project, self.store.root)
+        self.identity_diagnostics: list[dict[str, Any]] = []
+        snapshot_file = self.state.project.get("project_file")
+        if configured_project and snapshot_file:
+            configured_identity = project_identity(configured_project, {}, self.store.root)
+            snapshot_identity = project_identity(snapshot_file, self.state.project, self.store.root)
+            if configured_identity.get("project_binding_id") != snapshot_identity.get("project_binding_id"):
+                self.identity_diagnostics.append(
+                    {
+                        "severity": "error",
+                        "blocking": True,
+                        "code": "UEPI_PROJECT_BINDING_MISMATCH",
+                        "message": "The configured MCP project does not match the Snapshot project identity.",
+                        "phase": "request_guard",
+                        "retryable": False,
+                        "recoverable": True,
+                    }
+                )
         self._cache_status = cache_status(self.store, self.state)
         self._cache_sync_result: dict[str, Any] | None = None
         self._cache_sync_error: str | None = None
@@ -171,18 +191,15 @@ class UEPIQueryEngine:
         state = self.state.envelope_state()
         if freshness:
             state["freshness"] = freshness
+        status = resolve_status(self.store, self.state, self.identity, probe_bridge=False)
         return make_envelope(
             tool=tool,
             operation=operation,
-            project={
-                "id": self._project_id(),
-                "name": self._project_name(),
-                "engine_version": self._engine_version(),
-                "project_root": str(self.store.root.parent.parent) if self.store.root.name == "UEProjectIntelligence" else str(self.store.root),
-            },
+            project=self.identity,
+            editor=status["editor"],
             state=state,
             result=result,
-            diagnostics=diagnostics,
+            diagnostics=self.identity_diagnostics + status["diagnostics"] + (diagnostics or []),
             omissions=omissions,
             truncation=truncation,
             evidence=evidence,
@@ -203,15 +220,12 @@ class UEPIQueryEngine:
         state = self.state.envelope_state()
         if freshness:
             state["freshness"] = freshness
+        status = resolve_status(self.store, self.state, self.identity, probe_bridge=False)
         return make_envelope(
             tool=tool,
             operation=operation,
-            project={
-                "id": self._project_id(),
-                "name": self._project_name(),
-                "engine_version": self._engine_version(),
-                "project_root": str(self.store.root.parent.parent) if self.store.root.name == "UEProjectIntelligence" else str(self.store.root),
-            },
+            project=self.identity,
+            editor=status["editor"],
             state=state,
             error={
                 "code": code,
@@ -219,7 +233,7 @@ class UEPIQueryEngine:
                 "retryable": False,
                 "candidates": candidates or [],
             },
-            diagnostics=diagnostics,
+            diagnostics=self.identity_diagnostics + status["diagnostics"] + (diagnostics or []),
             next_actions=next_actions,
         )
 
@@ -348,6 +362,22 @@ class UEPIQueryEngine:
             return None, []
         asset_first = sorted(candidates, key=lambda item: (0 if item.get("kind") == "asset" else 1, str(item.get("canonical_key") or "")))
         return asset_first[0], [_short_entity(item) for item in asset_first[:10]]
+
+    def _resolve_entity_with_exact(self, identifier: str, exact: bool) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+        entity, candidates = self._resolve_entity(identifier)
+        if not entity or not exact:
+            return entity, candidates
+        folded = str(identifier or "").strip().casefold()
+        attributes = _as_dict(entity.get("attributes"))
+        exact_values = {
+            str(entity.get("id") or "").casefold(),
+            str(entity.get("canonical_key") or "").casefold(),
+            str(attributes.get("object_path") or "").casefold(),
+            str(attributes.get("package_name") or "").casefold(),
+        }
+        if folded in exact_values:
+            return entity, candidates
+        return None, candidates
 
     def _tombstone_candidate(self, identifier: str) -> list[dict[str, Any]]:
         tombstone = self.snapshot.find_tombstone(identifier)
@@ -534,7 +564,7 @@ class UEPIQueryEngine:
                     break
         return results
 
-    def status(self) -> dict[str, Any]:
+    def status(self, expected_project_file: str | Path | None = None, expected_editor_session_id: str | None = None) -> dict[str, Any]:
         fragment_paths = []
         fragment_kinds = Counter()
         for fragment in _as_list(self.state.manifest.get("fragments")):
@@ -546,16 +576,28 @@ class UEPIQueryEngine:
                 except SnapshotStoreError as exc:
                     if len(fragment_paths) < 20:
                         fragment_paths.append(f"unreadable: {exc}")
-        editor_session = self.snapshot.active_editor_session()
         latest_event = self.snapshot.latest_incremental_event()
         cache = cache_status(self.store, self.state)
         if self._cache_sync_result:
             cache["auto_sync"] = self._cache_sync_result
         if self._cache_sync_error:
             cache["auto_sync_error"] = self._cache_sync_error
-        bridge = bridge_status(self.store)
-        return self._envelope(
-            {
+        resolved = resolve_status(
+            self.store,
+            self.state,
+            self.identity,
+            probe_bridge=True,
+            expected_editor_session_id=expected_editor_session_id,
+        )
+        guard_diagnostics = project_guard_diagnostics(self.identity, expected_project_file=expected_project_file)
+        return make_envelope(
+            tool="uepi_status",
+            operation="status",
+            project=self.identity,
+            editor=resolved["editor"],
+            state=self.state.envelope_state(),
+            diagnostics=self.identity_diagnostics + guard_diagnostics + resolved["diagnostics"],
+            result={
                 "ok": True,
                 "project_state": "snapshot_ready",
                 "store_root": str(self.store.root),
@@ -569,12 +611,10 @@ class UEPIQueryEngine:
                 "fragment_count": sum(fragment_kinds.values()),
                 "fragment_path_samples": fragment_paths,
                 "cache": cache,
-                "editor_session": editor_session,
                 "incremental_events": {
                     "latest": latest_event,
                     "log_path": str(self.store.logs_dir / "incremental_events.jsonl"),
                 },
-                "bridge": bridge,
                 "refresh_requests": {
                     "pending": self.store.pending_refresh_requests(),
                     "directory": str(self.store.requests_dir),
@@ -583,9 +623,9 @@ class UEPIQueryEngine:
                     "can_query_snapshot": int(self.counts.get("entities") or 0) > 0,
                     "requires_daemon": False,
                     "requires_editor_for_reads": False,
-                    "bridge_ready": bool(bridge.get("ready")),
+                    "bridge_ready": bool(resolved["editor"].get("connected")),
                     "can_refresh_without_editor": False,
-                    "can_request_editor_refresh": editor_session is not None,
+                    "can_request_editor_refresh": bool(resolved["editor"].get("connected")),
                     "recommended_flow": [
                         "Call uepi_status first.",
                         "Use uepi_search or uepi_context to identify candidate assets.",
@@ -593,9 +633,9 @@ class UEPIQueryEngine:
                         "If diagnostics include UEPI_REFRESH_REQUESTED, retry the same read after the editor processes the request.",
                     ],
                 },
+                "capabilities": resolved["capabilities"],
+                "doctor": resolved["doctor"],
             },
-            tool="uepi_status",
-            operation="status",
             next_actions=[
                 {
                     "reason": "Build a bounded evidence pack before answering project-specific questions.",
@@ -656,11 +696,11 @@ class UEPIQueryEngine:
             operation="entity_search",
         )
 
-    def asset(self, asset: str, include_snapshot: bool = True, relation_limit: int = 80, refresh: str = "auto") -> dict[str, Any]:
+    def asset(self, asset: str, include_snapshot: bool = True, relation_limit: int = 80, refresh: str = "auto", exact: bool = True) -> dict[str, Any]:
         freshness, diagnostics = self._freshness_for_identifier(asset, "uepi_asset")
         if refresh == "force":
             freshness, diagnostics = self._force_bridge_refresh(asset, diagnostics=diagnostics, freshness=freshness)
-        entity, candidates = self._resolve_entity(asset)
+        entity, candidates = self._resolve_entity_with_exact(asset, exact)
         if not entity:
             tombstone = self._tombstone_candidate(asset)
             if tombstone:
@@ -710,11 +750,22 @@ class UEPIQueryEngine:
             operation="asset_read",
         )
 
-    def blueprint(self, asset: str, limit: int = 200, refresh: str = "auto") -> dict[str, Any]:
+    def blueprint(
+        self,
+        asset: str,
+        limit: int = 200,
+        refresh: str = "auto",
+        exact: bool = True,
+        graph: str = "",
+        graph_role: str = "",
+        node_guid: str = "",
+        node_classes: list[str] | None = None,
+        semantic_kinds: list[str] | None = None,
+    ) -> dict[str, Any]:
         freshness, diagnostics = self._freshness_for_identifier(asset, "uepi_blueprint")
         if refresh == "force":
             freshness, diagnostics = self._force_bridge_refresh(asset, diagnostics=diagnostics, freshness=freshness)
-        entity, candidates = self._resolve_entity(asset)
+        entity, candidates = self._resolve_entity_with_exact(asset, exact)
         if not entity:
             tombstone = self._tombstone_candidate(asset)
             if tombstone:
@@ -737,6 +788,29 @@ class UEPIQueryEngine:
                 operation="graph_summary",
             )
         domain_entities = self._domain_entities_for_asset(entity, BLUEPRINT_KINDS, max(1, min(limit, 1000)))
+        node_class_set = {str(item).casefold() for item in (node_classes or [])}
+        semantic_set = {str(item).casefold() for item in (semantic_kinds or [])}
+
+        def blueprint_filter(item: dict[str, Any]) -> bool:
+            attrs = _as_dict(item.get("attributes"))
+            typed = _as_dict(item.get("typed_attributes"))
+            values = {**attrs, **typed}
+            if graph and str(values.get("graph_name") or values.get("graph") or "").casefold() != graph.casefold():
+                return False
+            if graph_role and str(values.get("graph_role") or "").casefold() != graph_role.casefold():
+                return False
+            if node_guid and str(values.get("node_guid") or values.get("guid") or "").casefold() != node_guid.casefold():
+                return False
+            node_class = str(values.get("node_class") or values.get("class_path") or values.get("node_class_path") or "").casefold()
+            if node_class_set and not any(candidate == node_class or candidate in node_class for candidate in node_class_set):
+                return False
+            semantic = str(values.get("semantic_kind") or values.get("semantic") or item.get("kind") or "").casefold()
+            if semantic_set and semantic not in semantic_set:
+                return False
+            return True
+
+        if graph or graph_role or node_guid or node_class_set or semantic_set:
+            domain_entities = [item for item in domain_entities if blueprint_filter(item)]
         entity_id = str(entity.get("id") or "")
         relation_ids = {item.get("id") for item in domain_entities if item.get("id")}
         relation_ids.add(entity_id)
@@ -774,6 +848,7 @@ class UEPIQueryEngine:
                 "data_mutations": semantic_summary["data_mutations"],
                 "resolution_candidates": candidates,
                 "query_source": query_source,
+                "filters": {"graph": graph or None, "graph_role": graph_role or None, "node_guid": node_guid or None, "node_classes": node_classes or [], "semantic_kinds": semantic_kinds or []},
             },
             diagnostics=diagnostics,
             omissions=omissions,
@@ -900,11 +975,11 @@ class UEPIQueryEngine:
             operation="static_flow_trace",
         )
 
-    def animation(self, asset: str, include: list[str] | None = None, limit: int = 300, refresh: str = "auto") -> dict[str, Any]:
+    def animation(self, asset: str, include: list[str] | None = None, limit: int = 300, refresh: str = "auto", exact: bool = True, mode: str = "exact_asset") -> dict[str, Any]:
         freshness, diagnostics = self._freshness_for_identifier(asset, "uepi_animation")
         if refresh == "force":
             freshness, diagnostics = self._force_bridge_refresh(asset, diagnostics=diagnostics, freshness=freshness)
-        entity, candidates = self._resolve_entity(asset)
+        entity, candidates = self._resolve_entity_with_exact(asset, exact)
         if not entity:
             tombstone = self._tombstone_candidate(asset)
             if tombstone:
@@ -927,6 +1002,15 @@ class UEPIQueryEngine:
                 operation="animation_summary",
             )
         domain_entities = self._domain_entities_for_asset(entity, ANIMATION_KINDS, max(1, min(limit, 1000)))
+        if mode == "exact_asset":
+            asset_key = str(entity.get("canonical_key") or "").casefold()
+            asset_id = str(entity.get("id") or "")
+            domain_entities = [
+                item for item in domain_entities
+                if str(item.get("canonical_key") or "").casefold().startswith(asset_key + "::")
+                or str(_as_dict(item.get("attributes")).get("owner_asset_id") or "") == asset_id
+                or str(_as_dict(item.get("attributes")).get("asset_path") or "").casefold() == asset_key
+            ]
         snapshot = _as_dict(entity.get("snapshot"))
         requested = include or [
             "summary",
@@ -943,6 +1027,7 @@ class UEPIQueryEngine:
         reconstruction_profile_manifest = _as_dict(sequence_snapshot.get("reconstruction_profile")) if sequence_snapshot else {}
         result = {
             "asset": _short_entity(entity, include_snapshot=True),
+            "mode": mode,
             "include": requested,
             "animation_entities": domain_entities,
             "motion_summary": snapshot.get("animation_motion_summary") or snapshot.get("motion_summary"),
@@ -1196,11 +1281,24 @@ class UEPIQueryEngine:
         candidates.sort(key=lambda item: (int(item.get("generation") or 0), str(item.get("data_mode") or ""), str(item.get("path") or "")), reverse=True)
         return candidates[:20]
 
-    def context(self, question: str, scope: list[str] | None = None, max_items: int = 40, route: str = "auto", live: bool = False) -> dict[str, Any]:
+    def context(
+        self,
+        question: str,
+        scope: list[str] | None = None,
+        hard_scope: list[str] | None = None,
+        ranking_hints: list[str] | None = None,
+        include_external_endpoints: bool = False,
+        max_items: int = 40,
+        route: str = "auto",
+        live: bool = False,
+    ) -> dict[str, Any]:
         from .context_ranker import select_route
         from .context_routes import make_routes
 
         scope = scope or []
+        legacy_hard_scope = [item for item in scope if isinstance(item, str) and item.startswith("/") and "." in item]
+        hard_scope = list(dict.fromkeys((hard_scope or []) + legacy_hard_scope))
+        ranking_hints = list(dict.fromkeys((ranking_hints or []) + [item for item in scope if item not in legacy_hard_scope]))
         limit = max(1, min(max_items, 100))
         routes = make_routes()
         project_summary = {"counts": self.counts, "project": self.state.project}
@@ -1218,12 +1316,24 @@ class UEPIQueryEngine:
             question,
             {
                 "scope": scope,
+                "hard_scope": hard_scope,
+                "ranking_hints": ranking_hints,
+                "include_external_endpoints": include_external_endpoints,
                 "max_items": limit,
                 "terms": terms,
                 "route_confidence": route_confidence,
             },
         )
         result = pack.to_result(scope, limit)
+        result["hard_scope"] = hard_scope
+        result["ranking_hints"] = ranking_hints
+        if hard_scope and not result.get("matches"):
+            return self._error(
+                "UEPI_SCOPE_NO_MATCH",
+                "No indexed entity matched inside the requested hard scope.",
+                tool="uepi_context",
+                operation=f"context_route:{pack.route}",
+            )
         result["available_routes"] = [candidate.name for candidate in routes]
         result["terms"] = terms[:20]
         diagnostics: list[dict[str, Any]] = []
@@ -1251,4 +1361,4 @@ class UEPIQueryEngine:
 
 
 def make_engine(project: str | Path | None = None, store: str | Path | None = None, db: str | Path | None = None) -> UEPIQueryEngine:
-    return UEPIQueryEngine(SnapshotStore.from_paths(project=project, store=store, db=db))
+    return UEPIQueryEngine(SnapshotStore.from_paths(project=project, store=store, db=db), configured_project=project)

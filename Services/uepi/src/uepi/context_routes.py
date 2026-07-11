@@ -59,7 +59,20 @@ def _entity_text(entity: dict[str, Any]) -> str:
     ).casefold()
 
 
-def _search(engine: Any, query: str, terms: list[str], limit: int, kinds: set[str] | None = None) -> tuple[list[dict[str, Any]], str]:
+def _in_hard_scope(entity: dict[str, Any], hard_scope: list[str]) -> bool:
+    if not hard_scope:
+        return True
+    key = str(entity.get("canonical_key") or "").casefold()
+    attributes = _as_dict(entity.get("attributes"))
+    owner_values = [key, str(attributes.get("object_path") or "").casefold(), str(attributes.get("asset_path") or "").casefold()]
+    for scope in hard_scope:
+        folded = str(scope).casefold()
+        if any(value == folded or value.startswith(folded + "::") for value in owner_values if value):
+            return True
+    return False
+
+
+def _search(engine: Any, query: str, terms: list[str], limit: int, kinds: set[str] | None = None, hard_scope: list[str] | None = None) -> tuple[list[dict[str, Any]], str]:
     seen: set[str] = set()
     matches: list[dict[str, Any]] = []
 
@@ -67,12 +80,23 @@ def _search(engine: Any, query: str, terms: list[str], limit: int, kinds: set[st
         entity_id = str(entity.get("id") or "")
         if not entity_id or entity_id in seen:
             return
+        if not _in_hard_scope(entity, hard_scope or []):
+            return
         if kinds and str(entity.get("kind") or "") not in kinds:
             text = _entity_text(entity)
             if not any(kind in text for kind in kinds):
                 return
         seen.add(entity_id)
         matches.append(entity)
+
+    if hard_scope:
+        engine._ensure_loaded()
+        for entity in engine.entities:
+            if len(matches) >= limit:
+                break
+            if _in_hard_scope(entity, hard_scope):
+                add(entity)
+        return matches[:limit], "snapshot_fragments"
 
     if engine.cache:
         for entity in engine.cache.search_entities(query, limit=limit, include_snapshot=False):
@@ -95,7 +119,7 @@ def _search(engine: Any, query: str, terms: list[str], limit: int, kinds: set[st
     return matches[:limit], "snapshot_fragments"
 
 
-def _relations_for(engine: Any, matches: list[dict[str, Any]], limit: int, relation_types: set[str] | None = None) -> list[dict[str, Any]]:
+def _relations_for(engine: Any, matches: list[dict[str, Any]], limit: int, relation_types: set[str] | None = None, hard_scope: list[str] | None = None, include_external_endpoints: bool = False) -> list[dict[str, Any]]:
     related: list[dict[str, Any]] = []
     seen: set[str] = set()
     for entity in matches:
@@ -106,6 +130,12 @@ def _relations_for(engine: Any, matches: list[dict[str, Any]], limit: int, relat
         for relation in relations:
             if relation_types and relation.get("type") not in relation_types:
                 continue
+            if hard_scope and not include_external_endpoints:
+                engine._ensure_loaded()
+                from_entity = engine.entity_by_id.get(str(relation.get("from_id") or ""), {})
+                to_entity = engine.entity_by_id.get(str(relation.get("to_id") or ""), {})
+                if not (_in_hard_scope(from_entity, hard_scope) and _in_hard_scope(to_entity, hard_scope)):
+                    continue
             relation_id = str(relation.get("id") or "")
             if relation_id in seen:
                 continue
@@ -142,8 +172,9 @@ class KeywordRoute:
     def build(self, engine: Any, question: str, args: dict[str, Any]) -> ContextPack:
         max_items = int(args.get("max_items") or 40)
         terms = [str(term) for term in args.get("terms") or []]
-        matches, query_source = _search(engine, question, terms, max_items, self.kinds)
-        relations = _relations_for(engine, matches[:12], max_items, self.relation_types)
+        matches, query_source = _search(engine, question, terms + [str(item) for item in args.get("ranking_hints") or []], max_items, self.kinds, [str(item) for item in args.get("hard_scope") or []])
+        hard_scope = [str(item) for item in args.get("hard_scope") or []]
+        relations = _relations_for(engine, matches[:12], max_items, self.relation_types, hard_scope, bool(args.get("include_external_endpoints", False)))
         next_actions = []
         asset = _first_asset(matches)
         if asset:

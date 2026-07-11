@@ -87,6 +87,30 @@ namespace UE::ProjectIntelligence
 {
 	namespace
 	{
+		FString UEPICanonicalProjectFile()
+		{
+			FString ProjectFile = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
+			FPaths::NormalizeFilename(ProjectFile);
+			FPaths::CollapseRelativeDirectories(ProjectFile);
+#if PLATFORM_WINDOWS
+			ProjectFile = ProjectFile.ToLower();
+#endif
+			ProjectFile.RemoveFromEnd(TEXT("/"));
+			return ProjectFile;
+		}
+
+		FString UEPIProjectBindingId()
+		{
+			const FString CanonicalProjectFile = UEPICanonicalProjectFile();
+			FTCHARToUTF8 Utf8(*CanonicalProjectFile);
+			FSHA256Signature Signature;
+			if (!FPlatformMisc::GetSHA256Signature(Utf8.Get(), static_cast<uint32>(Utf8.Length()), Signature))
+			{
+				return FString();
+			}
+			return FString::Printf(TEXT("sha256:%s"), *Signature.ToString().ToLower());
+		}
+
 		FString UEPISessionsDirectory()
 		{
 			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("sessions")));
@@ -121,8 +145,7 @@ namespace UE::ProjectIntelligence
 
 		FString UEPIGlobalBridgeSessionPath()
 		{
-			const FString ProjectFile = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
-			const FString ProjectHash = FMD5::HashAnsiString(*ProjectFile).Left(12);
+			const FString ProjectHash = UEPIProjectBindingId().Replace(TEXT("sha256:"), TEXT("")).Left(12);
 			const FString ProjectName(FApp::GetProjectName());
 			const FString FileName = FPaths::MakeValidFileName(FString::Printf(TEXT("%s-%s.json"), *ProjectName, *ProjectHash));
 			return FPaths::Combine(UEPIGlobalSessionsDirectory(), FileName);
@@ -1909,6 +1932,16 @@ namespace UE::ProjectIntelligence
 		{
 			Params = *ParamsPtr;
 		}
+		const FString ExpectedProjectBindingId = JsonString(Params, TEXT("expected_project_binding_id"));
+		if (!ExpectedProjectBindingId.IsEmpty() && ExpectedProjectBindingId != UEPIProjectBindingId())
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_PROJECT_BINDING_MISMATCH"), TEXT("Bridge request project binding does not match this Editor project."));
+		}
+		const FString ExpectedEditorSessionId = JsonString(Params, TEXT("expected_editor_session_id"));
+		if (!ExpectedEditorSessionId.IsEmpty() && ExpectedEditorSessionId != SessionId)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_EDITOR_SESSION_MISMATCH"), TEXT("Bridge request session does not match this Editor session."));
+		}
 
 		if (Command == TEXT("editor.get_status"))
 		{
@@ -1981,6 +2014,8 @@ namespace UE::ProjectIntelligence
 	{
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetStringField(TEXT("session_id"), SessionId);
+		Result->SetStringField(TEXT("editor_session_id"), SessionId);
+		Result->SetStringField(TEXT("project_binding_id"), UEPIProjectBindingId());
 		Result->SetStringField(TEXT("project_name"), FApp::GetProjectName());
 		Result->SetStringField(TEXT("project_file"), FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath()));
 		Result->SetStringField(TEXT("session_path"), SessionPath);
@@ -4069,6 +4104,7 @@ namespace UE::ProjectIntelligence
 		Root->SetBoolField(TEXT("active"), State.Equals(TEXT("active"), ESearchCase::IgnoreCase));
 		Root->SetStringField(TEXT("state"), State);
 		Root->SetStringField(TEXT("session_id"), SessionId);
+		Root->SetStringField(TEXT("editor_session_id"), SessionId);
 		Root->SetStringField(TEXT("host"), TEXT("127.0.0.1"));
 		Root->SetNumberField(TEXT("port"), Port);
 		Root->SetStringField(TEXT("protocol"), FUEPIBridgeProtocol::ProtocolName());
@@ -4076,6 +4112,8 @@ namespace UE::ProjectIntelligence
 		Root->SetStringField(TEXT("implementation"), TEXT("tcp_length_prefixed_json"));
 		Root->SetStringField(TEXT("project_name"), FApp::GetProjectName());
 		Root->SetStringField(TEXT("project_file"), FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath()));
+		Root->SetStringField(TEXT("canonical_project_file"), UEPICanonicalProjectFile());
+		Root->SetStringField(TEXT("project_binding_id"), UEPIProjectBindingId());
 		Root->SetStringField(TEXT("project_root"), FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));
 		Root->SetStringField(TEXT("store_root"), UEPIStoreRoot());
 		Root->SetStringField(TEXT("session_path"), FPaths::ConvertRelativePathToFull(SessionPath));
@@ -4084,6 +4122,12 @@ namespace UE::ProjectIntelligence
 		Root->SetNumberField(TEXT("pid"), static_cast<double>(FPlatformProcess::GetCurrentProcessId()));
 		Root->SetStringField(TEXT("started_at"), FDateTime::UtcNow().ToIso8601());
 		Root->SetStringField(TEXT("last_heartbeat"), FDateTime::UtcNow().ToIso8601());
+		Root->SetStringField(TEXT("heartbeat_at"), FDateTime::UtcNow().ToIso8601());
+		TSharedRef<FJsonObject> Bridge = MakeShared<FJsonObject>();
+		Bridge->SetStringField(TEXT("host"), TEXT("127.0.0.1"));
+		Bridge->SetNumberField(TEXT("port"), Port);
+		Bridge->SetStringField(TEXT("protocol"), FUEPIBridgeProtocol::ProtocolName());
+		Root->SetObjectField(TEXT("bridge"), Bridge);
 		TArray<FString> Capabilities = FUEPIBridgeProtocol::ReadCapabilities();
 		Capabilities.Append(FUEPIBridgeProtocol::WriteCapabilities());
 		Root->SetArrayField(TEXT("capabilities"), StringArrayToJsonValues(Capabilities));

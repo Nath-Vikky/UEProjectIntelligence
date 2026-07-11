@@ -11,12 +11,18 @@ try:
     from . import __version__
     from . import edit
     from .query import make_engine
+    from .projections import apply_response_options
+    from .identity import project_guard_diagnostics
+    from .status import resolve_status
     from .result import tool_response
 except ImportError:  # Allows direct execution as a script from Codex config.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from uepi import __version__  # type: ignore
     from uepi import edit  # type: ignore
     from uepi.query import make_engine  # type: ignore
+    from uepi.projections import apply_response_options  # type: ignore
+    from uepi.identity import project_guard_diagnostics  # type: ignore
+    from uepi.status import resolve_status  # type: ignore
     from uepi.result import tool_response  # type: ignore
 
 
@@ -27,21 +33,42 @@ def object_schema(properties: dict[str, Any], required: list[str] | None = None)
     return schema
 
 
+COMMON_READ_PROPERTIES: dict[str, Any] = {
+    "expected_project_file": {"type": "string"},
+    "expected_editor_session_id": {"type": "string"},
+    "exact": {"type": "boolean", "default": True},
+    "refresh": {"type": "string", "enum": ["auto", "never", "force"]},
+    "compact": {"type": "boolean", "default": True},
+    "fields": {"type": "array", "items": {"type": "string"}},
+    "include": {"type": "array", "items": {"type": "string"}},
+    "exclude": {"type": "array", "items": {"type": "string"}},
+    "evidence_level": {"type": "string", "enum": ["none", "summary", "full"]},
+    "typed_attribute_level": {"type": "string", "enum": ["none", "summary", "full"]},
+    "page_size": {"type": "integer", "minimum": 1, "maximum": 500},
+    "cursor": {"type": "string"},
+    "max_payload_bytes": {"type": "integer", "minimum": 4096, "maximum": 4194304},
+}
+
+
+def read_schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
+    return object_schema({**COMMON_READ_PROPERTIES, **properties}, required)
+
+
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_status",
         "description": "Return Snapshot-backed UEPI project status, freshness, counts, and LLM readiness.",
-        "inputSchema": object_schema({}),
+        "inputSchema": read_schema({}),
     },
     {
         "name": "uepi_overview",
         "description": "Return a compact project overview with entity-kind and relation-type counts.",
-        "inputSchema": object_schema({"limit": {"type": "integer"}}),
+        "inputSchema": read_schema({"limit": {"type": "integer"}}),
     },
     {
         "name": "uepi_search",
         "description": "Search indexed UE project entities by asset path, display name, kind, or attributes.",
-        "inputSchema": object_schema(
+        "inputSchema": read_schema(
             {
                 "query": {"type": "string"},
                 "kind": {"type": "string"},
@@ -52,12 +79,15 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_context",
         "description": "Build a bounded static context bundle for a natural-language UE project question.",
-        "inputSchema": object_schema(
+        "inputSchema": read_schema(
             {
                 "question": {"type": "string"},
                 "route": {"type": "string"},
                 "live": {"type": "boolean"},
                 "scope": {"type": "array", "items": {"type": "string"}},
+                "hard_scope": {"type": "array", "items": {"type": "string"}},
+                "ranking_hints": {"type": "array", "items": {"type": "string"}},
+                "include_external_endpoints": {"type": "boolean"},
                 "max_items": {"type": "integer"},
             },
             ["question"],
@@ -66,7 +96,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_asset",
         "description": "Resolve and read one indexed entity or asset with nearby graph context.",
-        "inputSchema": object_schema(
+        "inputSchema": read_schema(
             {
                 "asset": {"type": "string"},
                 "refresh": {"type": "string"},
@@ -79,11 +109,16 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_blueprint",
         "description": "Read Blueprint graph/node/pin entities and relations for an indexed Blueprint asset.",
-        "inputSchema": object_schema(
+        "inputSchema": read_schema(
             {
                 "asset": {"type": "string"},
                 "refresh": {"type": "string"},
                 "limit": {"type": "integer"},
+                "graph": {"type": "string"},
+                "graph_role": {"type": "string"},
+                "node_guid": {"type": "string"},
+                "node_classes": {"type": "array", "items": {"type": "string"}},
+                "semantic_kinds": {"type": "array", "items": {"type": "string"}},
             },
             ["asset"],
         ),
@@ -91,7 +126,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_blueprint_trace",
         "description": "Trace static Blueprint execution/data/delegate/call relations from an indexed Blueprint snapshot.",
-        "inputSchema": object_schema(
+        "inputSchema": read_schema(
             {
                 "asset": {"type": "string"},
                 "start": {"type": "string"},
@@ -105,12 +140,13 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_animation",
         "description": "Read indexed animation, skeleton, track, notify, curve, motion-summary, optional bone-motion profiles, reconstruction profiles, driver track curves, and full-pose sample artifacts.",
-        "inputSchema": object_schema(
+        "inputSchema": read_schema(
             {
                 "asset": {"type": "string"},
                 "refresh": {"type": "string"},
                 "include": {"type": "array", "items": {"type": "string"}},
                 "limit": {"type": "integer"},
+                "mode": {"type": "string", "enum": ["exact_asset", "dependencies", "referencers", "playback_context"]},
             },
             ["asset"],
         ),
@@ -118,7 +154,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_impact",
         "description": "Return incoming/outgoing relations and affected entities for one asset or entity.",
-        "inputSchema": object_schema(
+        "inputSchema": read_schema(
             {
                 "asset": {"type": "string"},
                 "relation_limit": {"type": "integer"},
@@ -129,7 +165,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_diff",
         "description": "Compare two saved Snapshot generations by stable entity and relation IDs.",
-        "inputSchema": object_schema(
+        "inputSchema": read_schema(
             {
                 "from_generation": {"type": "integer"},
                 "to_generation": {"type": "integer"},
@@ -234,6 +270,23 @@ class UEPIMCPServer:
     def _engine(self):
         return make_engine(project=self.args.project, store=self.args.store, db=self.args.db)
 
+    def _read_result(self, value: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:
+        engine = getattr(self, "_current_engine", None)
+        if engine is not None:
+            diagnostics = project_guard_diagnostics(engine.identity, expected_project_file=arguments.get("expected_project_file"))
+            expected_session = arguments.get("expected_editor_session_id")
+            if expected_session:
+                resolved = resolve_status(engine.store, engine.state, engine.identity, expected_editor_session_id=str(expected_session))
+                diagnostics.extend(resolved["diagnostics"])
+            if diagnostics:
+                value.setdefault("diagnostics", []).extend(diagnostics)
+                blocking = next((item for item in diagnostics if item.get("blocking")), None)
+                if blocking:
+                    value["ok"] = False
+                    value["error"] = {"code": blocking.get("code"), "message": blocking.get("message"), "retryable": bool(blocking.get("retryable")), "candidates": []}
+                    value["result"] = None
+        return tool_response(apply_response_options(value, arguments))
+
     def initialize(self) -> dict[str, Any]:
         capabilities: dict[str, Any] = {"tools": {"listChanged": False}}
         if self.args.tool_profile == "full":
@@ -259,77 +312,84 @@ class UEPIMCPServer:
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
             engine = self._engine()
+            self._current_engine = engine
             if name == "uepi_status":
-                return tool_response(engine.status())
+                return self._read_result(engine.status(expected_project_file=arguments.get("expected_project_file"), expected_editor_session_id=arguments.get("expected_editor_session_id")), arguments)
             if name == "uepi_overview":
-                return tool_response(engine.overview(limit=int(arguments.get("limit") or 20)))
+                return self._read_result(engine.overview(limit=int(arguments.get("limit") or 20)), arguments)
             if name == "uepi_search":
-                return tool_response(
+                return self._read_result(
                     engine.search(
                         query=str(arguments.get("query") or ""),
                         kind=arguments.get("kind") if isinstance(arguments.get("kind"), str) else None,
                         limit=int(arguments.get("limit") or 20),
-                    )
+                    ), arguments
                 )
             if name == "uepi_context":
                 scope = arguments.get("scope")
-                return tool_response(
+                return self._read_result(
                     engine.context(
                         question=str(arguments.get("question") or ""),
                         route=str(arguments.get("route") or "auto"),
                         live=bool(arguments.get("live", False)),
                         scope=scope if isinstance(scope, list) else None,
+                        hard_scope=arguments.get("hard_scope") if isinstance(arguments.get("hard_scope"), list) else None,
+                        ranking_hints=arguments.get("ranking_hints") if isinstance(arguments.get("ranking_hints"), list) else None,
+                        include_external_endpoints=bool(arguments.get("include_external_endpoints", False)),
                         max_items=int(arguments.get("max_items") or 40),
-                    )
+                    ), arguments
                 )
             if name == "uepi_asset":
-                return tool_response(
+                return self._read_result(
                     engine.asset(
                         asset=str(arguments.get("asset") or ""),
                         refresh=str(arguments.get("refresh") or "auto"),
                         include_snapshot=bool(arguments.get("include_snapshot", True)),
                         relation_limit=int(arguments.get("relation_limit") or 80),
-                    )
+                        exact=bool(arguments.get("exact", True)),
+                    ), arguments
                 )
             if name == "uepi_blueprint":
-                return tool_response(engine.blueprint(asset=str(arguments.get("asset") or ""), refresh=str(arguments.get("refresh") or "auto"), limit=int(arguments.get("limit") or 200)))
+                return self._read_result(engine.blueprint(asset=str(arguments.get("asset") or ""), refresh=str(arguments.get("refresh") or "auto"), limit=int(arguments.get("limit") or 200), exact=bool(arguments.get("exact", True)), graph=str(arguments.get("graph") or ""), graph_role=str(arguments.get("graph_role") or ""), node_guid=str(arguments.get("node_guid") or ""), node_classes=arguments.get("node_classes") if isinstance(arguments.get("node_classes"), list) else None, semantic_kinds=arguments.get("semantic_kinds") if isinstance(arguments.get("semantic_kinds"), list) else None), arguments)
             if name == "uepi_blueprint_trace":
                 start = arguments.get("start")
                 if isinstance(start, dict):
                     start = json.dumps(start, ensure_ascii=False)
                 relation_types = arguments.get("relation_types")
-                return tool_response(
+                return self._read_result(
                     engine.blueprint_trace(
                         asset=str(arguments.get("asset") or ""),
                         start=str(start) if start else None,
                         relation_types=relation_types if isinstance(relation_types, list) else None,
                         max_depth=int(arguments.get("max_depth") or 8),
                         max_paths=int(arguments.get("max_paths") or 20),
-                    )
+                    ), arguments
                 )
             if name == "uepi_animation":
                 include = arguments.get("include")
-                return tool_response(
+                return self._read_result(
                     engine.animation(
                         asset=str(arguments.get("asset") or ""),
                         refresh=str(arguments.get("refresh") or "auto"),
                         include=include if isinstance(include, list) else None,
                         limit=int(arguments.get("limit") or 300),
-                    )
+                        exact=bool(arguments.get("exact", True)),
+                        mode=str(arguments.get("mode") or "exact_asset"),
+                    ), arguments
                 )
             if name == "uepi_impact":
-                return tool_response(
+                return self._read_result(
                     engine.impact(
                         asset=str(arguments.get("asset") or ""),
                         relation_limit=int(arguments.get("relation_limit") or 200),
-                    )
+                    ), arguments
                 )
             if name == "uepi_diff":
-                return tool_response(
+                return self._read_result(
                     engine.diff(
                         from_generation=arguments.get("from_generation") if isinstance(arguments.get("from_generation"), int) else None,
                         to_generation=arguments.get("to_generation") if isinstance(arguments.get("to_generation"), int) else None,
-                    )
+                    ), arguments
                 )
             if profile_includes_edit_tools(self.args.tool_profile):
                 if name == "uepi_edit_discover":
