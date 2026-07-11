@@ -53,6 +53,9 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "EdGraphSchema_K2.h"
 #include "Edit/UEPIEditOperationRegistry.h"
+#include "Edit/UEPIBackupService.h"
+#include "Edit/UEPIPackageSaveService.h"
+#include "Edit/UEPITransactionJournal.h"
 #include "Logging/TokenizedMessage.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Animation/AnimBlueprint.h"
@@ -87,6 +90,7 @@
 #include "Sockets.h"
 #include "UEPISettings.h"
 #include "UEPISnapshotStore.h"
+#include "Validation/UEPIValidatorRegistry.h"
 #include "UnrealClient.h"
 #include "WidgetBlueprint.h"
 #include "WidgetBlueprintFactory.h"
@@ -2973,27 +2977,16 @@ namespace UE::ProjectIntelligence
 			}
 		}
 		TMap<FString, FString> TransactionBackupFiles;
-		const FString BackupDirectory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("backups"), FPaths::MakeValidFileName(TransactionId));
-		IFileManager::Get().MakeDirectory(*BackupDirectory, true);
-		for (const FString& AssetPath : AffectedAssets)
+		FString BackupDirectory;
+		FString ServiceError;
+		if (!FUEPIBackupService::Create(TransactionId, AffectedAssets, TransactionBackupFiles, BackupDirectory, ServiceError))
 		{
-			if (!AssetPath.StartsWith(TEXT("/")))
-			{
-				continue;
-			}
-			const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
-			const FString PackageFile = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
-			if (!IFileManager::Get().FileExists(*PackageFile))
-			{
-				TransactionBackupFiles.Add(PackageFile, FString());
-				continue;
-			}
-			const FString BackupFile = FPaths::Combine(BackupDirectory, FPaths::MakeValidFileName(PackageName) + FPackageName::GetAssetPackageExtension());
-			if (IFileManager::Get().Copy(*BackupFile, *PackageFile, true, true) != COPY_OK)
-			{
-				return ErrorResponse(RequestId, TEXT("UEPI_EDIT_BACKUP_FAILED"), FString::Printf(TEXT("Could not back up target package before modification: %s"), *PackageFile));
-			}
-			TransactionBackupFiles.Add(PackageFile, BackupFile);
+			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_BACKUP_FAILED"), ServiceError);
+		}
+		FString JournalPath;
+		if (!FUEPITransactionJournal::Write(TransactionId, TEXT("prepared"), AffectedAssets, TransactionBackupFiles, false, TEXT("Preflight passed and package backups were created."), JournalPath, ServiceError))
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_JOURNAL_FAILED"), ServiceError);
 		}
 
 		TArray<TSharedPtr<FJsonValue>> OperationResults;
@@ -4984,40 +4977,29 @@ namespace UE::ProjectIntelligence
 		TArray<TSharedPtr<FJsonValue>> SavedFileHashes;
 		if (bAllOk && JsonBool(Params, TEXT("save"), false))
 		{
-			TArray<UPackage*> PackagesToSave;
-			for (const FString& AssetPath : AffectedAssets)
-			{
-				if (!AssetPath.StartsWith(TEXT("/")))
-				{
-					continue;
-				}
-				const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
-				if (UPackage* Package = FindPackage(nullptr, *PackageName))
-				{
-					PackagesToSave.AddUnique(Package);
-				}
-			}
-			bSaved = PackagesToSave.Num() == 0 || UEditorLoadingAndSavingUtils::SavePackages(PackagesToSave, true);
+			TArray<FUEPISavedFileHash> FileHashes;
+			bSaved = FUEPIPackageSaveService::SaveTouched(AffectedAssets, FileHashes, ServiceError);
 			if (!bSaved)
 			{
 				bAllOk = false;
-				FailureMessage = TEXT("Touched-only package save failed.");
+				FailureMessage = ServiceError;
+				Transaction.Cancel();
+				FString RestoreError;
+				FUEPIBackupService::Restore(TransactionBackupFiles, AffectedAssets, RestoreError);
 			}
 			else
 			{
-				for (const TPair<FString, FString>& Pair : TransactionBackupFiles)
+				for (const FUEPISavedFileHash& Hash : FileHashes)
 				{
-					if (!IFileManager::Get().FileExists(*Pair.Key))
-					{
-						continue;
-					}
 					TSharedRef<FJsonObject> FileHash = MakeShared<FJsonObject>();
-					FileHash->SetStringField(TEXT("file"), Pair.Key);
-					FileHash->SetStringField(TEXT("md5"), LexToString(FMD5Hash::HashFile(*Pair.Key)));
+					FileHash->SetStringField(TEXT("file"), Hash.File);
+					FileHash->SetStringField(TEXT("md5"), Hash.Md5);
 					SavedFileHashes.Add(MakeShared<FJsonValueObject>(FileHash));
 				}
 			}
 		}
+		FString JournalError;
+		FUEPITransactionJournal::Write(TransactionId, bAllOk ? TEXT("applied") : TEXT("failed"), AffectedAssets, TransactionBackupFiles, bSaved, FailureMessage, JournalPath, JournalError);
 
 		FString RefreshRequestPath;
 		FString RefreshError;
@@ -5043,6 +5025,7 @@ namespace UE::ProjectIntelligence
 		Result->SetBoolField(TEXT("saved"), bSaved);
 		Result->SetArrayField(TEXT("saved_file_hashes"), SavedFileHashes);
 		Result->SetStringField(TEXT("backup_directory"), BackupDirectory);
+		Result->SetStringField(TEXT("journal_path"), JournalPath);
 		Result->SetStringField(TEXT("failure_message"), FailureMessage);
 		Result->SetArrayField(TEXT("affected_assets"), StringArrayToJsonValues(AffectedAssets));
 		Result->SetArrayField(TEXT("operations"), OperationResults);
@@ -5091,33 +5074,16 @@ namespace UE::ProjectIntelligence
 		for (const FString& AssetPath : Assets)
 		{
 			UObject* Object = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
-			if (!IsValid(Object))
-			{
-				TSharedRef<FJsonObject> Missing = MakeShared<FJsonObject>();
-				Missing->SetBoolField(TEXT("ok"), false);
-				Missing->SetStringField(TEXT("asset"), AssetPath);
-				Missing->SetStringField(TEXT("validator"), TEXT("generic_uobject"));
-				Missing->SetStringField(TEXT("error"), TEXT("Failed to load a valid UObject for the affected target."));
-				ValidationResults.Add(MakeShared<FJsonValueObject>(Missing));
-				bAllOk = false;
-				continue;
-			}
-			if (UBlueprint* Blueprint = Cast<UBlueprint>(Object))
-			{
-				TSharedRef<FJsonObject> CompileResult = CompileBlueprintToJson(Blueprint);
-				CompileResult->SetStringField(TEXT("validator"), TEXT("blueprint"));
-				ValidationResults.Add(MakeShared<FJsonValueObject>(CompileResult));
-				bAllOk &= CompileResult->GetBoolField(TEXT("ok"));
-			}
-			else
-			{
-				TSharedRef<FJsonObject> Valid = MakeShared<FJsonObject>();
-				Valid->SetBoolField(TEXT("ok"), true);
-				Valid->SetStringField(TEXT("asset"), AssetPath);
-				Valid->SetStringField(TEXT("class"), Object->GetClass() ? Object->GetClass()->GetPathName() : FString());
-				Valid->SetStringField(TEXT("validator"), TEXT("generic_uobject"));
-				ValidationResults.Add(MakeShared<FJsonValueObject>(Valid));
-			}
+			FUEPIValidationResult Validation = FUEPIValidatorRegistry::Get().Validate(Object);
+			if (Validation.Asset.IsEmpty()) Validation.Asset = AssetPath;
+			TSharedRef<FJsonObject> Value = MakeShared<FJsonObject>();
+			Value->SetBoolField(TEXT("ok"), Validation.bOk);
+			Value->SetStringField(TEXT("asset"), Validation.Asset);
+			Value->SetStringField(TEXT("class"), Validation.ClassPath);
+			Value->SetStringField(TEXT("validator"), Validation.Validator);
+			Value->SetStringField(TEXT("message"), Validation.Message);
+			ValidationResults.Add(MakeShared<FJsonValueObject>(Value));
+			bAllOk &= Validation.bOk;
 		}
 
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -5148,44 +5114,21 @@ namespace UE::ProjectIntelligence
 		}
 		const bool bUndone = GEditor->UndoTransaction(false);
 		bool bFilesRestored = true;
-		TArray<UPackage*> PackagesToReload;
+		FString RestoreError;
 		if (bLastAppliedSaved)
 		{
-			for (const TPair<FString, FString>& Pair : LastAppliedBackupFiles)
-			{
-				if (Pair.Value.IsEmpty())
-				{
-					if (IFileManager::Get().FileExists(*Pair.Key) && !IFileManager::Get().Delete(*Pair.Key, false, true, true))
-					{
-						bFilesRestored = false;
-					}
-				}
-				else if (IFileManager::Get().Copy(*Pair.Key, *Pair.Value, true, true) != COPY_OK)
-				{
-					bFilesRestored = false;
-				}
-			}
-			for (const FString& AssetPath : LastAppliedAffectedAssets)
-			{
-				const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
-				if (UPackage* Package = FindPackage(nullptr, *PackageName))
-				{
-					Package->SetDirtyFlag(false);
-					PackagesToReload.AddUnique(Package);
-				}
-			}
-			if (PackagesToReload.Num() > 0)
-			{
-				FText ReloadError;
-				bFilesRestored &= UPackageTools::ReloadPackages(PackagesToReload, ReloadError, EReloadPackagesInteractionMode::AssumePositive);
-			}
+			bFilesRestored = FUEPIBackupService::Restore(LastAppliedBackupFiles, LastAppliedAffectedAssets, RestoreError);
 		}
+		FString JournalPath;
+		FString JournalError;
+		FUEPITransactionJournal::Write(TransactionId, (bUndone && bFilesRestored) ? TEXT("rolled_back") : TEXT("rollback_failed"), LastAppliedAffectedAssets, LastAppliedBackupFiles, false, RestoreError, JournalPath, JournalError);
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-rollback.v1"));
 		Result->SetStringField(TEXT("transaction_id"), TransactionId);
 		Result->SetStringField(TEXT("summary"), LastAppliedSummary);
 		Result->SetBoolField(TEXT("undone"), bUndone);
 		Result->SetBoolField(TEXT("files_restored"), bFilesRestored);
+		Result->SetStringField(TEXT("journal_path"), JournalPath);
 		if (bUndone && bFilesRestored)
 		{
 			LastAppliedTransactionId.Reset();

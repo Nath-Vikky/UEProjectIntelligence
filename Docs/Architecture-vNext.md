@@ -26,6 +26,8 @@ The Editor-exported Operation Registry is the capability source. The Agent reads
 
 Apply repeats all guards before mutation, creates a journal and file backups, uses an Unreal transaction, validates touched objects, saves touched packages only, requests targeted refresh, and writes a transaction diff. Failure triggers memory undo or backup restore and package reload. Arbitrary Python, shell, console commands, save-all, source-control submission, broad delete, and plugin enablement are not exposed.
 
+Backup/restore, touched-package save, transaction journal, and validation are independent Editor services. The Validator Registry currently selects Blueprint/AnimBlueprint compile, Animation/Montage skeleton/slot/segment checks, Material Instance parent checks, DataAsset checks, or a generic UObject validity fallback.
+
 ## Runtime Path
 
 Successful Apply can return a transaction-bound runtime verification ticket. UEPI may then own a PIE session and perform allowlisted status, input, parameterless Blueprint-callable invoke, read, wait, assert, and stop actions. It never takes over a PIE session it did not start and always attempts cleanup.
