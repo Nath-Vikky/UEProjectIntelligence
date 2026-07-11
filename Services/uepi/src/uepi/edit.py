@@ -242,7 +242,7 @@ def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None
         seen_ids.add(op_id)
         normalized.append({"operation_id": op_id, "type": op_type, "params": params, "depends_on": depends_on, "if_exists": str((raw or {}).get("if_exists") or "fail") if isinstance(raw, dict) else "fail"})
         affected.extend(_target_values(params, descriptor))
-        created_asset = _destination_asset(params) if op_type.startswith(("content.", "material.", "widget.", "input.")) else None
+        created_asset = _destination_asset(params) if op_type.startswith(("content.", "material.", "widget.", "input.")) or op_type == "animation.create_montage_from_sequence" else None
         if created_asset:
             operation_assets[op_id] = created_asset
             affected.append(created_asset)

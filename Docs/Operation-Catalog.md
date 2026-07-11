@@ -55,6 +55,12 @@ animgraph.connect_pose_pins
 animgraph.disconnect_pose_pins
 animgraph.remove_node
 animgraph.compile
+animation.create_montage_from_sequence
+animation.add_montage_slot_track
+animation.add_montage_segment
+animation.add_montage_section
+animation.set_montage_blend
+animation.set_preview_mesh
 ```
 
 Existing domains migrated behind the guarded facade:

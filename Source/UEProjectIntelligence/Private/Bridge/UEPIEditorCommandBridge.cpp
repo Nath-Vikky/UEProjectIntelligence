@@ -56,8 +56,12 @@
 #include "Logging/TokenizedMessage.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Animation/AnimBlueprint.h"
+#include "Animation/AnimMontage.h"
+#include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
 #include "AnimGraphNode_Slot.h"
+#include "Factories/AnimMontageFactory.h"
+#include "Engine/SkeletalMesh.h"
 #include "Engine/DataAsset.h"
 #include "MaterialTypes.h"
 #include "Misc/App.h"
@@ -2799,6 +2803,8 @@ namespace UE::ProjectIntelligence
 		}
 		TMap<FString, UClass*> PlannedAssetClasses;
 		TMap<FString, FString> PlannedAssetPaths;
+		TMap<FString, USkeleton*> PlannedMontageSkeletons;
+		TMap<USkeleton*, TSet<FName>> PlannedSkeletonSlots;
 		for (int32 Index = 0; Index < Operations->Num(); ++Index)
 		{
 			const TSharedPtr<FJsonObject> Operation = (*Operations)[Index].IsValid() ? (*Operations)[Index]->AsObject() : nullptr;
@@ -2862,6 +2868,63 @@ namespace UE::ProjectIntelligence
 				{
 					PlannedAssetClasses.Add(OpId, AssetClass);
 					PlannedAssetPaths.Add(OpId, FString::Printf(TEXT("%s/%s.%s"), *PackagePath, *AssetName, *AssetName));
+				}
+			}
+			else if (Type == TEXT("animation.register_slot") || Type == TEXT("animation.create_slot_group"))
+			{
+				USkeleton* Skeleton = LoadObject<USkeleton>(nullptr, *JsonString(OpParams, TEXT("skeleton")));
+				const FName SlotName(*JsonString(OpParams, TEXT("slot_name"), TEXT("DefaultSlot")));
+				if (!Skeleton || SlotName.IsNone()) return ErrorResponse(RequestId, TEXT("UEPI_EDIT_ANIMATION_SLOT_INVALID"), TEXT("A valid skeleton and slot_name are required."));
+				PlannedSkeletonSlots.FindOrAdd(Skeleton).Add(SlotName);
+			}
+			else if (Type == TEXT("animation.create_montage_from_sequence"))
+			{
+				UAnimSequence* Sequence = LoadObject<UAnimSequence>(nullptr, *JsonString(OpParams, TEXT("sequence")));
+				FString PackagePath; FString AssetName; FString DestinationError;
+				const FName SlotName(*JsonString(OpParams, TEXT("slot_name"), TEXT("DefaultSlot")));
+				if (!Sequence || !Sequence->GetSkeleton() || SlotName.IsNone() || !SplitDestinationPath(OpParams, TEXT("AM_UEPIMontage"), PackagePath, AssetName, DestinationError))
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_MONTAGE_PREFLIGHT_FAILED"), DestinationError.IsEmpty() ? TEXT("A valid sequence, skeleton, slot, and destination are required.") : DestinationError);
+				}
+				const bool bSlotExists = Sequence->GetSkeleton()->ContainsSlotName(SlotName) || PlannedSkeletonSlots.FindOrAdd(Sequence->GetSkeleton()).Contains(SlotName);
+				if (!bSlotExists) return ErrorResponse(RequestId, TEXT("UEPI_EDIT_ANIMATION_SLOT_MISSING"), FString::Printf(TEXT("Montage slot is not registered: %s"), *SlotName.ToString()));
+				const FString OpId = OperationId(Operation);
+				if (!OpId.IsEmpty())
+				{
+					PlannedAssetClasses.Add(OpId, UAnimMontage::StaticClass());
+					PlannedAssetPaths.Add(OpId, FString::Printf(TEXT("%s/%s.%s"), *PackagePath, *AssetName, *AssetName));
+					PlannedMontageSkeletons.Add(OpId, Sequence->GetSkeleton());
+				}
+			}
+			else if (Type == TEXT("animation.add_montage_slot_track") || Type == TEXT("animation.add_montage_segment") || Type == TEXT("animation.add_montage_section") || Type == TEXT("animation.set_montage_blend") || Type == TEXT("animation.set_preview_mesh"))
+			{
+				const FString MontagePath = ResolveOperationAsset(OpParams, TEXT("asset"), PlannedAssetPaths);
+				UAnimMontage* Montage = MontagePath.IsEmpty() ? nullptr : LoadObject<UAnimMontage>(nullptr, *MontagePath);
+				USkeleton* Skeleton = Montage ? Montage->GetSkeleton() : nullptr;
+				if (!Skeleton)
+				{
+					const TSharedPtr<FJsonObject> Reference = JsonObjectField(OpParams, TEXT("asset")); FString Ref = JsonString(Reference, TEXT("$ref")); int32 Fragment = INDEX_NONE; if (Ref.FindChar(TEXT('#'), Fragment)) Ref = Ref.Left(Fragment);
+					if (USkeleton* const* PlannedSkeleton = PlannedMontageSkeletons.Find(Ref)) Skeleton = *PlannedSkeleton;
+				}
+				if (!Skeleton) return ErrorResponse(RequestId, TEXT("UEPI_EDIT_MONTAGE_PREFLIGHT_FAILED"), TEXT("Montage target or prior Montage reference was not found."));
+				if (Type == TEXT("animation.add_montage_slot_track"))
+				{
+					const FName SlotName(*JsonString(OpParams, TEXT("slot_name"), TEXT("DefaultSlot")));
+					if (!Skeleton->ContainsSlotName(SlotName) && !PlannedSkeletonSlots.FindOrAdd(Skeleton).Contains(SlotName)) return ErrorResponse(RequestId, TEXT("UEPI_EDIT_ANIMATION_SLOT_MISSING"), TEXT("Requested Montage slot is not registered."));
+				}
+				else if (Type == TEXT("animation.add_montage_segment"))
+				{
+					UAnimSequence* Sequence = LoadObject<UAnimSequence>(nullptr, *JsonString(OpParams, TEXT("sequence")));
+					if (!Sequence || Sequence->GetSkeleton() != Skeleton) return ErrorResponse(RequestId, TEXT("UEPI_EDIT_ANIMATION_SKELETON_MISMATCH"), TEXT("Montage segment sequence has an incompatible skeleton."));
+				}
+				else if (Type == TEXT("animation.add_montage_section") && JsonString(OpParams, TEXT("section_name"), JsonString(OpParams, TEXT("name"))).IsEmpty())
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_MONTAGE_SECTION_INVALID"), TEXT("Montage section requires a name."));
+				}
+				else if (Type == TEXT("animation.set_preview_mesh"))
+				{
+					USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, *JsonString(OpParams, TEXT("preview_mesh")));
+					if (!Mesh || Mesh->GetSkeleton() != Skeleton) return ErrorResponse(RequestId, TEXT("UEPI_EDIT_ANIMATION_SKELETON_MISMATCH"), TEXT("Preview mesh has an incompatible skeleton."));
 				}
 			}
 		}
@@ -3078,6 +3141,77 @@ namespace UE::ProjectIntelligence
 				AffectedAssets.AddUnique(Skeleton->GetPathName());
 				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetStringField(TEXT("skeleton"), Skeleton->GetPathName()); Detail->SetStringField(TEXT("group_name"), GroupName.ToString()); Detail->SetStringField(TEXT("slot_name"), SlotName.ToString());
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("Skeleton slot group registered."), Detail); bMutated = true; continue;
+			}
+			if (Type == TEXT("animation.create_montage_from_sequence"))
+			{
+				UAnimSequence* Sequence = LoadObject<UAnimSequence>(nullptr, *JsonString(OpParams, TEXT("sequence")));
+				FString PackagePath; FString AssetName;
+				if (!Sequence || !Sequence->GetSkeleton() || !SplitDestinationPath(OpParams, TEXT("AM_UEPIMontage"), PackagePath, AssetName, Error))
+				{
+					bAllOk = false; FailureMessage = Error.IsEmpty() ? TEXT("A valid sequence, skeleton, destination_path, and name are required.") : Error; AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
+				}
+				const FName SlotName(*JsonString(OpParams, TEXT("slot_name"), TEXT("DefaultSlot")));
+				if (!Sequence->GetSkeleton()->ContainsSlotName(SlotName))
+				{
+					bAllOk = false; FailureMessage = FString::Printf(TEXT("Sequence skeleton does not contain slot: %s"), *SlotName.ToString()); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
+				}
+				UAnimMontageFactory* Factory = NewObject<UAnimMontageFactory>(); Factory->TargetSkeleton = Sequence->GetSkeleton(); Factory->SourceAnimation = Sequence;
+				UAnimMontage* Montage = Cast<UAnimMontage>(FAssetToolsModule::GetModule().Get().CreateAsset(AssetName, PackagePath, UAnimMontage::StaticClass(), Factory, TEXT("UEPI")));
+				if (!Montage) { bAllOk = false; FailureMessage = TEXT("AnimMontage creation failed."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+				Montage->Modify();
+				if (Montage->SlotAnimTracks.Num() == 0) Montage->AddSlot(SlotName); else Montage->SlotAnimTracks[0].SlotName = SlotName;
+				Montage->PostEditChange(); Montage->MarkPackageDirty(); AffectedAssets.AddUnique(Montage->GetPathName());
+				if (const FString OpId = OperationId(Operation); !OpId.IsEmpty()) OperationAssets.Add(OpId, Montage->GetPathName());
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetStringField(TEXT("asset_path"), Montage->GetPathName()); Detail->SetStringField(TEXT("sequence"), Sequence->GetPathName()); Detail->SetStringField(TEXT("slot_name"), SlotName.ToString());
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("AnimMontage created from sequence."), Detail); bMutated = true; continue;
+			}
+			if (Type == TEXT("animation.add_montage_slot_track") || Type == TEXT("animation.add_montage_segment") || Type == TEXT("animation.add_montage_section") || Type == TEXT("animation.set_montage_blend") || Type == TEXT("animation.set_preview_mesh"))
+			{
+				const FString MontagePath = ResolveOperationAsset(OpParams, TEXT("asset"), OperationAssets);
+				UAnimMontage* Montage = LoadObject<UAnimMontage>(nullptr, *MontagePath);
+				if (!Montage) { bAllOk = false; FailureMessage = FString::Printf(TEXT("AnimMontage was not found: %s"), *MontagePath); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+				Montage->Modify();
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetStringField(TEXT("asset"), Montage->GetPathName());
+				if (Type == TEXT("animation.add_montage_slot_track"))
+				{
+					const FName SlotName(*JsonString(OpParams, TEXT("slot_name"), TEXT("DefaultSlot")));
+					if (!Montage->GetSkeleton() || !Montage->GetSkeleton()->ContainsSlotName(SlotName)) { bAllOk = false; FailureMessage = TEXT("Montage skeleton does not contain the requested slot."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+					const bool bExists = Montage->SlotAnimTracks.ContainsByPredicate([SlotName](const FSlotAnimationTrack& Track) { return Track.SlotName == SlotName; });
+					if (!bExists) Montage->AddSlot(SlotName);
+					Detail->SetStringField(TEXT("slot_name"), SlotName.ToString()); Detail->SetBoolField(TEXT("already_exists"), bExists);
+				}
+				else if (Type == TEXT("animation.add_montage_segment"))
+				{
+					UAnimSequence* Sequence = LoadObject<UAnimSequence>(nullptr, *JsonString(OpParams, TEXT("sequence")));
+					const FName SlotName(*JsonString(OpParams, TEXT("slot_name"), TEXT("DefaultSlot")));
+					FSlotAnimationTrack* Track = Montage->SlotAnimTracks.FindByPredicate([SlotName](const FSlotAnimationTrack& Candidate) { return Candidate.SlotName == SlotName; });
+					if (!Sequence || Sequence->GetSkeleton() != Montage->GetSkeleton() || !Track) { bAllOk = false; FailureMessage = TEXT("Sequence skeleton or Montage slot track is incompatible."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+					FAnimSegment Segment; Segment.SetAnimReference(Sequence, true); Segment.StartPos = static_cast<float>(JsonInt(OpParams, TEXT("start_position_ms"), 0)) / 1000.0f;
+					double Number = 0.0; if (OpParams->TryGetNumberField(TEXT("start_position"), Number)) Segment.StartPos = static_cast<float>(Number);
+					if (OpParams->TryGetNumberField(TEXT("anim_start_time"), Number)) Segment.AnimStartTime = static_cast<float>(Number);
+					if (OpParams->TryGetNumberField(TEXT("anim_end_time"), Number)) Segment.AnimEndTime = static_cast<float>(Number);
+					if (OpParams->TryGetNumberField(TEXT("play_rate"), Number)) Segment.AnimPlayRate = static_cast<float>(Number);
+					Segment.LoopingCount = FMath::Max(1, JsonInt(OpParams, TEXT("loop_count"), 1)); Track->AnimTrack.AnimSegments.Add(Segment);
+					Montage->SetCompositeLength(FMath::Max(Montage->GetPlayLength(), Segment.GetEndPos())); Detail->SetStringField(TEXT("sequence"), Sequence->GetPathName()); Detail->SetStringField(TEXT("slot_name"), SlotName.ToString());
+				}
+				else if (Type == TEXT("animation.add_montage_section"))
+				{
+					const FName SectionName(*JsonString(OpParams, TEXT("section_name"), JsonString(OpParams, TEXT("name")))); double StartTime = 0.0; OpParams->TryGetNumberField(TEXT("start_time"), StartTime);
+					if (SectionName.IsNone() || Montage->GetSectionIndex(SectionName) != INDEX_NONE) { bAllOk = false; FailureMessage = TEXT("Montage section name is empty or already exists."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+					Montage->AddAnimCompositeSection(SectionName, static_cast<float>(StartTime)); Detail->SetStringField(TEXT("section_name"), SectionName.ToString()); Detail->SetNumberField(TEXT("start_time"), StartTime);
+				}
+				else if (Type == TEXT("animation.set_montage_blend"))
+				{
+					double Number = 0.0; if (OpParams->TryGetNumberField(TEXT("blend_in_time"), Number)) Montage->BlendIn.SetBlendTime(static_cast<float>(Number)); if (OpParams->TryGetNumberField(TEXT("blend_out_time"), Number)) Montage->BlendOut.SetBlendTime(static_cast<float>(Number)); if (OpParams->TryGetNumberField(TEXT("blend_out_trigger_time"), Number)) Montage->BlendOutTriggerTime = static_cast<float>(Number);
+					Detail->SetNumberField(TEXT("blend_in_time"), Montage->GetDefaultBlendInTime()); Detail->SetNumberField(TEXT("blend_out_time"), Montage->GetDefaultBlendOutTime());
+				}
+				else
+				{
+					USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, *JsonString(OpParams, TEXT("preview_mesh")));
+					if (!Mesh || Mesh->GetSkeleton() != Montage->GetSkeleton()) { bAllOk = false; FailureMessage = TEXT("Preview mesh is missing or skeleton-incompatible."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+					Montage->SetPreviewMesh(Mesh); Detail->SetStringField(TEXT("preview_mesh"), Mesh->GetPathName());
+				}
+				Montage->PostEditChange(); Montage->MarkPackageDirty(); AffectedAssets.AddUnique(Montage->GetPathName()); AddOperationResult(OperationResults, Index, Type, true, TEXT("AnimMontage updated."), Detail); bMutated = true; continue;
 			}
 			if (Type.StartsWith(TEXT("blueprint.")) || Type.StartsWith(TEXT("animgraph.")))
 			{

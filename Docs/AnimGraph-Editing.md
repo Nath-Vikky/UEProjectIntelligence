@@ -19,4 +19,6 @@ Animation Blueprint validation compiles the Blueprint and reports graph/compiler
 
 ## Scope
 
-This alpha does not claim generic state-machine creation, arbitrary Control Rig graph authoring, montage section editing, or bulk animation key editing. Those operations must appear in Discover before an Agent uses them.
+The animation asset catalog also supports creating a Montage from an exact compatible Sequence, adding slot tracks/segments/sections, setting blend timing, and setting a skeleton-compatible preview mesh. These operations participate in the same Plan, `$ref`, validation, touched-only save, and rollback flow.
+
+This alpha does not claim generic state-machine creation, arbitrary Control Rig graph authoring, notify/curve authoring, or bulk animation key editing. Those operations must appear in Discover before an Agent uses them.

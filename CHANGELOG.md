@@ -8,6 +8,7 @@
 - Added reflected UObject property schemas and typed value codec, generic DataAsset/property writes, generic Blueprint graph maintenance, and AnimGraph Slot/pose operations.
 - Aligned the P0 operation contract with typed `writes`, same-transaction `$ref` assets/nodes, complete descriptor fields, explicit touched-asset save, and AnimGraph/Actor/Widget compatibility operations.
 - Added collection write modes, JSON map-key property paths, and complete v2 envelopes for unknown-tool and top-level failure responses.
+- Added preflighted AnimMontage creation from Sequence plus slot track, segment, section, blend, preview mesh, same-transaction references, save, and rollback participation.
 - Added project-plugin content/source indexing, project-local Codex setup, machine-readable Doctor, versioned public schemas, v2 contract export, and source/prebuilt release packaging.
 - Kept the release marked experimental alpha until the UE5.3.2 real-machine matrix is complete.
 
