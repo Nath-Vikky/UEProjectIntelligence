@@ -1,4 +1,6 @@
-# Write Alpha Design
+# Write Alpha Design (Superseded Detail)
+
+The current vNext contract is documented in `Operation-Catalog.md`, `Property-Values.md`, `Blueprint-Editing.md`, `AnimGraph-Editing.md`, and `write-safety.md`. This file retains early alpha examples only.
 
 The stable read path remains Snapshot-first and non-mutating. Guarded write support shares the default Codex profile but keeps a small tool surface:
 
@@ -67,7 +69,7 @@ input.remove_key_mapping
 Blueprint graph operations return the created node GUIDs, pin IDs, pin names, directions, and links so the Agent can connect pins without guessing UI labels. Plans may also assign transaction-local `ref` / `node_ref` aliases to newly created nodes so creation, connection, and compile operations can run in one approved transaction.
 `blueprint.add_event_node` is intentionally limited to custom events in this alpha.
 
-Package saving remains disabled by default. Content operations are limited to `/Game` paths, automated imports use an extension allowlist, and broad deletes/save-all operations remain blocked.
+Touched-only package saving is enabled by default. Content operations are limited to `/Game` paths, automated imports use an extension allowlist, and broad deletes/save-all operations remain blocked.
 UMG operations are limited to Widget Blueprint creation, TextBlock/Button insertion, CanvasPanel slot edits, and Button delegate binding through UE's ComponentBoundEvent path.
 Enhanced Input operations are available only when the project enables the EnhancedInput plugin; otherwise discover reports them as apply-unsupported and apply returns a safe unsupported diagnostic.
 Unsupported or out-of-scope operations return structured diagnostics instead of partially editing assets.
@@ -102,7 +104,7 @@ Preferred designs:
 
 ## Operation Plan Shape
 
-Plans use `uepi.edit_plan.v1` and are saved under:
+Plans use `uepi.edit_plan.v2` and are saved under:
 
 ```text
 __PROJECT_ROOT__/Saved/UEProjectIntelligence/store/edit/plans/

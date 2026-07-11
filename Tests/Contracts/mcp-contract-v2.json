@@ -1,0 +1,1671 @@
+{
+  "schema_version": "uepi.mcp-contract-snapshot.v2",
+  "captured_at_utc": "2026-07-11T13:44:26.393934Z",
+  "uepi_version": "2.0.0.dev0",
+  "profiles": {
+    "readonly": [
+      "uepi_status",
+      "uepi_overview",
+      "uepi_search",
+      "uepi_context",
+      "uepi_asset",
+      "uepi_blueprint",
+      "uepi_blueprint_trace",
+      "uepi_animation",
+      "uepi_impact",
+      "uepi_diff",
+      "uepi_editor",
+      "uepi_world",
+      "uepi_refresh",
+      "uepi_schema",
+      "uepi_runtime"
+    ],
+    "codex": [
+      "uepi_status",
+      "uepi_overview",
+      "uepi_search",
+      "uepi_context",
+      "uepi_asset",
+      "uepi_blueprint",
+      "uepi_blueprint_trace",
+      "uepi_animation",
+      "uepi_impact",
+      "uepi_diff",
+      "uepi_editor",
+      "uepi_world",
+      "uepi_refresh",
+      "uepi_schema",
+      "uepi_runtime",
+      "uepi_edit_discover",
+      "uepi_edit_preview",
+      "uepi_edit_apply",
+      "uepi_edit_validate",
+      "uepi_edit_rollback"
+    ]
+  },
+  "tools": [
+    {
+      "name": "uepi_status",
+      "description": "Return Snapshot-backed UEPI project status, freshness, counts, and LLM readiness.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "force"
+            ]
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_overview",
+      "description": "Return a compact project overview with entity-kind and relation-type counts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "force"
+            ]
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "limit": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_search",
+      "description": "Search indexed UE project entities by asset path, display name, kind, or attributes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "force"
+            ]
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "query": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "project",
+              "project_plugins",
+              "engine"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_context",
+      "description": "Build a bounded static context bundle for a natural-language UE project question.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "force"
+            ]
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "question": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          },
+          "live": {
+            "type": "boolean"
+          },
+          "scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hard_scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ranking_hints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include_external_endpoints": {
+            "type": "boolean"
+          },
+          "max_items": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "question"
+        ]
+      }
+    },
+    {
+      "name": "uepi_asset",
+      "description": "Resolve and read one indexed entity or asset with nearby graph context.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string"
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "asset": {
+            "type": "string"
+          },
+          "include_snapshot": {
+            "type": "boolean"
+          },
+          "relation_limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    },
+    {
+      "name": "uepi_blueprint",
+      "description": "Read Blueprint graph/node/pin entities and relations for an indexed Blueprint asset.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string"
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "asset": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "graph": {
+            "type": "string"
+          },
+          "graph_role": {
+            "type": "string"
+          },
+          "node_guid": {
+            "type": "string"
+          },
+          "node_classes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "semantic_kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    },
+    {
+      "name": "uepi_blueprint_trace",
+      "description": "Trace static Blueprint execution/data/delegate/call relations from an indexed Blueprint snapshot.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "force"
+            ]
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "asset": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string"
+          },
+          "relation_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_depth": {
+            "type": "integer"
+          },
+          "max_paths": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    },
+    {
+      "name": "uepi_animation",
+      "description": "Read indexed animation, skeleton, track, notify, curve, motion-summary, optional bone-motion profiles, reconstruction profiles, driver track curves, and full-pose sample artifacts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string"
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "asset": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "exact_asset",
+              "dependencies",
+              "referencers",
+              "playback_context"
+            ]
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    },
+    {
+      "name": "uepi_impact",
+      "description": "Return incoming/outgoing relations and affected entities for one asset or entity.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "force"
+            ]
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "asset": {
+            "type": "string"
+          },
+          "relation_limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    },
+    {
+      "name": "uepi_diff",
+      "description": "Compare two saved Snapshot generations by stable entity and relation IDs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "force"
+            ]
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "from_generation": {
+            "type": "integer"
+          },
+          "to_generation": {
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "generation",
+              "transaction"
+            ]
+          },
+          "transaction_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_editor",
+      "description": "Read short-lived live Editor status, selection, incremental output log, or viewport pixels.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "force"
+            ]
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "selection",
+              "output_log",
+              "viewport_capture"
+            ]
+          },
+          "include_actors": {
+            "type": "boolean"
+          },
+          "include_assets": {
+            "type": "boolean"
+          },
+          "include_components": {
+            "type": "boolean"
+          },
+          "include_property_summary": {
+            "type": "boolean"
+          },
+          "since_utc": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "minimum_verbosity": {
+            "type": "string"
+          },
+          "regex": {
+            "type": "string"
+          },
+          "max_lines": {
+            "type": "integer"
+          },
+          "viewport": {
+            "type": "string",
+            "enum": [
+              "active",
+              "level",
+              "pie"
+            ]
+          },
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "inline_image": {
+            "type": "boolean"
+          },
+          "include_camera_metadata": {
+            "type": "boolean"
+          },
+          "include_ui": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_world",
+      "description": "Read the live Editor or owned PIE world, actors, and components through the guarded Editor Bridge.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "force"
+            ]
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "read",
+              "actor",
+              "component"
+            ]
+          },
+          "world": {
+            "type": "string",
+            "enum": [
+              "editor",
+              "pie"
+            ]
+          },
+          "filters": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_refresh",
+      "description": "Submit, inspect, or wait for a project-local targeted Snapshot or artifact refresh job.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "force"
+            ]
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "request",
+              "status",
+              "wait"
+            ]
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "data_mode": {
+            "type": "string",
+            "enum": [
+              "live",
+              "saved"
+            ]
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "type": "number"
+          },
+          "poll_interval_ms": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_schema",
+      "description": "Read authoritative Editor reflection, operation, Blueprint node, or runtime function schemas.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "force"
+            ]
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "asset_property",
+              "class_property",
+              "edit_operation",
+              "blueprint_node",
+              "runtime_function"
+            ]
+          },
+          "asset": {
+            "type": "string"
+          },
+          "class_path": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "graph_schema": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "struct_path": {
+            "type": "string"
+          },
+          "max_depth": {
+            "type": "integer"
+          },
+          "include_examples": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_runtime",
+      "description": "Run transaction-bound, UEPI-owned PIE verification with guarded read, input, invoke, wait, and assert actions.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
+          "exact": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "never",
+              "force"
+            ]
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "start",
+              "stop",
+              "input",
+              "invoke",
+              "read",
+              "wait",
+              "assert",
+              "automation",
+              "job_status"
+            ]
+          },
+          "ticket_id": {
+            "type": "string"
+          },
+          "map": {
+            "type": "string"
+          },
+          "object_path": {
+            "type": "string"
+          },
+          "property": {
+            "type": "string"
+          },
+          "function": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string",
+            "enum": [
+              "pressed",
+              "released"
+            ]
+          },
+          "equals": {},
+          "timeout_seconds": {
+            "type": "number"
+          },
+          "poll_interval_ms": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_edit_discover",
+      "description": "Discover the experimental UEPI edit operation catalog without modifying Unreal assets.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "uepi_edit_preview",
+      "description": "Create a dry-run UEPI edit operation plan without modifying Unreal assets.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "intent": {
+            "type": "string"
+          },
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_edit_apply",
+      "description": "Apply an approved UEPI edit plan through the live editor bridge when preview and approval gates pass.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "transaction_id": {
+            "type": "string"
+          },
+          "plan_hash": {
+            "type": "string"
+          },
+          "approval_nonce": {
+            "type": "string"
+          },
+          "approved": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "transaction_id",
+          "plan_hash",
+          "approval_nonce",
+          "approved"
+        ]
+      }
+    },
+    {
+      "name": "uepi_edit_validate",
+      "description": "Validate an applied UEPI edit transaction through the optional live editor bridge.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "transaction_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_edit_rollback",
+      "description": "Rollback the last applied UEPI edit transaction through the optional live editor bridge.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "transaction_id": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ],
+  "server_instructions": "UEPI is a project-local Unreal Engine 5.3.2 MCP. Always call uepi_status before other tools. Prefer uepi_context to build bounded evidence before answering project questions. Treat Blueprint pin links and evidence as the source of truth. Distinguish live, saved, stale, and refresh_requested data. The Codex profile exposes read and edit tools together so the agent can choose. Edit apply may be available when the editor bridge is online, but it must never run without edit_preview, explicit user approval, validate, and post-edit diff. Never guess Blueprint pin names; use returned pins and GUIDs.\n\nUse uepi_search or uepi_context to identify the minimum set of assets needed for the user's question.\nuepi_context supports routes such as auto, project_overview, input_to_gameplay, blueprint_behavior, animation_playback, ui_flow, asset_dependency_impact, data_driven_behavior, gas_ability_flow, ai_behavior_flow, and network_replication_flow.\nThen call the narrow domain tool: uepi_asset for local context, uepi_blueprint for Blueprint graph/node/pin semantic summaries, uepi_blueprint_trace for static flow paths, uepi_animation for animation/skeleton/track summaries and include=[\"bone_motion_profile\"] when the user asks how bones move over time. For procedural animation recreation, call uepi_animation with include=[\"reconstruction_profile\"] or include=[\"driver_track_curves\"]; use include=[\"full_pose_artifact\"] only when high-fidelity all-bone pose samples are needed. In animation bone-motion profiles, start from driver_bones and motion_intent_groups for procedural generation decisions, then use changed_bones as sampled evidence. Use uepi_impact for dependency impact.\nReads never require the Unreal Editor when the snapshot/cache is current. If a read response includes diagnostic code UEPI_REFRESH_REQUESTED, a targeted editor refresh request has been queued under the Snapshot Store; retry the same read after the editor processes it. If UEPI_SNAPSHOT_STALE appears, ask the user to open the editor/plugin before expecting realtime data.\nTreat uepi_diff as a generation-level saved snapshot comparison, not a live editor diff.\n\nFor Blueprint writes, choose the design before choosing operations. Prefer compact, idiomatic Blueprint graphs that use state variables, loops, timers, custom events, or helper functions for repeated behavior. Avoid unrolling repeated gameplay logic into many duplicate nodes unless the user explicitly asks for that visual shape. Include the considered alternatives and chosen design rationale in edit_preview evidence; if the current operation catalog cannot express the better design, say so before falling back to a larger graph.",
+  "bridge": {
+    "protocol_source": "Source/UEProjectIntelligence/Private/Bridge/UEPIBridgeProtocol.cpp",
+    "read_capabilities": [
+      "editor.get_status",
+      "editor.get_selection",
+      "editor.capture_viewport",
+      "editor.read_output_log",
+      "editor.read_world",
+      "schema.get",
+      "runtime.control",
+      "asset.refresh_now"
+    ],
+    "write_capabilities": [
+      "edit.discover",
+      "edit.apply",
+      "edit.validate",
+      "edit.rollback"
+    ]
+  }
+}

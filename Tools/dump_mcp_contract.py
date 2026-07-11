@@ -12,7 +12,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_SOURCE = ROOT / "Services" / "uepi" / "src"
-DEFAULT_OUTPUT = ROOT / "Tests" / "Fixtures" / "LLMNPCDemo" / "mcp-contract-v1.json"
+DEFAULT_OUTPUT = ROOT / "Tests" / "Contracts" / "mcp-contract-v2.json"
 DEFAULT_BRIDGE_SOURCE = (
     ROOT
     / "Source"
@@ -44,7 +44,7 @@ def build_contract(bridge_source: Path) -> dict[str, Any]:
     read_tools = list(mcp_server.TOOLS)
     edit_tools = list(mcp_server.WRITE_ALPHA_TOOLS)
     return {
-        "schema_version": "uepi.mcp-contract-snapshot.v1",
+        "schema_version": "uepi.mcp-contract-snapshot.v2",
         "captured_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "uepi_version": getattr(mcp_server, "__version__", "unknown"),
         "profiles": {

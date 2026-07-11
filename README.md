@@ -14,9 +14,9 @@ UEPI does not depend on Epic's UE5.8 ModelContextProtocol plugin. The official U
 
 ## What It Does Not Do
 
-UEPI does not provide tools to run PIE, execute arbitrary Python/shell/console commands, enable plugins, submit source control, save all packages, or perform broad destructive project edits.
+UEPI does not provide arbitrary Python/shell/console execution, plugin enablement, source-control submission, save-all, or broad destructive project edits. It provides only transaction-bound, UEPI-owned PIE verification.
 
-Write operations are exposed through guarded edit tools and are still gated by preview plans, explicit user approval, live editor bridge availability, validation, and rollback/diff reporting. Package saving remains disabled by default.
+Write operations are exposed through guarded edit tools and remain gated by an immutable preview plan, one explicit user approval, exact-project live bridge availability, repeat preflight, validation, touched-only saving, backup/rollback, targeted refresh, and transaction diff.
 
 The default product path does not use a daemon, HTTP API, worker queue, Web UI, or remote service registration.
 
@@ -71,7 +71,16 @@ __PROJECT_ROOT__/Saved/UEProjectIntelligence/store
 
 ## Connect Codex
 
-Copy `Resources/codex-config.template.toml` into the appropriate Codex configuration file and replace the placeholders:
+Preview and install the project-local Codex block:
+
+```powershell
+python "__PROJECT_ROOT__/Plugins/UEProjectIntelligence/Tools/setup_codex.py" `
+  --project "__PROJECT_ROOT__/__PROJECT_NAME__.uproject"
+python "__PROJECT_ROOT__/Plugins/UEProjectIntelligence/Tools/setup_codex.py" `
+  --project "__PROJECT_ROOT__/__PROJECT_NAME__.uproject" --apply
+```
+
+Alternatively copy `Resources/codex-config.template.toml` and replace:
 
 ```text
 __PYTHON_EXE__
@@ -111,6 +120,11 @@ Recommended Codex flow:
 - `uepi_animation`
 - `uepi_impact`
 - `uepi_diff`
+- `uepi_editor`
+- `uepi_world`
+- `uepi_refresh`
+- `uepi_schema`
+- `uepi_runtime`
 - `uepi_edit_discover`
 - `uepi_edit_preview`
 - `uepi_edit_apply`
@@ -132,7 +146,7 @@ The single `codex` profile exposes these read and edit tools together. `codex_wr
 - `ai_behavior_flow`
 - `network_replication_flow`
 
-The edit tools support discovery, dry-run planning, apply, validate, and rollback. When the live bridge is online, the default settings allow scoped Blueprint variables, components, custom events, function graphs, common graph nodes, pin links, Actor spawn/transform/property edits, Material Instance create/parameter/apply edits, scoped `/Game` Content operations, basic UMG Widget Blueprint edits, and Enhanced Input asset/key-mapping edits when that plugin is enabled. It never saves packages by default.
+The edit tools support discovery, dry-run planning, apply, validate, and rollback. The current catalog includes generic reflected DataAsset/property writes, Blueprint graph maintenance, AnimGraph Slot/pose links, Actor, Material Instance, scoped `/Game` Content, basic UMG, and Enhanced Input operations. Successful plans save touched packages by default; save-all remains unavailable.
 
 ## Snapshot Modes
 
@@ -146,22 +160,23 @@ SQLite cache files are derived data and can be deleted. UEPI can rebuild them fr
 ## Limitations
 
 - Current primary target is UE5.3.2.
-- Current version is Codex-first, with read tools stable and edit tools in guarded alpha.
+- Current version is Codex-first experimental alpha pending the UE5.3.2 real-machine matrix.
 - Animation data is static summary and sampled context, not a full per-frame dump.
 - Animation Blueprint final runtime pose is not available.
 - Editor or commandlet collection is required to refresh Snapshots.
 - Editor-closed mode uses the latest saved Snapshot only.
-- The live editor bridge and guarded edit apply are Agent-ready by default; `uepi_edit_apply` still requires preview, explicit approval, validation, and rollback/diff reporting.
+- The live editor bridge and guarded edit apply are enabled by default; `uepi_edit_apply` still requires preview, explicit approval, validation, touched-only save, and rollback/diff reporting.
 
 ## Validation Status
 
 - Real-machine Codex MCP read loop validated on UE5.3.2 project `GasDemo`.
 - Snapshot/live/cache/tombstone smoke tests pass through `Tools/test_snapshot_mcp_v2.py`.
 - The `codex` profile now exposes read and guarded edit tools together for one-step Agent setup.
+- vNext C++ source compiles against UE5.3.2; Beta promotion remains blocked on the full real-machine write/runtime matrix.
 
 ## Troubleshooting
 
-See `Docs/troubleshooting.md`.
+Run `python Tools/uepi_doctor.py --project "__PROJECT_ROOT__/__PROJECT_NAME__.uproject"` and see `Docs/troubleshooting.md`.
 
 ## License
 

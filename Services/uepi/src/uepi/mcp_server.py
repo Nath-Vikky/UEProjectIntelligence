@@ -534,7 +534,7 @@ class UEPIMCPServer:
                     return tool_response(edit.rollback(engine.store, transaction_id=str(arguments.get("transaction_id") or "")))
             return tool_response(
                 {
-                    "schema_version": "uepi.mcp-envelope.v1",
+                    "schema_version": "uepi.mcp-envelope.v2",
                     "error": {
                         "code": "UEPI_UNKNOWN_TOOL",
                         "message": f"Unknown UEPI tool: {name}",
@@ -548,7 +548,7 @@ class UEPIMCPServer:
             diagnostic = traceback.format_exc(limit=5)
             return tool_response(
                 {
-                    "schema_version": "uepi.mcp-envelope.v1",
+                    "schema_version": "uepi.mcp-envelope.v2",
                     "error": {
                         "code": "UEPI_TOOL_FAILED",
                         "message": str(exc),

@@ -2,10 +2,13 @@
 
 ## Codex Does Not Show UEPI Tools
 
+- Run `python Tools/uepi_doctor.py --project <path-to-uproject>`.
 - Confirm the MCP command points to `Services/uepi/src/uepi/mcp_server.py`.
 - Use `--project <path-to-uproject>` or `--store <Saved/UEProjectIntelligence>`.
 - For Codex, use `--tool-profile codex`.
 - Restart the Codex conversation after changing MCP configuration.
+
+The MCP server is stdio. A global proxy or TUN normally does not affect Codex-to-UEPI transport. The Editor Bridge is exact-project localhost TCP and rejects non-loopback endpoints.
 
 ## `uepi_status` Reports Missing Snapshot
 
@@ -39,4 +42,8 @@ If the old path was observed by UEPI, the asset read tools return `UEPI_ASSET_TO
 
 ## Editor Is Closed
 
-This is supported for offline reads. The MCP server reads the last saved Snapshot and reports `editor_connected: false`. Only realtime targeted refresh needs the editor.
+This is supported for offline reads. The MCP server reads the last saved Snapshot and reports `editor_connected: false`. Live Editor/world/schema reads, write Apply, refresh execution, and runtime verification require the Editor.
+
+## Apply Is Blocked
+
+Run Doctor with `--require-editor`, then call `uepi_edit_discover` again. Plan expiry, changed catalog/session/project, dirty or read-only targets, changed before fingerprints, or disabled domain/save settings require a new Preview after the underlying condition is fixed.

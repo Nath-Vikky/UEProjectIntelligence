@@ -1,8 +1,8 @@
 # UEPI Snapshot MCP
 
-This package is the v2 read-only path for UE Project Intelligence.
+This package is the v2 Codex MCP path for UE Project Intelligence.
 
-It reads `Saved/UEProjectIntelligence/store/manifests/saved.json` plus immutable `project_fragment`, `asset_fragment`, and `asset_tombstone` Snapshot objects. It does not start a daemon, expose HTTP, register workers, or mutate Unreal assets.
+It reads immutable Snapshot objects for offline evidence and connects to the exact-project local Editor Bridge for live reads, guarded plans, writes, refresh, and controlled PIE verification. It does not start a daemon, expose HTTP, or register workers.
 
 ## Codex Example
 
@@ -23,7 +23,7 @@ Arguments:
 codex
 ```
 
-The UE editor is only needed to create or refresh snapshots. Once `saved.json` exists, the MCP server can answer from the latest saved snapshot while the editor is closed.
+Once `saved.json` exists, the MCP server can answer from the latest saved snapshot while the editor is closed. Live state, Apply, refresh execution, and runtime verification require the editor.
 
 ## Rebuild The Local Cache
 

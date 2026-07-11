@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/mcp-envelope-v2.schema.json",
+  "title": "UEPI MCP Envelope v2",
+  "type": "object",
+  "required": ["schema_version", "ok", "tool", "operation", "project", "snapshot", "diagnostics", "next_actions"],
+  "properties": {
+    "schema_version": {"const": "uepi.mcp-envelope.v2"},
+    "ok": {"type": "boolean"},
+    "tool": {"type": "string"},
+    "operation": {"type": "string"},
+    "data_mode": {"type": ["string", "null"]},
+    "project": {"type": "object"},
+    "snapshot": {"type": "object"},
+    "result": {},
+    "evidence": {"type": "array"},
+    "diagnostics": {"type": "array"},
+    "next_actions": {"type": "array"},
+    "error": {"type": "object"},
+    "truncation": {"type": ["boolean", "object"]},
+    "continuation": {"type": ["string", "object", "null"]}
+  }
+}

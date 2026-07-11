@@ -28,7 +28,8 @@
 - [ ] `.codex/config.toml` template works.
 - [ ] Codex shows UEPI MCP.
 - [ ] `uepi_status` works.
-- [ ] Unified `--tool-profile codex` lists ten read tools plus five guarded edit tools.
+- [ ] Unified `--tool-profile codex` lists fifteen read/live tools plus five guarded edit tools.
+- [ ] `Tools/uepi_doctor.py --require-editor` passes for the selected project.
 - [ ] Example question set in `Docs/codex-example-questions.md` passes.
 
 ## Snapshot Correctness
@@ -41,7 +42,17 @@
 
 ## Package
 
-- [ ] `python Tools/package_release.py --version <VERSION> --out Dist` generates a zip.
+- [ ] `python Tools/package_release.py --version <VERSION> --kind source --out Dist` generates the Source zip, manifest, and SHA256SUMS.
+- [ ] A `--kind prebuilt` archive is produced only from UE5.3.2 Win64 binaries.
 - [ ] Zip extracts to `UEProjectIntelligence/`.
 - [ ] Zip excludes `Saved`, `Intermediate`, `Binaries`, generated cache files, and `__pycache__`.
 - [ ] Zip install tested in a clean project.
+
+## Real Machine Beta Gate
+
+- [ ] LLMNPCDemo Golden passes and is recorded.
+- [ ] Third Person Golden passes and is recorded.
+- [ ] Minimal blank Blueprint project passes and is recorded.
+- [ ] Two-project routing and mismatch rejection pass.
+- [ ] Editor restart confirms touched assets persisted.
+- [ ] Owned PIE cleanup and rollback failure paths pass.

@@ -2,6 +2,17 @@
 
 UEPI is project-local and uses a Python stdio MCP server. The Codex profile is a unified Agent profile: it exposes read tools and guarded edit tools together so Codex can choose the right workflow without profile switching.
 
+## Setup Script
+
+Preview, then apply, the project-local managed block:
+
+```powershell
+python "__PROJECT_ROOT__/Plugins/UEProjectIntelligence/Tools/setup_codex.py" --project "__PROJECT_ROOT__/__PROJECT_NAME__.uproject"
+python "__PROJECT_ROOT__/Plugins/UEProjectIntelligence/Tools/setup_codex.py" --project "__PROJECT_ROOT__/__PROJECT_NAME__.uproject" --apply
+```
+
+The script preserves every other Codex setting and MCP block. It changes only the text between `BEGIN UEPI MANAGED MCP` and `END UEPI MANAGED MCP` after printing a diff.
+
 ## Template
 
 Copy `Resources/codex-config.template.toml` into the trusted project's `.codex/config.toml` and replace:
@@ -20,7 +31,7 @@ The default block uses:
 
 The `codex` profile does not require the Unreal Editor to be open when `Saved/UEProjectIntelligence/store/manifests/saved.json` exists.
 
-Edit apply still requires the Unreal Editor, the live editor bridge, a preview plan, and explicit user approval. Without those gates, edit tools return structured rejection diagnostics and do not mutate assets.
+Edit apply still requires the exact-project Editor Bridge, Plan v2, and explicit user approval. It repeats preflight, backs up, validates, saves touched packages, refreshes, and records diff evidence.
 
 ## Project Selection
 
@@ -64,3 +75,5 @@ uepi_edit_rollback
 These tools are part of the default `codex` profile. `codex_write_alpha` remains accepted as a legacy alias, but new installs should use only the single `codex` MCP server.
 
 `uepi_edit_apply` is Agent-ready by default when the editor bridge is online, but the safe workflow is still preview -> one user approval -> apply -> validate -> refresh/diff. For complex Blueprint graph edits, use operation `ref` / endpoint `node_ref` aliases so one preview can create nodes, connect pins, and compile in a single approved transaction. Use the project settings only when you want to opt out of a write domain or disable package saving/bridge behavior.
+
+Run `python Tools/uepi_doctor.py --project <path-to-uproject> --require-editor` before live write/runtime acceptance.

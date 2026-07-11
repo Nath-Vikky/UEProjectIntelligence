@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/doctor-report-v1.schema.json",
+  "title": "UEPI Doctor Report v1",
+  "type": "object",
+  "required": ["schema_version", "ok", "checks"],
+  "properties": {
+    "schema_version": {"const": "uepi.doctor-report.v1"},
+    "ok": {"type": "boolean"},
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "ok", "status", "required", "message"]
+      }
+    }
+  }
+}

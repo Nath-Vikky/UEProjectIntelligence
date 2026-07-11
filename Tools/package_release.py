@@ -57,11 +57,13 @@ def default_plugin_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def should_include(path: Path, plugin_root: Path) -> bool:
+def should_include(path: Path, plugin_root: Path, *, include_binaries: bool = False) -> bool:
     rel = path.relative_to(plugin_root)
-    if any(part in EXCLUDED_DIRS for part in rel.parts):
+    excluded_dirs = EXCLUDED_DIRS - ({"Binaries"} if include_binaries else set())
+    if any(part in excluded_dirs for part in rel.parts):
         return False
-    if path.suffix.lower() in EXCLUDED_SUFFIXES:
+    excluded_suffixes = EXCLUDED_SUFFIXES - ({".dll", ".pdb"} if include_binaries else set())
+    if path.suffix.lower() in excluded_suffixes:
         return False
     return path.is_file()
 
@@ -168,6 +170,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--plugin-root", type=Path, default=default_plugin_root())
     parser.add_argument("--version", required=True, help="Release version, for example 2.0.0-alpha.1.")
     parser.add_argument("--out", type=Path, default=Path("Dist"), help="Output directory for zip and manifest.")
+    parser.add_argument("--kind", choices=("source", "prebuilt"), default="source")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
 
@@ -177,10 +180,15 @@ def main(argv: list[str] | None = None) -> int:
     plugin_root = args.plugin_root.resolve()
     validate_release_inputs(plugin_root)
 
-    files = sorted(path for path in plugin_root.rglob("*") if should_include(path, plugin_root))
+    include_binaries = args.kind == "prebuilt"
+    if include_binaries and not (plugin_root / "Binaries" / "Win64").is_dir():
+        raise RuntimeError("A prebuilt release requires Binaries/Win64 built with UE 5.3.2.")
+    files = sorted(path for path in plugin_root.rglob("*") if should_include(path, plugin_root, include_binaries=include_binaries))
     out_dir = args.out.resolve()
-    archive_path = out_dir / f"{PLUGIN_NAME}-{args.version}.zip"
-    manifest_path = out_dir / f"{PLUGIN_NAME}-{args.version}.manifest.json"
+    label = "Source" if args.kind == "source" else "UE5.3.2-Win64"
+    archive_path = out_dir / f"{PLUGIN_NAME}-{label}-v{args.version}.zip"
+    manifest_path = out_dir / "release-manifest.json"
+    checksums_path = out_dir / "SHA256SUMS.txt"
 
     if not args.dry_run:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -191,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     manifest = build_manifest(plugin_root, files, archive_path, args.version)
     if not args.dry_run:
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        checksums_path.write_text(f"{sha256_file(archive_path)}  {archive_path.name}\n", encoding="ascii")
 
     print(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

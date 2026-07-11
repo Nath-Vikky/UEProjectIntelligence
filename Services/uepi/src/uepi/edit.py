@@ -290,6 +290,21 @@ def apply(store: SnapshotStore, transaction_id: str = "", approved: bool = False
     expires = datetime.fromisoformat(str(plan.get("expires_at")).replace("Z", "+00:00"))
     if expires < _now():
         return _response(store, tool="uepi_edit_apply", operation="apply", error={"code": "UEPI_EDIT_PLAN_EXPIRED", "message": "Preview plan expired; run Preview again.", "retryable": False, "candidates": []})
+    expected_fingerprints = plan.get("before_fingerprints") if isinstance(plan.get("before_fingerprints"), list) else []
+    current_fingerprints = [_fingerprint(store, str(item.get("asset") or "")) for item in expected_fingerprints if isinstance(item, dict) and item.get("asset")]
+    expected_by_asset = {str(item.get("asset") or ""): item for item in expected_fingerprints if isinstance(item, dict)}
+    changed_assets = [
+        item["asset"]
+        for item in current_fingerprints
+        if item != expected_by_asset.get(str(item.get("asset") or ""))
+    ]
+    if changed_assets:
+        return _response(
+            store,
+            tool="uepi_edit_apply",
+            operation="apply",
+            error={"code": "UEPI_EDIT_BEFORE_FINGERPRINT_CHANGED", "message": "One or more target package files changed after Preview.", "retryable": False, "candidates": changed_assets},
+        )
     identity = _identity(store)
     catalog, diagnostics, bridge_error = load_catalog(store, identity, refresh=True)
     if not catalog or catalog.get("catalog_hash") != plan.get("catalog_hash"):

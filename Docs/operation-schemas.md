@@ -10,7 +10,7 @@ All tools return `content[0].text` and `structuredContent`.
 
 ```json
 {
-  "schema_version": "uepi.mcp-envelope.v1",
+  "schema_version": "uepi.mcp-envelope.v2",
   "ok": true,
   "tool": "uepi_blueprint",
   "operation": "graph_summary",
@@ -47,11 +47,14 @@ Legacy-compatible fields such as `state`, `omissions`, `truncation`, and `contin
 
 ```json
 {
-  "schema_version": "uepi.edit_plan.v1",
-  "schema_aliases": ["uepi.edit-plan.v1"],
+  "schema_version": "uepi.edit_plan.v2",
   "transaction_id": "uepi-preview-...",
   "created_at_utc": "...",
-  "status": "preview_only",
+  "project_binding_id": "sha256:...",
+  "editor_session_id": "...",
+  "catalog_hash": "sha256:...",
+  "expires_at_utc": "...",
+  "approval_nonce": "...",
   "intent": "...",
   "operations": [],
   "evidence": [],
@@ -65,7 +68,8 @@ Legacy-compatible fields such as `state`, `omissions`, `truncation`, and `contin
     "dry_run": true,
     "mutates_unreal_assets": false,
     "requires_editor_bridge": true,
-    "allow_saving": false
+    "allow_saving": true,
+    "touched_only": true
   },
   "backup": {
     "required": true,
@@ -73,14 +77,15 @@ Legacy-compatible fields such as `state`, `omissions`, `truncation`, and `contin
     "manifest_path": "__PROJECT_ROOT__/Saved/UEProjectIntelligence/artifacts/backups/uepi-preview-.../manifest.json"
   },
   "requires_user_approval": true,
-  "apply_supported": false,
+  "apply_supported": true,
   "validation_plan": [],
   "rollback_plan": {
     "strategy": "transaction_undo_or_backup_restore",
     "backup_artifact": "uepi://artifact/backups/uepi-preview-..."
   },
   "diagnostics": [],
-  "rejection_reasons": []
+  "before_fingerprints": {},
+  "plan_hash": "sha256:..."
 }
 ```
 

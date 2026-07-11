@@ -1,67 +1,36 @@
 # UE Project Intelligence Development Status
 
-`main` is now the `2.0-dev` Snapshot-first line.
+`main` is the experimental `2.0.0-alpha.2` vNext line for UE 5.3.2 and Codex.
 
 ## Implemented
 
-- UE5.3 editor module and `UEPIIndex` commandlet.
-- Read-only Asset Registry, UObject Reflection, Blueprint, Animation, World, Data, UI, AI, Audio, Cinematics, Render, and Material readers.
-- Optional domain readers for EnhancedInput, CommonUI, GameplayAbilities, StateTree, IKRig, ControlRig, Niagara, PCG, and MetaSound are compile-gated and return safe no-op readers when their UE plugins are not explicitly enabled.
-- Snapshot Store v2 layout under `Saved/UEProjectIntelligence/store`.
-- Immutable `asset_fragment` objects are written for each indexed asset and referenced from Snapshot manifests.
-- Project-level metadata is written as a small `project_fragment`; full `project_scan` fragments remain readable only for older snapshots.
-- Editor dashboard `Run Snapshot Scan` action that writes `saved.json`.
-- Editor live session heartbeat under `store/sessions/editor-session.json`.
-- Debounced editor invalidation queue is now limited to package-saved and rename promotion events.
-- Editor live session writes incremental change events without scanning the whole project on open.
-- Editor polls `store/requests` for MCP-created targeted refresh requests and scans only requested assets.
-- Asset removal and old rename paths are represented as `asset_tombstone` Snapshot fragments.
-- Blueprint compile events bind to loaded `UBlueprint::OnCompiled()` delegates and trigger targeted live refresh for the compiled Blueprint.
-- Targeted live Snapshot overlay writes to `manifests/live.json`.
-- Package-saved targeted scans append to the saved manifest instead of replacing the full saved baseline.
-- Commandlet one-shot Snapshot writer.
-- Python `Services/uepi` query package.
-- Generic `attributes` are mirrored into `typed_attributes` v2 wrappers while the legacy string map remains available.
-- Rebuildable SQLite v2.1 cache via `python -m uepi sync`; cache state is reported by `uepi_status`.
-- MCP query automatically rebuilds a stale or missing SQLite cache from the current Snapshot view.
-- MCP search, context, asset, Blueprint, Blueprint trace, animation, and impact tools route through the synced SQLite cache when available.
-- MCP query auto-selects a fresh live overlay and merges it over the saved Snapshot baseline.
-- MCP asset-level read tools compare incremental events against Snapshot observation time and return `UEPI_REFRESH_REQUESTED` or `UEPI_SNAPSHOT_STALE` diagnostics when needed.
-- Current-view Snapshot merge applies saved/live fragments and tombstones before cache generation.
-- Relation identity no longer includes descriptive attributes; IDs are based on project, relation type, from ID, and to ID.
-- Blueprint derived projections now report `confidence_basis` and use sub-1.0 confidence for static derived flows.
-- Unified Codex stdio MCP profile: ten stable read tools plus five guarded edit tools in one server configuration.
-- Unified MCP envelope fields: `ok`, `tool`, `operation`, `data_mode`, `project`, `snapshot`, `result`, `evidence`, `diagnostics`, and `next_actions`, while retaining legacy-compatible `state`, `omissions`, `truncation`, and `continuation`.
-- `uepi_status` reports optional live bridge readiness fields without requiring a bridge to exist.
-- `uepi_context` routes natural-language questions through project overview, input-to-gameplay, Blueprint behavior, animation playback, UI, dependency impact, data-driven, GAS, AI, and networking routes.
-- `uepi_blueprint` includes a semantic summary, call graph grouping, data mutation summary, side effects, and static flow hints derived from Snapshot relations.
-- Lightweight C++ UHT-style symbol scan is available in `uepi_overview` and `project_overview` context sections.
-- Optional live editor bridge uses localhost length-prefixed TCP JSON when enabled, with token validation and read commands for status, selection, viewport screenshot artifacts, output log tail, and refresh request creation.
-- `uepi_context(live=true)` can include live editor bridge status, selection, and output log sections when the bridge is connected.
-- `uepi_asset`, `uepi_blueprint`, and `uepi_animation` accept `refresh="force"` and use the live bridge to queue immediate targeted refresh when available.
-- Guarded edit tools expose discover/preview/apply/validate/rollback alongside the read tools. With the editor bridge online, default settings support Blueprint variables/components/functions/custom events/common nodes/pin links, Actor spawn/transform/property, Material Instance create/parameter/apply operations, scoped Content operations, basic UMG Widget Blueprint edits including Button bound events, and Enhanced Input asset/key-mapping edits without package saving.
-- UE settings now expose Agent-ready live bridge/edit apply defaults plus opt-out write-domain gates.
-- C++ write foundation now includes `IUEPIEditOperation`, `FUEPIEditOperationRegistry`, a dry-run-aware transaction scope skeleton, and guarded bridge executors for the current alpha operation catalog.
-- v2 MCP smoke test without daemon, worker, HTTP, Web UI, or SQLite service, including saved+live overlay merge, tombstones, cache sync, initialize instructions, and targeted refresh request creation.
-- MCP smoke test now also covers context routes, Blueprint semantic summary, bridge readiness fields, and write-alpha rejection behavior.
-- Synthetic Snapshot MCP fixture now covers deleted assets and renamed old-path tombstones with a valid new-path fragment.
-- Release packaging script supports `--version` and `--out`, validates required files, scans docs for local paths, writes commit SHA, and packages under a `UEProjectIntelligence/` zip root.
-- Public docs and Codex configuration template use `__UE_ROOT__`, `__PROJECT_ROOT__`, `__PROJECT_NAME__`, and `__PYTHON_EXE__` placeholders instead of local machine paths.
-- Added Codex setup, read workflow, context routes, optional live bridge, write-alpha design, write safety, operation schema, real-machine test log, and AGENTS template docs.
-- Reader Gate build validation with optional domain modules disabled by default and Blueprint L2 commandlet smoke coverage.
+- One project-local Python stdio MCP; no daemon, HTTP API, Web UI, external worker queue, or remote registration.
+- Snapshot Store v2 with immutable fragments, live overlay, tombstones, incremental events, targeted requests, and rebuildable SQLite cache.
+- Project binding hash and exact Editor session guards across status, live calls, plans, apply, and runtime tickets.
+- MCP envelope v2, hard scope, exact object-path reads, Blueprint graph/node filters, animation exact mode, projection, byte/item budgets, and opaque generation-bound cursors.
+- Fifteen read/live tools and five guarded edit facade tools in the single `codex` profile.
+- Live Editor status/selection/log cursor/viewport, World actors/components, targeted Refresh jobs, Reflection Schema, and controlled PIE Runtime.
+- Project plugin content mount discovery plus project/plugin C++ source and module-manifest indexing.
+- Editor-exported versioned operation catalog and hash, Plan v2, plan expiry, idempotency, affected assets, before fingerprints, dirty/read-only/path/budget preflight, and one explicit approval.
+- Unreal transaction journal, pre-mutation file backup, generic validators, touched-only save with hashes, memory undo, saved-file restore/package reload, targeted post-apply refresh, and transaction diff.
+- Reflected typed property codec for scalar, enum/name/text, object/soft-object, struct, array, set, and map values.
+- Generic DataAsset creation/property writes; Blueprint variables/components/functions/events/generic nodes/pin defaults/connections/removal/layout/comments/compile; AnimGraph Slot and pose-link operations.
+- Guarded Actor, Material Instance, scoped Content, UMG, and Enhanced Input operations behind the same project/session/plan/preflight/save/rollback pipeline.
+- Transaction-bound UEPI-owned PIE status/start/stop/input/parameterless invoke/read/wait/assert and cleanup.
+- Project-local Codex setup script, machine-readable Doctor, public schemas, v2 contract snapshot, release packaging, architecture/safety/edit/runtime guides, and real-machine report templates.
 
-## Removed From Mainline
+## Verified In This Development Pass
 
-- Local daemon.
-- HTTP API.
-- Web UI.
-- Worker registration, heartbeat, queue, lease, and job APIs.
-- Commandlet worker mode.
-- Extension SDK interfaces.
-- Runtime-evaluation settings.
+- UE 5.3.2 `GasDemoEditor Win64 Development` source build completed successfully after vNext runtime changes.
+- Python package/tool compilation passes.
+- Snapshot MCP v2 synthetic regression is the required automated gate.
+- Offline GasDemo Doctor resolves the exact project binding, saved generation, MCP config, store access, and installed project plugins.
 
-## Next
+## Beta Blockers
 
-- Broader real-project verification across blank, template, and feature sample projects.
-- Future write-operation expansion should remain behind explicit settings, approval, validation, and rollback gates.
-- Post-apply semantic diff is still an Agent workflow step after targeted refresh rather than a single bridge-side chained operation.
+- Run and record the LLMNPCDemo, Third Person, blank-project, and two-project real-machine matrix.
+- Exercise every migrated write domain through Discover -> Preview -> one approval -> Apply -> Validate -> Save -> restart -> Diff/Rollback.
+- Complete structural extraction of the legacy bridge executor branches into domain operation handlers; the registry is authoritative for discovery/preflight, but the current apply implementation still contains a large domain dispatch body.
+- Produce and install-test the source release zip. Produce a prebuilt UE5.3.2 Win64 zip only from clean matching-engine binaries.
+
+The plugin remains honestly marked experimental alpha until these items pass. Do not create a `v2.x-beta` tag before that gate.

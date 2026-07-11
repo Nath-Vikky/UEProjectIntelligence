@@ -25,8 +25,10 @@ bEnableLiveEditorBridge = true
 bEnableWriteTools = true
 bRequirePreviewBeforeApply = true
 bRequireSnapshotDiffAfterApply = true
-bAllowSavingPackages = false
+bAllowSavingPackages = true
 ```
+
+Saving is touched-only. UEPI resolves and backs up every target package before mutation, validates it, saves only packages changed by the approved plan, records hashes, and can restore saved files plus reload their packages. Dirty targets and read-only package files block preflight.
 
 ## Rejected Commands
 
@@ -42,4 +44,4 @@ run_console_command
 delete_asset
 ```
 
-They may exist internally only behind operation plans, allowlists, user approval, validation, and audit logging.
+They may exist internally only behind operation plans, the Editor-exported registry, user approval, validation, and audit logging. Controlled PIE actions are additionally bound to an Apply-issued runtime ticket and an owned PIE session.

@@ -1,9 +1,9 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "2.0.0-alpha.1",
+	"VersionName": "2.0.0-alpha.2",
 	"FriendlyName": "UEProjectIntelligence",
-	"Description": "Codex-first read-only MCP and Snapshot Store for understanding Unreal Engine 5.3.2 projects.",
+	"Description": "Codex-first MCP and guarded Unreal Editor bridge for understanding, editing, and validating Unreal Engine 5.3.2 projects.",
 	"Category": "AI Tools",
 	"CreatedBy": "Vikky",
 	"CreatedByURL": "",
@@ -11,8 +11,8 @@
 	"MarketplaceURL": "",
 	"SupportURL": "",
 	"CanContainContent": true,
-	"IsBetaVersion": true,
-	"IsExperimentalVersion": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
 	"Installed": false,
 	"Modules": [
 		{

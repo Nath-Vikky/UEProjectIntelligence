@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-alpha.2
+
+- Added exact project/session binding, authoritative Status v2, MCP envelope v2, hard scope, exact reads, projection, payload budgets, and opaque pagination.
+- Added live Editor, World, targeted Refresh, Reflection Schema, and controlled Runtime tools to the unified Codex profile.
+- Added Editor-exported operation catalog, immutable Plan v2, repeat preflight, idempotency, before fingerprints, one-approval Apply, touched-only save, backups, validators, rollback, and transaction diff.
+- Added reflected UObject property schemas and typed value codec, generic DataAsset/property writes, generic Blueprint graph maintenance, and AnimGraph Slot/pose operations.
+- Added project-plugin content/source indexing, project-local Codex setup, machine-readable Doctor, versioned public schemas, v2 contract export, and source/prebuilt release packaging.
+- Kept the release marked experimental alpha until the UE5.3.2 real-machine matrix is complete.
+
 ## 2.0.0-alpha.1
 
 - Started the snapshot-first read-only MCP convergence line.

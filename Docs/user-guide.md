@@ -49,7 +49,14 @@ __PROJECT_ROOT__/Saved/UEProjectIntelligence/store/objects/**
 
 ## Codex MCP Setup
 
-Use `Resources/codex-config.template.toml` and replace:
+Generate the project-local configuration. The first command previews the exact diff; the second writes only the marked UEPI block:
+
+```powershell
+python "__PROJECT_ROOT__/Plugins/UEProjectIntelligence/Tools/setup_codex.py" --project "__PROJECT_ROOT__/__PROJECT_NAME__.uproject"
+python "__PROJECT_ROOT__/Plugins/UEProjectIntelligence/Tools/setup_codex.py" --project "__PROJECT_ROOT__/__PROJECT_NAME__.uproject" --apply
+```
+
+Or use `Resources/codex-config.template.toml` and replace:
 
 ```text
 __PYTHON_EXE__
@@ -118,11 +125,18 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 - `uepi_animation`: read animation, skeleton, track, notify, curve, motion-summary, bone-motion profile artifacts, reconstruction profiles, driver track curves, and optional full-pose samples captured in Snapshot.
 - `uepi_impact`: inspect incoming/outgoing dependency impact.
 - `uepi_diff`: compare saved Snapshot generations.
+- `uepi_editor`: live status, selection, incremental output log, and viewport capture.
+- `uepi_world`: live Editor or UEPI-owned PIE actors/components.
+- `uepi_refresh`: request, inspect, or wait for targeted refresh work.
+- `uepi_schema`: authoritative property, operation, Blueprint node, and runtime schemas.
+- `uepi_runtime`: transaction-bound controlled PIE verification.
 - `uepi_edit_discover`: discover supported guarded edit operations.
 - `uepi_edit_preview`: create a dry-run operation plan without modifying assets.
 - `uepi_edit_apply`: apply an approved plan through the live editor bridge when write gates allow it.
 - `uepi_edit_validate`: validate a transaction.
 - `uepi_edit_rollback`: undo the last applied UEPI transaction in the editor session.
+
+Successful approved plans save only touched packages by default. UEPI never exposes save-all.
 
 ## Verify
 
@@ -130,4 +144,5 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 $env:PYTHONPATH="__PROJECT_ROOT__\Plugins\UEProjectIntelligence\Services\uepi\src"
 python -m uepi status --project "__PROJECT_ROOT__\__PROJECT_NAME__.uproject"
 python "__PROJECT_ROOT__\Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py"
+python "__PROJECT_ROOT__\Plugins\UEProjectIntelligence\Tools\uepi_doctor.py" --project "__PROJECT_ROOT__\__PROJECT_NAME__.uproject"
 ```

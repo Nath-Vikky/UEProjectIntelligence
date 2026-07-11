@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uepi.local/schemas/edit-plan-v2.schema.json",
+  "title": "UEPI Edit Plan v2",
+  "type": "object",
+  "required": ["schema_version", "transaction_id", "project_binding_id", "editor_session_id", "catalog_hash", "operations", "affected_assets", "expires_at", "approval_nonce", "plan_hash"],
+  "properties": {
+    "schema_version": {"const": "uepi.edit_plan.v2"},
+    "transaction_id": {"type": "string", "minLength": 1},
+    "project_binding_id": {"type": "string", "pattern": "^sha256:"},
+    "editor_session_id": {"type": "string", "minLength": 1},
+    "catalog_hash": {"type": "string", "pattern": "^sha256:"},
+    "operations": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["type", "params"]}},
+    "affected_assets": {"type": "array", "items": {"type": "string"}},
+    "before_fingerprints": {"type": "object"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "approval_nonce": {"type": "string", "minLength": 1},
+    "plan_hash": {"type": "string", "pattern": "^sha256:"}
+  }
+}

@@ -127,6 +127,21 @@ namespace UE::ProjectIntelligence
 			return FString::Printf(TEXT("sha256:%s"), *Signature.ToString().ToLower());
 		}
 
+		FString UEPIFileSha256(const FString& Filename)
+		{
+			TArray<uint8> Bytes;
+			if (!FFileHelper::LoadFileToArray(Bytes, *Filename))
+			{
+				return FString();
+			}
+			FSHA256Signature Signature;
+			if (!FPlatformMisc::GetSHA256Signature(Bytes.GetData(), static_cast<uint32>(Bytes.Num()), Signature))
+			{
+				return FString();
+			}
+			return FString::Printf(TEXT("sha256:%s"), *Signature.ToString().ToLower());
+		}
+
 		FString UEPISessionsDirectory()
 		{
 			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("sessions")));
@@ -2727,6 +2742,27 @@ namespace UE::ProjectIntelligence
 			if (IFileManager::Get().FileExists(*PackageFile) && IFileManager::Get().IsReadOnly(*PackageFile))
 			{
 				return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TARGET_READ_ONLY"), FString::Printf(TEXT("Target package file is read-only: %s"), *PackageFile));
+			}
+		}
+		if (const TArray<TSharedPtr<FJsonValue>>* BeforeFingerprints = JsonArray(Plan, TEXT("before_fingerprints")))
+		{
+			for (const TSharedPtr<FJsonValue>& Value : *BeforeFingerprints)
+			{
+				const TSharedPtr<FJsonObject> Fingerprint = Value.IsValid() ? Value->AsObject() : nullptr;
+				const FString AssetPath = JsonString(Fingerprint, TEXT("asset"));
+				if (!Fingerprint.IsValid() || AssetPath.IsEmpty() || !AssetPath.StartsWith(TEXT("/")))
+				{
+					continue;
+				}
+				const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
+				const FString PackageFile = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+				const bool bExpectedExists = JsonBool(Fingerprint, TEXT("exists"), false);
+				const bool bExists = IFileManager::Get().FileExists(*PackageFile);
+				const FString ExpectedSha256 = JsonString(Fingerprint, TEXT("sha256"));
+				if (bExists != bExpectedExists || (bExists && !ExpectedSha256.IsEmpty() && UEPIFileSha256(PackageFile) != ExpectedSha256))
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_BEFORE_FINGERPRINT_CHANGED"), FString::Printf(TEXT("Target package changed after Preview: %s"), *AssetPath));
+				}
 			}
 		}
 		TMap<FString, FString> TransactionBackupFiles;
