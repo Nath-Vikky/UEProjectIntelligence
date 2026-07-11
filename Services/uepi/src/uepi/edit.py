@@ -123,6 +123,20 @@ def _referenced_operation(value: Any) -> str | None:
     return str(value["$ref"]).split("#", 1)[0] or None
 
 
+def _operation_references(value: Any) -> set[str]:
+    references: set[str] = set()
+    if isinstance(value, dict):
+        referenced = _referenced_operation(value)
+        if referenced:
+            references.add(referenced)
+        for child in value.values():
+            references.update(_operation_references(child))
+    elif isinstance(value, list):
+        for child in value:
+            references.update(_operation_references(child))
+    return references
+
+
 def _package_file(store: SnapshotStore, object_path: str) -> Path | None:
     package = object_path.split(".", 1)[0]
     project_root = store.root.parent.parent if store.root.name == "UEProjectIntelligence" else store.root
@@ -251,11 +265,21 @@ def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None
         if not descriptor or not descriptor.get("apply_supported"):
             diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_EDIT_OPERATION_UNSUPPORTED", "message": f"Operation is not apply-supported by the active Editor Registry: {op_type}", "phase": "preview", "operation_index": index, "operation_id": op_id, "retryable": False, "recoverable": True})
             continue
-        if op_id in seen_ids or any(dependency not in seen_ids for dependency in depends_on):
+        references = _operation_references(params)
+        if op_id in seen_ids or any(dependency not in seen_ids for dependency in depends_on) or any(reference not in depends_on for reference in references):
             diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_EDIT_OPERATION_DEPENDENCY_INVALID", "message": f"Operation dependency order is invalid: {op_id}", "phase": "preview", "operation_index": index, "operation_id": op_id, "retryable": False, "recoverable": True})
             continue
         seen_ids.add(op_id)
-        normalized.append({"operation_id": op_id, "type": op_type, "params": params, "depends_on": depends_on, "if_exists": str((raw or {}).get("if_exists") or "fail") if isinstance(raw, dict) else "fail"})
+        normalized.append({
+            "operation_id": op_id,
+            "type": op_type,
+            "version": int((raw or {}).get("version") or 1) if isinstance(raw, dict) else 1,
+            "idempotency_key": str((raw or {}).get("idempotency_key") or op_id) if isinstance(raw, dict) else op_id,
+            "params": params,
+            "depends_on": depends_on,
+            "if_exists": str((raw or {}).get("if_exists") or "fail") if isinstance(raw, dict) else "fail",
+            "expected_before": (raw or {}).get("expected_before") if isinstance((raw or {}).get("expected_before"), dict) else {},
+        })
         affected.extend(_target_values(params, descriptor))
         created_asset = _destination_asset(params) if op_type.startswith(("content.", "material.", "widget.", "input.")) or op_type == "animation.create_montage_from_sequence" else None
         if created_asset:
@@ -292,8 +316,15 @@ def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None
 
     transaction_id = f"uepi-tx:{uuid4().hex}"
     created = _now()
+    snapshot_state = _state(store)
+    nonce = uuid4().hex
+    operation_order = [str(item.get("operation_id")) for item in normalized]
+    touched_packages = sorted({asset.split(".", 1)[0] for asset in affected})
+    risk_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    risk_level = max((str(descriptors.get(str(item.get("type")), {}).get("risk") or "medium") for item in normalized), key=lambda value: risk_order.get(value, 1), default="low")
     plan = {
         "schema_version": PLAN_SCHEMA,
+        "schema_aliases": ["uepi.edit-plan.v2"],
         "transaction_id": transaction_id,
         "intent": intent,
         "created_at": _iso(created),
@@ -305,17 +336,34 @@ def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None
         "catalog_hash": catalog.get("catalog_hash"),
         "engine_version": catalog.get("engine_version"),
         "plugin_build_id": catalog.get("plugin_build_id"),
-        "approval_nonce": uuid4().hex,
+        "approval_nonce": nonce,
+        "project": {"project_id": identity.get("project_id"), "project_binding_id": identity.get("project_binding_id"), "project_file": identity.get("project_file")},
+        "editor": {"session_id": session_id, "pid": status["editor"].get("pid")},
+        "base": {
+            "saved_generation": status["snapshot"].get("saved_generation"),
+            "live_generation": status["snapshot"].get("live_generation"),
+            "view_generation": snapshot_state.generation,
+            "catalog_hash": catalog.get("catalog_hash"),
+            "plugin_build_id": catalog.get("plugin_build_id"),
+        },
         "operations": normalized,
+        "operation_order": operation_order,
         "affected_assets": affected,
+        "predicted_touched_objects": affected,
+        "predicted_touched_packages": touched_packages,
         "before_fingerprints": [_fingerprint(store, asset) for asset in affected],
+        "preconditions": ["exact_project", "exact_editor_session", "catalog_unchanged", "before_fingerprints_unchanged", "targets_clean_and_writable"],
         "dirty_policy": "fail",
-        "save_policy": "touched_only",
+        "save_policy": "after_validation",
         "validation_policy": "typed_registry",
+        "validation_plan": [{"operation_id": item.get("operation_id"), "validator": descriptors.get(str(item.get("type")), {}).get("validation_behavior") or descriptors.get(str(item.get("type")), {}).get("validation_mode") or "generic_uobject"} for item in normalized],
+        "risk": {"level": risk_level, "requires_user_approval": True, "operation_count": len(normalized), "asset_count": len(affected)},
+        "approval": {"required": True, "nonce": nonce},
         "evidence": evidence or [],
         "verification_plan": verification_plan,
     }
     plan["plan_hash"] = canonical_plan_hash(plan)
+    plan["approval"]["plan_hash"] = plan["plan_hash"]
     path = _plan_path(store, transaction_id.replace(":", "-"))
     path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     audit_path = _audit(store, {"event": "preview", "transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "affected_assets": affected})

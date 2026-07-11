@@ -123,6 +123,14 @@ namespace UE::ProjectIntelligence
 				Schema->SetObjectField(TEXT("key"), PropertySchema(MapProperty->KeyProp, Depth + 1, MaxDepth));
 				Schema->SetObjectField(TEXT("value"), PropertySchema(MapProperty->ValueProp, Depth + 1, MaxDepth));
 			}
+			else if (const FSoftClassProperty* SoftClassProperty = CastField<FSoftClassProperty>(Property))
+			{
+				Schema->SetStringField(TEXT("allowed_class"), SoftClassProperty->MetaClass ? SoftClassProperty->MetaClass->GetPathName() : FString());
+			}
+			else if (const FClassProperty* ClassProperty = CastField<FClassProperty>(Property))
+			{
+				Schema->SetStringField(TEXT("allowed_class"), ClassProperty->MetaClass ? ClassProperty->MetaClass->GetPathName() : FString());
+			}
 			else if (const FSoftObjectProperty* SoftProperty = CastField<FSoftObjectProperty>(Property))
 			{
 				Schema->SetStringField(TEXT("allowed_class"), SoftProperty->PropertyClass ? SoftProperty->PropertyClass->GetPathName() : FString());
@@ -294,6 +302,15 @@ namespace UE::ProjectIntelligence
 			const int64 Raw = EnumProperty->GetUnderlyingProperty()->GetSignedIntPropertyValue(ValuePtr);
 			return TypedValue(TEXT("enum"), TEXT("value"), MakeShared<FJsonValueString>(EnumProperty->GetEnum() ? EnumProperty->GetEnum()->GetNameStringByValue(Raw) : FString::Printf(TEXT("%lld"), Raw)));
 		}
+		if (const FSoftClassProperty* SoftClassProperty = CastField<FSoftClassProperty>(Property))
+		{
+			return TypedValue(TEXT("soft_class"), TEXT("path"), MakeShared<FJsonValueString>(SoftClassProperty->GetPropertyValue(ValuePtr).ToSoftObjectPath().ToString()));
+		}
+		if (const FClassProperty* ClassProperty = CastField<FClassProperty>(Property))
+		{
+			const UObject* Object = ClassProperty->GetObjectPropertyValue(ValuePtr);
+			return TypedValue(TEXT("class"), TEXT("path"), Object ? MakeShared<FJsonValueString>(Object->GetPathName()) : NullValue());
+		}
 		if (const FSoftObjectProperty* SoftProperty = CastField<FSoftObjectProperty>(Property))
 		{
 			return TypedValue(TEXT("soft_object"), TEXT("path"), MakeShared<FJsonValueString>(SoftProperty->GetPropertyValue(ValuePtr).ToSoftObjectPath().ToString()));
@@ -399,6 +416,21 @@ namespace UE::ProjectIntelligence
 			const int64 Raw = EnumProperty->GetEnum() ? EnumProperty->GetEnum()->GetValueByNameString(Text) : INDEX_NONE;
 			if (Raw == INDEX_NONE) { OutError = FString::Printf(TEXT("Unknown enum value: %s"), *Text); return false; }
 			EnumProperty->GetUnderlyingProperty()->SetIntPropertyValue(ValuePtr, Raw); return true;
+		}
+		if (const FSoftClassProperty* SoftClassProperty = CastField<FSoftClassProperty>(Property))
+		{
+			if (!JsonString(Input, Text)) { OutError = TEXT("Expected soft class path string."); return false; }
+			const FSoftObjectPath Path(Text); UClass* Class = Cast<UClass>(Path.TryLoad());
+			if (!Path.IsValid() || (Class && SoftClassProperty->MetaClass && !Class->IsChildOf(SoftClassProperty->MetaClass))) { OutError = FString::Printf(TEXT("Soft class path is invalid or class-incompatible: %s"), *Text); return false; }
+			SoftClassProperty->SetPropertyValue(ValuePtr, FSoftObjectPtr(Path)); return true;
+		}
+		if (const FClassProperty* ClassProperty = CastField<FClassProperty>(Property))
+		{
+			if (Input->IsNull()) { ClassProperty->SetObjectPropertyValue(ValuePtr, nullptr); return true; }
+			if (!JsonString(Input, Text)) { OutError = TEXT("Expected class path string."); return false; }
+			UClass* Class = LoadObject<UClass>(nullptr, *Text);
+			if (!Class || (ClassProperty->MetaClass && !Class->IsChildOf(ClassProperty->MetaClass))) { OutError = FString::Printf(TEXT("Class path is invalid or class-incompatible: %s"), *Text); return false; }
+			ClassProperty->SetObjectPropertyValue(ValuePtr, Class); return true;
 		}
 		if (const FSoftObjectProperty* SoftProperty = CastField<FSoftObjectProperty>(Property))
 		{

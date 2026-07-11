@@ -44,6 +44,11 @@ def _bridge(engine: Any, action: str, arguments: dict[str, Any], ticket: dict[st
     )
 
 
+def _cleanup_owned_pie(engine: Any, ticket: dict[str, Any] | None) -> None:
+    if ticket:
+        _bridge(engine, "stop", {}, ticket)
+
+
 def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     action = str(arguments.get("action") or "status")
     ticket: dict[str, Any] | None = None
@@ -70,6 +75,8 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     if action in {"status", "start", "stop", "input", "invoke", "read"}:
         response = _bridge(engine, action, arguments, ticket)
         if not response.get("ok"):
+            if action not in {"status", "start", "stop"}:
+                _cleanup_owned_pie(engine, ticket)
             error = response.get("error") if isinstance(response.get("error"), dict) else {}
             code = str(error.get("code") or next((item.get("code") for item in response.get("diagnostics") or [] if isinstance(item, dict)), "UEPI_RUNTIME_ACTION_FAILED"))
             return engine._error(code, str(error.get("message") or f"Runtime action failed: {action}"), diagnostics=response.get("diagnostics") if isinstance(response.get("diagnostics"), list) else [], tool="uepi_runtime", operation=action)
@@ -89,6 +96,7 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
                     return engine._envelope({"matched": True, "assertion": action == "assert", "observed": last}, tool="uepi_runtime", operation=action)
             time.sleep(interval)
         code = "UEPI_RUNTIME_ASSERT_FAILED" if action == "assert" else "UEPI_RUNTIME_WAIT_TIMEOUT"
+        _cleanup_owned_pie(engine, ticket)
         return engine._error(code, f"Runtime condition did not match before timeout; last value: {last.get('value')!r}", tool="uepi_runtime", operation=action)
 
     return engine._error("UEPI_RUNTIME_ACTION_UNSUPPORTED", f"Runtime action is not implemented: {action}", tool="uepi_runtime", operation=action)

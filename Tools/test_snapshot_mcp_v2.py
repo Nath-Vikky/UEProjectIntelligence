@@ -16,6 +16,7 @@ PYTHONPATH = ROOT / "Services" / "uepi" / "src"
 sys.path.insert(0, str(PYTHONPATH))
 
 from uepi.bridge_client import _read_token  # noqa: E402
+from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
 from uepi.store import resolve_store_root  # noqa: E402
 
 READ_TOOLS = {
@@ -62,6 +63,41 @@ def assert_envelope(value: dict[str, Any]) -> None:
     assert "item_limit_hit" in value["truncation"]
     assert "byte_limit_hit" in value["truncation"]
     assert "continuation" in value
+
+
+def assert_plan_v2_contract() -> None:
+    plan = {
+        "schema_version": "uepi.edit_plan.v2",
+        "transaction_id": "uepi-tx:test",
+        "project": {"project_binding_id": "sha256:test", "project_file": "C:/Test/Test.uproject"},
+        "editor": {"session_id": "test-session"},
+        "base": {"catalog_hash": "sha256:catalog", "plugin_build_id": "test-build"},
+        "operations": [],
+        "operation_order": [],
+        "predicted_touched_packages": [],
+        "validation_plan": [],
+        "save_policy": "after_validation",
+        "risk": {"level": "low", "requires_user_approval": True},
+        "approval": {"required": True, "nonce": "test-nonce"},
+        "expires_at": "2099-01-01T00:00:00Z",
+    }
+    plan["plan_hash"] = canonical_plan_hash(plan)
+    plan["approval"]["plan_hash"] = plan["plan_hash"]
+    assert verify_plan_hash(plan)
+    assert canonical_plan_hash(plan) == plan["plan_hash"]
+
+    schema = json.loads((ROOT / "Schemas" / "edit-plan-v2.schema.json").read_text(encoding="utf-8"))
+    assert {
+        "project",
+        "editor",
+        "base",
+        "operation_order",
+        "predicted_touched_packages",
+        "validation_plan",
+        "save_policy",
+        "risk",
+        "approval",
+    }.issubset(set(schema["required"]))
 
 
 def send_message(process: subprocess.Popen[bytes], message: dict[str, Any]) -> None:
@@ -933,6 +969,7 @@ def assert_bridge_token_and_registry_resolution(root: Path) -> None:
 
 
 def main() -> int:
+    assert_plan_v2_contract()
     with tempfile.TemporaryDirectory(prefix="uepi_snapshot_mcp_") as temp_dir:
         root = Path(temp_dir)
         write_fixture(root)

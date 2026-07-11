@@ -3,7 +3,7 @@
   "$id": "https://uepi.local/schemas/edit-plan-v2.schema.json",
   "title": "UEPI Edit Plan v2",
   "type": "object",
-  "required": ["schema_version", "transaction_id", "project_binding_id", "editor_session_id", "catalog_hash", "operations", "affected_assets", "expires_at", "approval_nonce", "plan_hash"],
+  "required": ["schema_version", "transaction_id", "project", "editor", "base", "operations", "operation_order", "predicted_touched_packages", "validation_plan", "save_policy", "risk", "approval", "expires_at", "plan_hash"],
   "properties": {
     "schema_version": {"const": "uepi.edit_plan.v2"},
     "transaction_id": {"type": "string", "minLength": 1},
@@ -15,6 +15,15 @@
     "before_fingerprints": {"type": "object"},
     "expires_at": {"type": "string", "format": "date-time"},
     "approval_nonce": {"type": "string", "minLength": 1},
+    "project": {"type": "object", "required": ["project_binding_id", "project_file"]},
+    "editor": {"type": "object", "required": ["session_id"]},
+    "base": {"type": "object", "required": ["catalog_hash", "plugin_build_id"]},
+    "operation_order": {"type": "array", "items": {"type": "string"}},
+    "predicted_touched_packages": {"type": "array", "items": {"type": "string"}},
+    "validation_plan": {"type": "array", "items": {"type": "object"}},
+    "save_policy": {"enum": ["never", "after_validation", "explicit_operation"]},
+    "risk": {"type": "object"},
+    "approval": {"type": "object", "required": ["required", "nonce", "plan_hash"]},
     "plan_hash": {"type": "string", "pattern": "^sha256:"}
   }
 }

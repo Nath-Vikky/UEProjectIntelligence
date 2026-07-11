@@ -11,6 +11,7 @@
 - Added preflighted AnimMontage creation from Sequence plus slot track, segment, section, blend, preview mesh, same-transaction references, save, and rollback participation.
 - Bound Runtime tickets to an explicitly approved verification plan and added per-project exact function allowlisting on top of ticket function/key/read/map guards.
 - Extracted backup/restore, touched-package save, phase journal, and typed Validator Registry services from the Editor Bridge apply pipeline.
+- Completed nested Plan v2 base/risk/approval/verification structure, dependency-bound refs, Class/SoftClass typed values, richer transaction diff, runtime failure cleanup, and dual-artifact release packaging.
 - Added project-plugin content/source indexing, project-local Codex setup, machine-readable Doctor, versioned public schemas, v2 contract export, and source/prebuilt release packaging.
 - Kept the release marked experimental alpha until the UE5.3.2 real-machine matrix is complete.
 

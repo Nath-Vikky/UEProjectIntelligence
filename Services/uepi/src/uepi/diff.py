@@ -35,13 +35,17 @@ def build_transaction_diff(plan: dict[str, Any], apply_result: dict[str, Any], a
             continue
         detail = item.get("detail") if isinstance(item.get("detail"), dict) else {}
         properties.extend(child for child in detail.get("property_diff") or [] if isinstance(child, dict))
-        if isinstance(detail.get("node"), dict):
-            nodes.append({"change": "added", "node": detail["node"]})
-        if isinstance(detail.get("source_node"), dict) and isinstance(detail.get("target_node"), dict):
-            links.append({"change": "connected", "source_node": detail["source_node"].get("node_guid"), "target_node": detail["target_node"].get("node_guid")})
+        for actor in detail.get("actors") or []:
+            if isinstance(actor, dict):
+                properties.extend({**child, "object": actor.get("actor")} for child in actor.get("property_diff") or [] if isinstance(child, dict))
         op_type = str(item.get("type") or operation_types.get(f"op:{index + 1}") or "")
-        if op_type in {"content.create_asset", "material.create_instance", "widget.create", "input.create_action", "input.create_mapping_context"}:
-            asset = detail.get("asset")
+        if isinstance(detail.get("node"), dict):
+            change = "removed" if "remove_node" in op_type else ("updated" if any(token in op_type for token in ("move_node", "set_node_comment", "set_node_property")) else "added")
+            nodes.append({"change": change, "node": detail["node"]})
+        if isinstance(detail.get("source_node"), dict) and isinstance(detail.get("target_node"), dict):
+            links.append({"change": "disconnected" if "disconnect" in op_type or "break_all" in op_type else "connected", "source_node": detail["source_node"].get("node_guid"), "target_node": detail["target_node"].get("node_guid")})
+        if op_type in {"content.create_asset", "material.create_instance", "widget.create", "input.create_action", "input.create_mapping_context", "animation.create_montage_from_sequence"}:
+            asset = detail.get("asset_path") or detail.get("asset")
             if isinstance(asset, dict):
                 asset = asset.get("path")
             if isinstance(asset, str):

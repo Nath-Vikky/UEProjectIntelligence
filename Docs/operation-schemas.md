@@ -49,14 +49,21 @@ Legacy-compatible fields such as `state`, `omissions`, `truncation`, and `contin
 {
   "schema_version": "uepi.edit_plan.v2",
   "transaction_id": "uepi-preview-...",
-  "created_at_utc": "...",
+  "created_at": "...",
+  "expires_at": "...",
+  "project": {"project_binding_id": "sha256:...", "project_file": "__PROJECT_ROOT__/Project.uproject"},
+  "editor": {"session_id": "...", "pid": 1234},
+  "base": {"saved_generation": 1, "live_generation": 2, "catalog_hash": "sha256:...", "plugin_build_id": "..."},
   "project_binding_id": "sha256:...",
   "editor_session_id": "...",
   "catalog_hash": "sha256:...",
-  "expires_at_utc": "...",
   "approval_nonce": "...",
   "intent": "...",
   "operations": [],
+  "operation_order": [],
+  "predicted_touched_objects": [],
+  "predicted_touched_packages": [],
+  "preconditions": [],
   "evidence": [],
   "affected_assets": ["/Game/BP_Hero.BP_Hero"],
   "risk": {
@@ -64,26 +71,10 @@ Legacy-compatible fields such as `state`, `omissions`, `truncation`, and `contin
     "requires_user_approval": true,
     "blocked_operation_count": 0
   },
-  "safety": {
-    "dry_run": true,
-    "mutates_unreal_assets": false,
-    "requires_editor_bridge": true,
-    "allow_saving": true,
-    "touched_only": true
-  },
-  "backup": {
-    "required": true,
-    "artifact_uri": "uepi://artifact/backups/uepi-preview-...",
-    "manifest_path": "__PROJECT_ROOT__/Saved/UEProjectIntelligence/artifacts/backups/uepi-preview-.../manifest.json"
-  },
-  "requires_user_approval": true,
-  "apply_supported": true,
+  "save_policy": "after_validation",
   "validation_plan": [],
-  "rollback_plan": {
-    "strategy": "transaction_undo_or_backup_restore",
-    "backup_artifact": "uepi://artifact/backups/uepi-preview-..."
-  },
-  "diagnostics": [],
+  "verification_plan": null,
+  "approval": {"required": true, "nonce": "...", "plan_hash": "sha256:..."},
   "before_fingerprints": {},
   "plan_hash": "sha256:..."
 }

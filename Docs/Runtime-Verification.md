@@ -25,7 +25,7 @@ uepi_editor(output_log | viewport_capture)
 uepi_runtime(stop)
 ```
 
-UEPI only controls a PIE session it started. Start fails if unrelated PIE is active. Stop and failure cleanup remove owned runtime handles and end owned PIE.
+UEPI only controls a PIE session it started. Start fails if unrelated PIE is active. Stop, bridge action failure, wait timeout, and assertion failure all attempt to end owned PIE and invalidate runtime state.
 
 ## Actions
 
