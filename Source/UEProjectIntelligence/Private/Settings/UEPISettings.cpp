@@ -20,6 +20,8 @@ UUEPISettings::UUEPISettings()
 	, bRequireSnapshotDiffAfterApply(true)
 	, MaxWriteOperationsPerTransaction(32)
 	, MaxWriteAssetsPerTransaction(3)
+	, bAllowPIEControl(true)
+	, bAllowRuntimeInvoke(true)
 {
 }
 

@@ -13,6 +13,9 @@ namespace UE::ProjectIntelligence
 		bool RegisterOperation(TSharedRef<IUEPIEditOperation> Operation);
 		TSharedPtr<IUEPIEditOperation> FindOperation(const FString& OperationType) const;
 		TArray<FString> GetOperationTypes() const;
+		TArray<FUEPIEditOperationDescriptor> GetDescriptors() const;
+		FString GetCatalogHash() const;
+		void EnsureBuiltinsRegistered();
 		void Reset();
 
 	private:

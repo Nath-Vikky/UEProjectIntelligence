@@ -32,6 +32,8 @@ READ_TOOLS = {
     "uepi_editor",
     "uepi_world",
     "uepi_refresh",
+    "uepi_schema",
+    "uepi_runtime",
 }
 
 EDIT_TOOLS = {
@@ -1186,7 +1188,7 @@ def main() -> int:
             assert discover["result"]["legacy_profile_alias"] == "codex_write_alpha"
             assert discover["result"]["default_enabled"] is True
             assert discover["result"]["apply_enabled"] is False
-            assert "blueprint_plan_guidance" in discover["result"]
+            assert any(item.get("code") == "UEPI_EDIT_CATALOG_UNAVAILABLE" for item in discover["diagnostics"])
             preview = request(
                 process,
                 63,
@@ -1209,7 +1211,9 @@ def main() -> int:
                 },
             )["structuredContent"]
             assert_envelope(preview)
-            assert preview["result"]["plan"]["schema_version"] == "uepi.edit_plan.v1"
+            assert preview["ok"] is False
+            assert preview["error"]["code"] == "UEPI_EDIT_CATALOG_UNAVAILABLE"
+            assert not any(item.get("tool") == "uepi_edit_apply" for item in preview["next_actions"])
             unrolled_countdown_ops: list[dict[str, Any]] = []
             for value in range(5, 0, -1):
                 unrolled_countdown_ops.append(
@@ -1247,20 +1251,19 @@ def main() -> int:
                 },
             )["structuredContent"]
             assert_envelope(unrolled_preview)
-            unrolled_codes = {item.get("code") for item in unrolled_preview["diagnostics"]}
-            assert "UEPI_EDIT_BLUEPRINT_UNROLLED_COUNTDOWN" in unrolled_codes
+            assert unrolled_preview["error"]["code"] == "UEPI_EDIT_CATALOG_UNAVAILABLE"
             apply_without_bridge = request(
                 process,
                 64,
                 "tools/call",
                 {
                     "name": "uepi_edit_apply",
-                    "arguments": {"transaction_id": preview["result"]["plan"]["transaction_id"], "approved": True},
+                    "arguments": {"transaction_id": "uepi-tx:missing", "plan_hash": "sha256:missing", "approval_nonce": "missing", "approved": True},
                 },
             )["structuredContent"]
             assert_envelope(apply_without_bridge)
             assert apply_without_bridge["ok"] is False
-            assert apply_without_bridge["error"]["code"] == "UEPI_EDIT_BRIDGE_REQUIRED"
+            assert apply_without_bridge["error"]["code"] == "UEPI_EDIT_PLAN_NOT_FOUND"
         finally:
             if process.stdin:
                 process.stdin.close()
@@ -1317,21 +1320,17 @@ def main() -> int:
                 },
             )["structuredContent"]
             assert_envelope(preview)
-            assert preview["result"]["plan"]["schema_version"] == "uepi.edit_plan.v1"
-            assert preview["result"]["plan"]["status"] == "preview_only"
-            assert preview["result"]["plan"]["affected_assets"] == ["/Game/BP_Hero.BP_Hero"]
-            assert preview["result"]["plan"]["backup"]["artifact_uri"].startswith("uepi://artifact/backups/")
-            assert preview["result"]["audit_path"].endswith(".jsonl")
+            assert preview["ok"] is False
+            assert preview["error"]["code"] == "UEPI_EDIT_CATALOG_UNAVAILABLE"
             rejected = request(
                 write_process,
                 64,
                 "tools/call",
-                {"name": "uepi_edit_apply", "arguments": {"transaction_id": preview["result"]["plan"]["transaction_id"], "approved": True}},
+                {"name": "uepi_edit_apply", "arguments": {"transaction_id": "uepi-tx:missing", "plan_hash": "sha256:missing", "approval_nonce": "missing", "approved": True}},
             )["structuredContent"]
             assert_envelope(rejected)
             assert rejected["ok"] is False
-            assert rejected["error"]["code"] == "UEPI_EDIT_BRIDGE_REQUIRED"
-            assert rejected["error"]["bridge_error_code"] in {"UEPI_BRIDGE_NOT_CONFIGURED", "UEPI_BRIDGE_NOT_READY"}
+            assert rejected["error"]["code"] == "UEPI_EDIT_PLAN_NOT_FOUND"
         finally:
             if write_process.stdin:
                 write_process.stdin.close()

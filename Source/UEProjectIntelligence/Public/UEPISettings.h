@@ -74,4 +74,10 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, Category="Guarded Edit Apply", meta=(ClampMin="1", ClampMax="20"))
 	int32 MaxWriteAssetsPerTransaction;
+
+	UPROPERTY(Config, EditAnywhere, Category="Controlled Runtime")
+	bool bAllowPIEControl;
+
+	UPROPERTY(Config, EditAnywhere, Category="Controlled Runtime")
+	bool bAllowRuntimeInvoke;
 };

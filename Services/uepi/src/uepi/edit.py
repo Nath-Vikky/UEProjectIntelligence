@@ -1,470 +1,276 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
-import shutil
+import time
 from typing import Any
 from uuid import uuid4
 
 from .bridge_client import call_bridge
+from .cpp_symbols import project_module_manifest
+from .identity import project_identity
+from .operation_catalog import load_catalog, operation_map
+from .plan import PLAN_SCHEMA, canonical_plan_hash, verify_plan_hash
 from .result import envelope
+from .status import resolve_status
+from .diff import build_transaction_diff
 from .store import SnapshotStore
 
 
-EDIT_PLAN_SCHEMA = "uepi.edit_plan.v1"
-EDIT_AUDIT_SCHEMA = "uepi.edit-audit.v1"
-BACKUP_ARTIFACT_SCHEMA = "uepi.backup-artifact.v1"
-MAX_BACKUP_FILE_BYTES = 64 * 1024 * 1024
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-SUPPORTED_PREVIEW_OPERATIONS = {
-    "blueprint.add_variable": "low",
-    "blueprint.set_variable_default": "low",
-    "blueprint.add_component": "low",
-    "blueprint.set_component_property": "low",
-    "blueprint.create_function": "medium",
-    "blueprint.add_event_node": "medium",
-    "blueprint.add_function_call_node": "medium",
-    "blueprint.add_variable_get_node": "medium",
-    "blueprint.add_variable_set_node": "medium",
-    "blueprint.add_branch_node": "medium",
-    "blueprint.add_print_string_node": "medium",
-    "blueprint.connect_pins": "medium",
-    "blueprint.compile": "low",
-    "actor.spawn": "medium",
-    "actor.set_transform": "medium",
-    "actor.set_property": "medium",
-    "material.create_instance": "medium",
-    "material.set_scalar_parameter": "low",
-    "material.set_vector_parameter": "low",
-    "material.set_texture_parameter": "low",
-    "material.apply_to_actor": "medium",
-    "material.apply_to_blueprint_component": "medium",
-    "widget.create": "medium",
-    "widget.add_text": "medium",
-    "widget.add_button": "medium",
-    "widget.set_slot": "medium",
-    "widget.bind_button_to_custom_event": "medium",
-    "input.create_action": "medium",
-    "input.create_mapping_context": "medium",
-    "input.add_key_mapping": "medium",
-    "input.remove_key_mapping": "medium",
-    "content.create_folder": "medium",
-    "content.duplicate_asset": "medium",
-    "content.rename_asset": "medium",
-    "content.import": "medium",
-}
-
-BLOCKED_OPERATIONS = {
-    "run_python",
-    "run_console_command",
-    "execute_shell",
-    "enable_plugin",
-    "disable_plugin",
-    "delete_asset",
-    "delete_actor",
-    "save_all",
-    "source_control_submit",
-    "pie.start",
-    "pie.stop",
-    "project.config_write",
-}
+def _iso(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+def _state(store: SnapshotStore):
+    return store.load_state()
 
 
-def _project(store: SnapshotStore) -> dict[str, Any]:
-    try:
-        state = store.load_state()
-        project = state.project
-    except Exception:
-        state = None
-        project = {}
-    root = store.root.parent.parent if store.root.name == "UEProjectIntelligence" else store.root
-    return {
-        "id": project.get("id"),
-        "name": project.get("name"),
-        "engine_version": project.get("engine_version"),
-        "project_root": str(root),
-        "_state": state,
-    }
+def _identity(store: SnapshotStore) -> dict[str, Any]:
+    state = _state(store)
+    return project_identity(None, state.project, store.root)
 
 
-def _project_root(store: SnapshotStore) -> Path:
-    if store.root.name == "UEProjectIntelligence" and store.root.parent.name == "Saved":
-        return store.root.parent.parent
-    return store.root
-
-
-def _state(store: SnapshotStore) -> dict[str, Any]:
-    state = _project(store).get("_state")
-    if state is not None:
-        return state.envelope_state()
-    return {
-        "data_mode": "saved",
-        "editor_connected": False,
-        "saved_generation": None,
-        "live_generation": None,
-        "snapshot_observed_at": None,
-        "freshness": "stale",
-        "manifest_path": None,
-    }
-
-
-def _response(store: SnapshotStore, *, tool: str, operation: str, result: dict[str, Any] | None = None, error: dict[str, Any] | None = None, diagnostics: list[dict[str, Any]] | None = None, next_actions: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    project = _project(store)
-    project.pop("_state", None)
+def _response(
+    store: SnapshotStore,
+    *,
+    tool: str,
+    operation: str,
+    result: dict[str, Any] | None = None,
+    error: dict[str, Any] | None = None,
+    diagnostics: list[dict[str, Any]] | None = None,
+    next_actions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    state = _state(store)
+    identity = project_identity(None, state.project, store.root)
+    status = resolve_status(store, state, identity, probe_bridge=False)
     return envelope(
         tool=tool,
         operation=operation,
-        project=project,
-        state=_state(store),
+        project=identity,
+        editor=status["editor"],
+        state=state.envelope_state(),
         result=result,
         error=error,
-        diagnostics=diagnostics,
+        diagnostics=(diagnostics or []) + status["diagnostics"],
         next_actions=next_actions,
     )
 
 
 def _edit_dir(store: SnapshotStore) -> Path:
-    path = store.root / "store" / "edit" / "plans"
+    path = store.store_dir / "edit"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def _audit_dir(store: SnapshotStore) -> Path:
-    path = store.root / "audit"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def _plan_path(store: SnapshotStore, transaction_id: str) -> Path:
+    return _edit_dir(store) / f"{transaction_id}.plan.json"
 
 
-def _backup_root(store: SnapshotStore) -> Path:
-    path = store.root / "artifacts" / "backups"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def _result_path(store: SnapshotStore, transaction_id: str) -> Path:
+    return _edit_dir(store) / f"{transaction_id}.result.json"
 
 
-def _safe_file_stem(value: str) -> str:
-    clean = []
-    for char in value:
-        clean.append(char if char.isalnum() or char in {".", "-", "_"} else "_")
-    stem = "".join(clean).strip("._")
-    return stem[:120] or "asset"
-
-
-def _write_audit(store: SnapshotStore, entry: dict[str, Any]) -> Path:
-    path = _audit_dir(store) / f"edit-{datetime.now(timezone.utc).strftime('%Y%m%d')}.jsonl"
-    record = {"schema_version": EDIT_AUDIT_SCHEMA, "created_at_utc": _now(), **entry}
+def _audit(store: SnapshotStore, event: dict[str, Any]) -> str:
+    directory = store.store_dir / "audit"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "edit-v2.jsonl"
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
-    return path
+        handle.write(json.dumps({"at": _iso(_now()), **event}, ensure_ascii=False, separators=(",", ":")) + "\n")
+    return str(path)
 
 
-def _operation_type(operation: Any) -> str:
-    if not isinstance(operation, dict):
-        return "invalid"
-    value = operation.get("type") or operation.get("operation") or operation.get("name")
-    return str(value or "").strip()
+def _operation_parts(value: Any, index: int) -> tuple[str, str, dict[str, Any], list[str]]:
+    item = value if isinstance(value, dict) else {}
+    op_type = str(item.get("type") or item.get("operation") or "")
+    op_id = str(item.get("operation_id") or item.get("id") or f"op:{index + 1}")
+    params = item.get("params") if isinstance(item.get("params"), dict) else {key: child for key, child in item.items() if key not in {"type", "operation", "id", "operation_id", "depends_on"}}
+    depends_on = [str(child) for child in item.get("depends_on") or []]
+    return op_id, op_type, params, depends_on
 
 
-def _operation_params(operation: Any) -> dict[str, Any]:
-    if not isinstance(operation, dict):
-        return {}
-    params = operation.get("params")
-    return params if isinstance(params, dict) else operation
+def _target_values(params: dict[str, Any], descriptor: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for field in descriptor.get("target_fields") or []:
+        value = params.get(str(field))
+        if isinstance(value, str) and value.startswith("/"):
+            values.append(value)
+    return values
 
 
-def _walk_asset_values(value: Any) -> list[str]:
-    found: list[str] = []
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped.startswith(("/Game/", "/Engine/")):
-            found.append(stripped)
-        return found
-    if isinstance(value, list):
-        for item in value:
-            found.extend(_walk_asset_values(item))
-        return found
-    if isinstance(value, dict):
-        for key, item in value.items():
-            key_text = str(key).casefold()
-            if any(token in key_text for token in ("asset", "object_path", "blueprint", "package", "target")):
-                found.extend(_walk_asset_values(item))
-            elif isinstance(item, (dict, list)):
-                found.extend(_walk_asset_values(item))
-        return found
-    return found
-
-
-def _extract_affected_assets(operations: list[Any], evidence: list[Any]) -> list[str]:
-    assets: list[str] = []
-    for item in operations:
-        assets.extend(_walk_asset_values(item))
-    for item in evidence:
-        assets.extend(_walk_asset_values(item))
-
-    clean: list[str] = []
-    for asset in assets:
-        normalized = asset.strip()
-        if not normalized:
+def _package_file(store: SnapshotStore, object_path: str) -> Path | None:
+    package = object_path.split(".", 1)[0]
+    project_root = store.root.parent.parent if store.root.name == "UEProjectIntelligence" else store.root
+    if package.startswith("/Game/"):
+        return project_root / "Content" / (package.removeprefix("/Game/") + ".uasset")
+    manifest = project_module_manifest(store.root)
+    for plugin in manifest.get("plugins") or []:
+        if not isinstance(plugin, dict) or not plugin.get("mounted_asset_root"):
             continue
-        if normalized not in clean:
-            clean.append(normalized)
-    return clean
-
-
-def _risk_level(operations: list[Any]) -> str:
-    rank = {"none": 0, "low": 1, "medium": 2, "high": 3}
-    current = "none"
-    for operation in operations:
-        op_type = _operation_type(operation)
-        if not op_type or op_type in BLOCKED_OPERATIONS:
-            op_risk = "high"
-        else:
-            op_risk = SUPPORTED_PREVIEW_OPERATIONS.get(op_type, "medium")
-        if rank[op_risk] > rank[current]:
-            current = op_risk
-    return current
-
-
-def _operation_diagnostics(operations: list[Any]) -> list[dict[str, Any]]:
-    diagnostics: list[dict[str, Any]] = []
-    for index, operation in enumerate(operations):
-        op_type = _operation_type(operation)
-        if not isinstance(operation, dict) or not op_type:
-            diagnostics.append(
-                {
-                    "severity": "error",
-                    "code": "UEPI_EDIT_OPERATION_INVALID",
-                    "message": f"Operation at index {index} is not a structured operation with a type.",
-                    "operation_index": index,
-                    "recoverable": True,
-                }
-            )
-            continue
-        if op_type in BLOCKED_OPERATIONS:
-            diagnostics.append(
-                {
-                    "severity": "error",
-                    "code": "UEPI_EDIT_OPERATION_BLOCKED",
-                    "message": f"Operation is forbidden by UEPI write safety policy: {op_type}",
-                    "operation_index": index,
-                    "operation_type": op_type,
-                    "recoverable": False,
-                }
-            )
-            continue
-        if op_type not in SUPPORTED_PREVIEW_OPERATIONS:
-            diagnostics.append(
-                {
-                    "severity": "warning",
-                    "code": "UEPI_EDIT_OPERATION_PREVIEW_ONLY_UNKNOWN",
-                    "message": f"Operation can be recorded in the plan, but UEPI has no alpha executor for it yet: {op_type}",
-                    "operation_index": index,
-                    "operation_type": op_type,
-                    "recoverable": True,
-                }
-            )
-    diagnostics.extend(_plan_quality_diagnostics(operations))
-    return diagnostics
-
-
-def _param_string(params: dict[str, Any], *names: str) -> str:
-    for name in names:
-        value = params.get(name)
-        if value is None:
-            continue
-        return str(value).strip()
-    return ""
-
-
-def _param_number(params: dict[str, Any], *names: str) -> float | None:
-    for name in names:
-        value = params.get(name)
-        if isinstance(value, bool) or value is None:
-            continue
-        if isinstance(value, (int, float)):
-            return float(value)
-        if isinstance(value, str):
-            try:
-                return float(value.strip())
-            except ValueError:
-                continue
+        root = str(plugin["mounted_asset_root"]).rstrip("/")
+        if package.startswith(root + "/"):
+            return Path(str(plugin.get("content_directory"))) / (package.removeprefix(root + "/") + ".uasset")
     return None
 
 
-def _nested_defaults(params: dict[str, Any]) -> dict[str, Any]:
-    defaults = params.get("defaults")
-    return defaults if isinstance(defaults, dict) else {}
+def _fingerprint(store: SnapshotStore, asset: str) -> dict[str, Any]:
+    path = _package_file(store, asset)
+    if not path or not path.exists():
+        return {"asset": asset, "exists": False, "sha256": None, "size": 0, "mtime_ns": None}
+    data = path.read_bytes()
+    stat = path.stat()
+    return {"asset": asset, "exists": True, "sha256": "sha256:" + hashlib.sha256(data).hexdigest(), "size": len(data), "mtime_ns": stat.st_mtime_ns}
 
 
-def _is_consecutive(values: list[int]) -> bool:
-    if len(values) < 5:
-        return False
-    deltas = [right - left for left, right in zip(values, values[1:])]
-    return all(delta == 1 for delta in deltas) or all(delta == -1 for delta in deltas)
+def _quality_diagnostics(operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    print_count = sum(1 for item in operations if item.get("type") == "blueprint.add_print_string_node")
+    delay_count = sum(1 for item in operations if item.get("type") == "blueprint.add_function_call_node" and "delay" in json.dumps(item.get("params") or {}).casefold())
+    if print_count >= 4 and delay_count >= 3:
+        return [{"severity": "warning", "blocking": False, "code": "UEPI_EDIT_BLUEPRINT_UNROLLED_COUNTDOWN", "message": "The plan appears to unroll repeated countdown behavior; prefer a timer/loop plus state variable when the catalog can express it.", "phase": "plan_quality", "retryable": False, "recoverable": True}]
+    return []
 
 
-def _plan_quality_diagnostics(operations: list[Any]) -> list[dict[str, Any]]:
-    """Warn about plans that are safe but likely poor Blueprint design."""
-    diagnostics: list[dict[str, Any]] = []
-    print_messages: list[str] = []
-    numeric_print_messages: list[int] = []
-    delay_durations: list[float] = []
-    new_graph_node_count = 0
-    connect_count = 0
-
-    for operation in operations:
-        op_type = _operation_type(operation)
-        params = _operation_params(operation)
-        if op_type.startswith("blueprint.") and op_type in {
-            "blueprint.add_event_node",
-            "blueprint.add_function_call_node",
-            "blueprint.add_variable_get_node",
-            "blueprint.add_variable_set_node",
-            "blueprint.add_branch_node",
-            "blueprint.add_print_string_node",
-        }:
-            new_graph_node_count += 1
-        if op_type == "blueprint.connect_pins":
-            connect_count += 1
-        if op_type == "blueprint.add_print_string_node":
-            message = _param_string(params, "message", "text", "in_string")
-            print_messages.append(message)
-            try:
-                numeric_print_messages.append(int(message))
-            except ValueError:
-                pass
-        elif op_type == "blueprint.add_function_call_node":
-            function_path = _param_string(params, "function_path", "function")
-            defaults = _nested_defaults(params)
-            duration = _param_number(defaults, "Duration", "duration")
-            if "KismetSystemLibrary:Delay" in function_path and duration is not None:
-                delay_durations.append(duration)
-
-    if _is_consecutive(numeric_print_messages) and len(delay_durations) >= len(numeric_print_messages) - 2:
-        diagnostics.append(
-            {
-                "severity": "warning",
-                "code": "UEPI_EDIT_BLUEPRINT_UNROLLED_COUNTDOWN",
-                "message": (
-                    "This preview appears to unroll a countdown into many PrintString and Delay nodes. "
-                    "Prefer a compact Blueprint design using a state variable plus loop/timer/custom event, "
-                    "or explain why an expanded visual script is required."
-                ),
-                "recoverable": True,
-                "recommended_agent_action": {
-                    "action": "revise_plan",
-                    "prefer": ["state_variable", "timer_or_loop", "function_or_custom_event"],
-                    "avoid": ["one_node_per_countdown_number"],
-                },
-            }
-        )
-    elif len(print_messages) >= 6 or len(delay_durations) >= 5:
-        diagnostics.append(
-            {
-                "severity": "warning",
-                "code": "UEPI_EDIT_BLUEPRINT_REPETITIVE_NODES",
-                "message": (
-                    "This preview creates many repeated Blueprint nodes. For maintainability and runtime behavior, "
-                    "consider a data-driven, loop/timer, function, or variable-based design before requesting approval."
-                ),
-                "recoverable": True,
-                "recommended_agent_action": {"action": "compare_design_alternatives_before_apply"},
-            }
-        )
-
-    if len(operations) >= 24 and new_graph_node_count >= 10 and connect_count >= 8:
-        diagnostics.append(
-            {
-                "severity": "warning",
-                "code": "UEPI_EDIT_BLUEPRINT_NODE_COUNT_HIGH",
-                "message": (
-                    "This Blueprint edit plan has a high operation and node count. Include a design rationale and "
-                    "check whether a smaller graph using variables, helper functions, loops, or timers would satisfy the request better."
-                ),
-                "operation_count": len(operations),
-                "new_graph_node_count": new_graph_node_count,
-                "connect_count": connect_count,
-                "recoverable": True,
-            }
-        )
-
-    return diagnostics
-
-
-def _object_path_to_package_file(store: SnapshotStore, object_path: str) -> Path | None:
-    if not object_path.startswith("/Game/"):
+def _wait_refresh(store: SnapshotStore, request_path: str, timeout_seconds: float = 30.0) -> dict[str, Any] | None:
+    path = Path(request_path)
+    try:
+        initial = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
         return None
-    package = object_path.split(".", 1)[0]
-    relative = package.removeprefix("/Game/").replace("/", "\\")
-    return (_project_root(store) / "Content" / f"{relative}.uasset").resolve()
+    request_id = str(initial.get("request_id") or "")
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while time.monotonic() < deadline:
+        for candidate in store.requests_dir.glob("*.json"):
+            try:
+                value = json.loads(candidate.read_text(encoding="utf-8-sig"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if str(value.get("request_id") or "") != request_id:
+                continue
+            if str(value.get("status") or "").casefold() in {"succeeded", "completed", "failed", "cancelled", "expired", "aborted"}:
+                value["request_path"] = str(candidate)
+                return value
+        time.sleep(0.1)
+    return {"request_id": request_id, "status": "wait_timeout", "request_path": request_path}
 
 
-def _write_backup_artifact(store: SnapshotStore, transaction_id: str, affected_assets: list[str]) -> dict[str, Any]:
-    artifact_dir = _backup_root(store) / transaction_id
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    project_root = _project_root(store).resolve()
-    files: list[dict[str, Any]] = []
-    for asset in affected_assets:
-        source = _object_path_to_package_file(store, asset)
-        if source is None:
-            files.append({"asset": asset, "status": "unsupported_path", "reason": "Only /Game package paths can be mapped without the editor."})
-            continue
-        try:
-            source.relative_to(project_root)
-        except ValueError:
-            files.append({"asset": asset, "source": str(source), "status": "outside_project"})
-            continue
-        if not source.exists():
-            files.append({"asset": asset, "source": str(source), "status": "missing"})
-            continue
-        size = source.stat().st_size
-        if size > MAX_BACKUP_FILE_BYTES:
-            files.append({"asset": asset, "source": str(source), "size_bytes": size, "status": "too_large"})
-            continue
-        destination = artifact_dir / _safe_file_stem(source.relative_to(project_root).as_posix())
-        shutil.copy2(source, destination)
-        files.append(
-            {
-                "asset": asset,
-                "source": str(source),
-                "backup_path": str(destination),
-                "size_bytes": size,
-                "status": "copied",
-            }
-        )
+def _runtime_ticket(store: SnapshotStore, plan: dict[str, Any]) -> dict[str, Any]:
+    ticket_id = f"uepi-runtime-ticket:{uuid4().hex}"
+    ticket = {
+        "schema_version": "uepi.runtime-ticket.v1",
+        "ticket_id": ticket_id,
+        "transaction_id": plan.get("transaction_id"),
+        "plan_hash": plan.get("plan_hash"),
+        "project_binding_id": plan.get("project_binding_id"),
+        "editor_session_id": plan.get("editor_session_id"),
+        "created_at": _iso(_now()),
+        "expires_at": _iso(_now() + timedelta(minutes=20)),
+        "allowed_actions": ["start", "stop", "input", "invoke", "read", "wait", "assert"],
+    }
+    directory = store.store_dir / "runtime"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{ticket_id.replace(':', '-')}.json").write_text(json.dumps(ticket, ensure_ascii=False, indent=2), encoding="utf-8")
+    return ticket
 
-    manifest = {
-        "schema_version": BACKUP_ARTIFACT_SCHEMA,
+
+def discover(store: SnapshotStore) -> dict[str, Any]:
+    identity = _identity(store)
+    catalog, diagnostics, bridge_error = load_catalog(store, identity, refresh=True)
+    operations = list((catalog or {}).get("operations") or [])
+    return _response(
+        store,
+        tool="uepi_edit_discover",
+        operation="operation_catalog",
+        result={
+            "profile": "codex",
+            "legacy_profile_alias": "codex_write_alpha",
+            "default_enabled": True,
+            "apply_enabled": bool(catalog and any(item.get("apply_supported") for item in operations if isinstance(item, dict))),
+            "catalog": catalog,
+            "operations": operations,
+            "bridge_error": bridge_error,
+        },
+        diagnostics=diagnostics,
+    )
+
+
+def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None = None, evidence: list[Any] | None = None) -> dict[str, Any]:
+    identity = _identity(store)
+    catalog, diagnostics, bridge_error = load_catalog(store, identity, refresh=True)
+    descriptors = operation_map(catalog)
+    if not catalog:
+        blocking = {"severity": "error", "blocking": True, "code": "UEPI_EDIT_CATALOG_UNAVAILABLE", "message": "Preview requires the exact-project Editor Operation Registry.", "phase": "preview", "retryable": True, "recoverable": True}
+        return _response(store, tool="uepi_edit_preview", operation="preview", error={"code": blocking["code"], "message": blocking["message"], "retryable": True, "candidates": []}, diagnostics=diagnostics + [blocking])
+
+    normalized: list[dict[str, Any]] = []
+    affected: list[str] = []
+    seen_ids: set[str] = set()
+    for index, raw in enumerate(operations or []):
+        op_id, op_type, params, depends_on = _operation_parts(raw, index)
+        descriptor = descriptors.get(op_type)
+        if not descriptor or not descriptor.get("apply_supported"):
+            diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_EDIT_OPERATION_UNSUPPORTED", "message": f"Operation is not apply-supported by the active Editor Registry: {op_type}", "phase": "preview", "operation_index": index, "operation_id": op_id, "retryable": False, "recoverable": True})
+            continue
+        if op_id in seen_ids or any(dependency not in seen_ids for dependency in depends_on):
+            diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_EDIT_OPERATION_DEPENDENCY_INVALID", "message": f"Operation dependency order is invalid: {op_id}", "phase": "preview", "operation_index": index, "operation_id": op_id, "retryable": False, "recoverable": True})
+            continue
+        seen_ids.add(op_id)
+        normalized.append({"operation_id": op_id, "type": op_type, "params": params, "depends_on": depends_on, "if_exists": str((raw or {}).get("if_exists") or "fail") if isinstance(raw, dict) else "fail"})
+        affected.extend(_target_values(params, descriptor))
+
+    diagnostics.extend(_quality_diagnostics(normalized))
+    affected = sorted(set(affected))
+    status = resolve_status(store, _state(store), identity, probe_bridge=True)
+    session_id = str(status["editor"].get("session_id") or "")
+    if not session_id:
+        diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_EDITOR_SESSION_REQUIRED", "message": "Preview for a writable plan requires an exact live Editor session.", "phase": "preview", "retryable": True, "recoverable": True})
+    if any(item.get("blocking") for item in diagnostics):
+        return _response(store, tool="uepi_edit_preview", operation="preview", error={"code": next(item["code"] for item in diagnostics if item.get("blocking")), "message": "Edit Preview is blocked; no Apply action is available.", "retryable": False, "candidates": []}, diagnostics=diagnostics)
+
+    transaction_id = f"uepi-tx:{uuid4().hex}"
+    created = _now()
+    plan = {
+        "schema_version": PLAN_SCHEMA,
         "transaction_id": transaction_id,
-        "created_at_utc": _now(),
-        "artifact_uri": f"uepi://artifact/backups/{transaction_id}",
-        "artifact_directory": str(artifact_dir),
-        "affected_assets": affected_assets,
-        "files": files,
+        "intent": intent,
+        "created_at": _iso(created),
+        "expires_at": _iso(created + timedelta(minutes=10)),
+        "project_id": identity.get("project_id"),
+        "project_binding_id": identity.get("project_binding_id"),
+        "editor_session_id": session_id,
+        "catalog_version": catalog.get("catalog_version"),
+        "catalog_hash": catalog.get("catalog_hash"),
+        "engine_version": catalog.get("engine_version"),
+        "plugin_build_id": catalog.get("plugin_build_id"),
+        "approval_nonce": uuid4().hex,
+        "operations": normalized,
+        "affected_assets": affected,
+        "before_fingerprints": [_fingerprint(store, asset) for asset in affected],
+        "dirty_policy": "fail",
+        "save_policy": "touched_only",
+        "validation_policy": "typed_registry",
+        "evidence": evidence or [],
     }
-    manifest_path = artifact_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {
-        "required": True,
-        "artifact_uri": manifest["artifact_uri"],
-        "artifact_directory": str(artifact_dir),
-        "manifest_path": str(manifest_path),
-        "file_count": len(files),
-        "copied_file_count": sum(1 for item in files if item.get("status") == "copied"),
-    }
+    plan["plan_hash"] = canonical_plan_hash(plan)
+    path = _plan_path(store, transaction_id.replace(":", "-"))
+    path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+    audit_path = _audit(store, {"event": "preview", "transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "affected_assets": affected})
+    return _response(
+        store,
+        tool="uepi_edit_preview",
+        operation="preview",
+        result={"plan": plan, "audit_path": audit_path, "approval_request": {"transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "approval_nonce": plan["approval_nonce"], "summary": intent, "affected_assets": affected}},
+        diagnostics=diagnostics,
+        next_actions=[{"reason": "Apply only after one explicit user approval of this immutable plan.", "tool": "uepi_edit_apply", "arguments": {"transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "approval_nonce": plan["approval_nonce"], "approved": True}}],
+    )
 
 
 def _load_plan(store: SnapshotStore, transaction_id: str) -> dict[str, Any] | None:
-    if not transaction_id:
-        return None
-    path = _edit_dir(store) / f"{transaction_id}.json"
-    if not path.exists():
-        return None
+    path = _plan_path(store, transaction_id.replace(":", "-"))
     try:
         value = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
@@ -472,384 +278,64 @@ def _load_plan(store: SnapshotStore, transaction_id: str) -> dict[str, Any] | No
     return value if isinstance(value, dict) else None
 
 
-def discover(store: SnapshotStore) -> dict[str, Any]:
-    bridge_discover = call_bridge(store, "edit.discover", timeout=1.5)
-    bridge_operations: dict[str, dict[str, Any]] = {}
-    if bridge_discover.get("ok"):
-        for operation in (bridge_discover.get("result") or {}).get("operations") or []:
-            if isinstance(operation, dict) and isinstance(operation.get("name"), str):
-                bridge_operations[operation["name"]] = operation
-
-    operations = []
-    for name, risk in SUPPORTED_PREVIEW_OPERATIONS.items():
-        bridge_operation = bridge_operations.get(name, {})
-        apply_supported = bool(bridge_operation.get("apply_supported"))
-        operations.append(
-            {
-                "name": name,
-                "status": bridge_operation.get("status") or ("alpha_apply" if apply_supported else "preview_supported"),
-                "risk": risk,
-                "preview_supported": True,
-                "apply_supported": apply_supported,
-                "required_evidence": ["uepi_status", "uepi_context_or_domain_read", "affected_asset_path"],
-            }
-        )
-    apply_enabled = any(item.get("apply_supported") for item in operations)
-    return _response(
-        store,
-        tool="uepi_edit_discover",
-        operation="discover",
-        result={
-            "schema_version": "uepi.edit-discover.v1",
-            "profile": "codex",
-            "legacy_profile_alias": "codex_write_alpha",
-            "default_enabled": True,
-            "apply_enabled": apply_enabled,
-            "bridge": {
-                "connected": bool(bridge_discover.get("ok")),
-                "discover": bridge_discover,
-            },
-            "plan_schema_version": EDIT_PLAN_SCHEMA,
-            "operations": operations,
-            "safety_rules": [
-                "No low-level write operation is exposed as an MCP tool.",
-                "Build the complete intended edit as one edit_preview plan whenever possible, then ask for one user approval before edit_apply.",
-                "Before previewing Blueprint graph edits, compare at least one compact/idiomatic design against any expanded node-by-node design.",
-                "Avoid unrolling repeated gameplay behavior into many duplicate nodes unless the user explicitly asks for that visual shape.",
-                "Use operation refs/node_ref endpoints when later operations need nodes created earlier in the same plan.",
-                "edit_preview must produce a transaction_id before edit_apply.",
-                "edit_apply requires the live editor bridge and approved=true after user review.",
-                "Forbidden operations include arbitrary Python, console commands, deletes, save_all, PIE, config writes, and source-control submit.",
-                "Apply requires user approval, scoped operations, backup artifacts, validation, rescan, and diff.",
-            ],
-            "blueprint_plan_guidance": {
-                "design_goals": [
-                    "Prefer maintainable, compact, idiomatic Blueprint graphs over mechanically expanded graphs.",
-                    "For repeated or time-based behavior, prefer variables plus loops, timers, custom events, or helper functions.",
-                    "Prefer reusable logic and state over one node per repeated value, unless the user asks for an explicit visual sequence.",
-                    "Keep runtime behavior clear: avoid latent Delay chains for scalable gameplay logic when a timer or loop is more appropriate.",
-                ],
-                "preview_evidence": [
-                    "Summarize the design alternatives considered.",
-                    "Explain why the chosen design is simpler, more performant, or more maintainable.",
-                    "State any UEPI operation-catalog limitation that forced a less ideal graph shape.",
-                ],
-                "quality_warnings": [
-                    "UEPI_EDIT_BLUEPRINT_UNROLLED_COUNTDOWN",
-                    "UEPI_EDIT_BLUEPRINT_REPETITIVE_NODES",
-                    "UEPI_EDIT_BLUEPRINT_NODE_COUNT_HIGH",
-                ],
-            },
-        },
-        next_actions=[
-            {
-                "reason": "Generate a dry-run operation plan from a user intent before requesting approval.",
-                "tool": "uepi_edit_preview",
-                "arguments": {"intent": "<user requested edit>", "operations": []},
-            }
-        ],
-    )
-
-
-def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None = None, evidence: list[Any] | None = None) -> dict[str, Any]:
-    transaction_id = f"uepi-preview-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
-    clean_operations = operations if isinstance(operations, list) else []
-    clean_evidence = evidence if isinstance(evidence, list) else []
-    affected_assets = _extract_affected_assets(clean_operations, clean_evidence)
-    diagnostics = _operation_diagnostics(clean_operations)
-    backup = _write_backup_artifact(store, transaction_id, affected_assets)
-    risk_level = _risk_level(clean_operations)
-    bridge_discover = call_bridge(store, "edit.discover", timeout=1.5)
-    supported_apply = set()
-    if bridge_discover.get("ok"):
-        for operation in (bridge_discover.get("result") or {}).get("operations") or []:
-            if isinstance(operation, dict) and operation.get("apply_supported") and isinstance(operation.get("name"), str):
-                supported_apply.add(operation["name"])
-    plan_operation_types = [_operation_type(operation) for operation in clean_operations]
-    apply_supported = bool(clean_operations) and bool(supported_apply) and all(op_type in supported_apply for op_type in plan_operation_types)
-    apply_reasons = [] if apply_supported else ["Bridge apply is unavailable or the plan includes operations without alpha executors."]
-    if any(item.get("severity") == "error" for item in diagnostics):
-        apply_reasons.append("The plan includes invalid or blocked operations.")
-    plan = {
-        "schema_version": EDIT_PLAN_SCHEMA,
-        "schema_aliases": ["uepi.edit-plan.v1"],
-        "transaction_id": transaction_id,
-        "created_at_utc": _now(),
-        "status": "preview_only",
-        "intent": intent,
-        "operations": clean_operations,
-        "evidence": clean_evidence,
-        "affected_assets": affected_assets,
-        "risk": {
-            "level": risk_level,
-            "requires_user_approval": True,
-            "blocked_operation_count": sum(1 for item in diagnostics if item.get("code") == "UEPI_EDIT_OPERATION_BLOCKED"),
-        },
-        "safety": {
-            "dry_run": True,
-            "mutates_unreal_assets": False,
-            "forbidden_operations": sorted(BLOCKED_OPERATIONS),
-            "requires_editor_bridge": True,
-            "allow_saving": False,
-        },
-        "bridge": {
-            "connected": bool(bridge_discover.get("ok")),
-            "discover": bridge_discover,
-        },
-        "backup": backup,
-        "requires_user_approval": True,
-        "apply_supported": apply_supported,
-        "validation_plan": [
-            "Open editor bridge session.",
-            "Run scoped transaction.",
-            "Compile or validate touched assets.",
-            "Run targeted Snapshot refresh.",
-            "Return uepi_diff or equivalent live Snapshot evidence against the previous generation.",
-        ],
-        "rollback_plan": {
-            "strategy": "transaction_undo_or_backup_restore",
-            "backup_artifact": backup["artifact_uri"],
-            "save_required_for_persistence": False,
-        },
-        "diagnostics": diagnostics,
-        "rejection_reasons": apply_reasons,
+def apply(store: SnapshotStore, transaction_id: str = "", approved: bool = False, plan_hash: str = "", approval_nonce: str = "") -> dict[str, Any]:
+    plan = _load_plan(store, transaction_id)
+    if not plan:
+        return _response(store, tool="uepi_edit_apply", operation="apply", error={"code": "UEPI_EDIT_PLAN_NOT_FOUND", "message": "Preview plan was not found.", "retryable": False, "candidates": []})
+    result_path = _result_path(store, transaction_id.replace(":", "-"))
+    if result_path.exists():
+        return _response(store, tool="uepi_edit_apply", operation="apply", result={"idempotent_replay": True, "apply": json.loads(result_path.read_text(encoding="utf-8-sig"))})
+    if not approved or plan_hash != plan.get("plan_hash") or approval_nonce != plan.get("approval_nonce") or not verify_plan_hash(plan):
+        return _response(store, tool="uepi_edit_apply", operation="apply", error={"code": "UEPI_EDIT_APPROVAL_MISMATCH", "message": "Apply approval does not match the immutable Preview plan.", "retryable": False, "candidates": []})
+    expires = datetime.fromisoformat(str(plan.get("expires_at")).replace("Z", "+00:00"))
+    if expires < _now():
+        return _response(store, tool="uepi_edit_apply", operation="apply", error={"code": "UEPI_EDIT_PLAN_EXPIRED", "message": "Preview plan expired; run Preview again.", "retryable": False, "candidates": []})
+    identity = _identity(store)
+    catalog, diagnostics, bridge_error = load_catalog(store, identity, refresh=True)
+    if not catalog or catalog.get("catalog_hash") != plan.get("catalog_hash"):
+        return _response(store, tool="uepi_edit_apply", operation="apply", error={"code": "UEPI_EDIT_CATALOG_STALE", "message": "Operation catalog changed after Preview.", "retryable": False, "candidates": []}, diagnostics=diagnostics)
+    response = call_bridge(store, "edit.apply", {"transaction_id": transaction_id, "approved": True, "plan_hash": plan_hash, "approval_nonce": approval_nonce, "save": True, "plan": plan}, timeout=30.0, expected_identity=identity, expected_editor_session_id=str(plan.get("editor_session_id") or ""))
+    if not response.get("ok"):
+        code = str((response.get("error") or {}).get("code") or next((item.get("code") for item in response.get("diagnostics") or [] if isinstance(item, dict)), "UEPI_EDIT_APPLY_FAILED"))
+        return _response(store, tool="uepi_edit_apply", operation="apply", error={"code": code, "message": str((response.get("error") or {}).get("message") or "Editor Apply failed during preflight or execution."), "retryable": False, "candidates": []}, diagnostics=diagnostics + list(response.get("diagnostics") or []))
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    refresh_result = _wait_refresh(store, str(result.get("refresh_request_path") or "")) if result.get("refresh_request_path") else None
+    after_fingerprints = [_fingerprint(store, asset) for asset in plan.get("affected_assets") or []]
+    result["transaction_diff"] = build_transaction_diff(plan, result, after_fingerprints)
+    runtime_ticket = _runtime_ticket(store, plan) if result.get("validation_ok") and result.get("saved") else None
+    result["post_apply"] = {
+        "validated": bool(result.get("validation_ok")),
+        "saved": bool(result.get("saved")),
+        "refresh_request_path": result.get("refresh_request_path"),
+        "refresh": refresh_result,
+        "diff_ready": True,
+        "runtime_ticket": runtime_ticket,
     }
-    path = _edit_dir(store) / f"{transaction_id}.json"
-    path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
-    audit_path = _write_audit(
-        store,
-        {
-            "event": "edit.preview",
-            "transaction_id": transaction_id,
-            "plan_path": str(path),
-            "backup_artifact": backup["artifact_uri"],
-            "affected_assets": affected_assets,
-            "risk_level": risk_level,
-        },
-    )
-    return _response(
-        store,
-        tool="uepi_edit_preview",
-        operation="preview",
-        result={"plan": plan, "plan_path": str(path), "audit_path": str(audit_path)},
-        diagnostics=diagnostics,
-        next_actions=[
-            {
-                "reason": "Review the preview with the user before any apply attempt.",
-                "tool": "uepi_edit_apply",
-                "arguments": {"transaction_id": transaction_id, "approved": True},
-            }
-        ],
-    )
-
-
-def reject_apply(store: SnapshotStore, transaction_id: str = "") -> dict[str, Any]:
-    plan = _load_plan(store, transaction_id)
-    audit_path = _write_audit(
-        store,
-        {
-            "event": "edit.apply",
-            "transaction_id": transaction_id,
-            "status": "rejected",
-            "reason": "edit_apply_disabled",
-            "plan_found": bool(plan),
-        },
-    )
-    return _response(
-        store,
-        tool="uepi_edit_apply",
-        operation="apply",
-        error={
-            "code": "UEPI_EDIT_APPLY_DISABLED",
-            "message": "UEPI edit apply requires the live editor bridge and explicit user approval.",
-            "retryable": False,
-            "candidates": [],
-        },
-        diagnostics=[
-            {
-                "severity": "warning",
-                "code": "UEPI_EDIT_APPLY_DISABLED",
-                "message": "No Unreal asset was modified because edit apply is not enabled for this session.",
-                "audit_path": str(audit_path),
-                "plan_found": bool(plan),
-                "recoverable": False,
-                "recommended_user_action": "Open the Unreal Editor with the UEPI live bridge enabled, then retry after reviewing a preview plan.",
-                "recommended_agent_action": {"tool": "uepi_edit_discover"},
-            }
-        ],
-        next_actions=[],
-    )
-
-
-def apply(store: SnapshotStore, transaction_id: str = "", approved: bool = False) -> dict[str, Any]:
-    plan = _load_plan(store, transaction_id)
-    if plan is None:
-        audit_path = _write_audit(
-            store,
-            {
-                "event": "edit.apply",
-                "transaction_id": transaction_id,
-                "status": "rejected",
-                "reason": "plan_not_found",
-            },
-        )
-        return _response(
-            store,
-            tool="uepi_edit_apply",
-            operation="apply",
-            error={
-                "code": "UEPI_EDIT_PLAN_NOT_FOUND",
-                "message": "edit_apply requires a transaction_id produced by edit_preview.",
-                "retryable": False,
-                "candidates": [],
-            },
-            result={"audit_path": str(audit_path)},
-        )
-    if not approved:
-        audit_path = _write_audit(
-            store,
-            {
-                "event": "edit.apply",
-                "transaction_id": transaction_id,
-                "status": "rejected",
-                "reason": "approval_missing",
-            },
-        )
-        return _response(
-            store,
-            tool="uepi_edit_apply",
-            operation="apply",
-            error={
-                "code": "UEPI_EDIT_APPROVAL_REQUIRED",
-                "message": "edit_apply requires approved=true after user review.",
-                "retryable": False,
-                "candidates": [],
-            },
-            result={"plan": plan, "audit_path": str(audit_path)},
-        )
-
-    bridge_result = call_bridge(
-        store,
-        "edit.apply",
-        {"transaction_id": transaction_id, "approved": True, "plan": plan},
-        timeout=30.0,
-    )
-    audit_path = _write_audit(
-        store,
-        {
-            "event": "edit.apply",
-            "transaction_id": transaction_id,
-            "status": "applied" if bridge_result.get("ok") else "failed",
-            "bridge_ok": bool(bridge_result.get("ok")),
-            "affected_assets": plan.get("affected_assets") if isinstance(plan.get("affected_assets"), list) else [],
-        },
-    )
-    if not bridge_result.get("ok"):
-        bridge_error = bridge_result.get("error") or {}
-        bridge_code = str(bridge_error.get("code") or "")
-        edit_code = "UEPI_EDIT_BRIDGE_REQUIRED" if bridge_code.startswith("UEPI_BRIDGE_") else bridge_code or "UEPI_EDIT_BRIDGE_APPLY_FAILED"
-        return _response(
-            store,
-            tool="uepi_edit_apply",
-            operation="apply",
-            error={
-                "code": edit_code,
-                "message": bridge_error.get("message") or "Editor bridge rejected or failed edit.apply.",
-                "bridge_error_code": bridge_code,
-                "retryable": False,
-                "candidates": [],
-            },
-            result={"plan": plan, "bridge": bridge_result, "audit_path": str(audit_path)},
-            diagnostics=bridge_result.get("diagnostics") if isinstance(bridge_result.get("diagnostics"), list) else [],
-        )
-    return _response(
-        store,
-        tool="uepi_edit_apply",
-        operation="apply",
-        result={"plan": plan, "bridge": bridge_result, "audit_path": str(audit_path)},
-        diagnostics=bridge_result.get("diagnostics") if isinstance(bridge_result.get("diagnostics"), list) else [],
-        next_actions=[
-            {
-                "reason": "Validate compile status and refresh/diff evidence after apply.",
-                "tool": "uepi_edit_validate",
-                "arguments": {"transaction_id": transaction_id},
-            }
-        ],
-    )
+    result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    audit_path = _audit(store, {"event": "apply", "transaction_id": transaction_id, "plan_hash": plan_hash, "result": result})
+    next_actions = [{"reason": "Inspect the transaction-bound semantic diff.", "tool": "uepi_diff", "arguments": {"mode": "transaction", "transaction_id": transaction_id}}]
+    if runtime_ticket:
+        next_actions.append({"reason": "Start controlled PIE verification for the approved transaction.", "tool": "uepi_runtime", "arguments": {"action": "start", "ticket_id": runtime_ticket["ticket_id"]}})
+    return _response(store, tool="uepi_edit_apply", operation="apply", result={"apply": result, "transaction_diff": result["transaction_diff"], "runtime_ticket": runtime_ticket, "audit_path": audit_path}, diagnostics=diagnostics + list(response.get("diagnostics") or []), next_actions=next_actions)
 
 
 def validate(store: SnapshotStore, transaction_id: str = "") -> dict[str, Any]:
     plan = _load_plan(store, transaction_id)
-    bridge_result = call_bridge(
-        store,
-        "edit.validate",
-        {"transaction_id": transaction_id, "plan": plan} if plan is not None else {"transaction_id": transaction_id},
-        timeout=30.0,
-    )
-    audit_path = _write_audit(
-        store,
-        {
-            "event": "edit.validate",
-            "transaction_id": transaction_id,
-            "status": "validated" if bridge_result.get("ok") else "failed",
-            "plan_found": bool(plan),
-            "bridge_ok": bool(bridge_result.get("ok")),
-        },
-    )
-    if bridge_result.get("ok"):
-        return _response(
-            store,
-            tool="uepi_edit_validate",
-            operation="validate",
-            result={"plan_found": bool(plan), "bridge": bridge_result, "audit_path": str(audit_path)},
-            diagnostics=bridge_result.get("diagnostics") if isinstance(bridge_result.get("diagnostics"), list) else [],
-            next_actions=[{"reason": "Use uepi_diff after the targeted refresh has produced a new Snapshot generation.", "tool": "uepi_diff", "arguments": {}}],
-        )
-    return _response(
-        store,
-        tool="uepi_edit_validate",
-        operation="validate",
-        error={
-            "code": (bridge_result.get("error") or {}).get("code") or "UEPI_EDIT_VALIDATE_UNAVAILABLE",
-            "message": (bridge_result.get("error") or {}).get("message") or "Editor bridge validation is unavailable.",
-            "retryable": False,
-            "candidates": [],
-        },
-        result={"plan_found": bool(plan), "bridge": bridge_result, "audit_path": str(audit_path)},
-        next_actions=[{"reason": "Use uepi_diff for saved Snapshot generation comparisons.", "tool": "uepi_diff", "arguments": {}}],
-    )
+    if not plan:
+        return _response(store, tool="uepi_edit_validate", operation="validate", error={"code": "UEPI_EDIT_PLAN_NOT_FOUND", "message": "Edit plan was not found.", "retryable": False, "candidates": []})
+    response = call_bridge(store, "edit.validate", {"transaction_id": transaction_id, "plan": plan}, timeout=20.0, expected_identity=_identity(store), expected_editor_session_id=str(plan.get("editor_session_id") or ""))
+    if not response.get("ok"):
+        code = str((response.get("error") or {}).get("code") or next((item.get("code") for item in response.get("diagnostics") or [] if isinstance(item, dict)), "UEPI_EDIT_VALIDATE_FAILED"))
+        return _response(store, tool="uepi_edit_validate", operation="validate", error={"code": code, "message": "Typed validation failed.", "retryable": False, "candidates": []}, diagnostics=list(response.get("diagnostics") or []))
+    return _response(store, tool="uepi_edit_validate", operation="validate", result=response.get("result") or {}, diagnostics=list(response.get("diagnostics") or []))
 
 
 def rollback(store: SnapshotStore, transaction_id: str = "") -> dict[str, Any]:
     plan = _load_plan(store, transaction_id)
-    bridge_result = call_bridge(store, "edit.rollback", {"transaction_id": transaction_id}, timeout=10.0)
-    audit_path = _write_audit(
-        store,
-        {
-            "event": "edit.rollback",
-            "transaction_id": transaction_id,
-            "status": "rolled_back" if bridge_result.get("ok") else "failed",
-            "plan_found": bool(plan),
-            "bridge_ok": bool(bridge_result.get("ok")),
-        },
-    )
-    if bridge_result.get("ok"):
-        return _response(
-            store,
-            tool="uepi_edit_rollback",
-            operation="rollback",
-            result={"plan_found": bool(plan), "bridge": bridge_result, "audit_path": str(audit_path)},
-        )
-    return _response(
-        store,
-        tool="uepi_edit_rollback",
-        operation="rollback",
-        error={
-            "code": (bridge_result.get("error") or {}).get("code") or "UEPI_EDIT_ROLLBACK_UNAVAILABLE",
-            "message": (bridge_result.get("error") or {}).get("message") or "Editor bridge rollback is unavailable.",
-            "retryable": False,
-            "candidates": [],
-        },
-        result={"plan_found": bool(plan), "bridge": bridge_result, "audit_path": str(audit_path)},
-        next_actions=[],
-    )
+    expected_session = str((plan or {}).get("editor_session_id") or "")
+    response = call_bridge(store, "edit.rollback", {"transaction_id": transaction_id}, timeout=30.0, expected_identity=_identity(store), expected_editor_session_id=expected_session or None)
+    if not response.get("ok"):
+        code = str((response.get("error") or {}).get("code") or next((item.get("code") for item in response.get("diagnostics") or [] if isinstance(item, dict)), "UEPI_EDIT_ROLLBACK_FAILED"))
+        return _response(store, tool="uepi_edit_rollback", operation="rollback", error={"code": code, "message": "Rollback failed or did not verify.", "retryable": False, "candidates": []}, diagnostics=list(response.get("diagnostics") or []))
+    _audit(store, {"event": "rollback", "transaction_id": transaction_id, "result": response.get("result")})
+    return _response(store, tool="uepi_edit_rollback", operation="rollback", result=response.get("result") or {}, diagnostics=list(response.get("diagnostics") or []))

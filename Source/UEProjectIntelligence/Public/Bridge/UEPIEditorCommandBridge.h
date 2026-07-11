@@ -35,6 +35,8 @@ namespace UE::ProjectIntelligence
 		TSharedRef<FJsonObject> SelectionResult(const FString& RequestId) const;
 		TSharedRef<FJsonObject> OutputLogResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const;
 		TSharedRef<FJsonObject> WorldReadResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const;
+		TSharedRef<FJsonObject> SchemaResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const;
+		TSharedRef<FJsonObject> RuntimeResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params);
 		TSharedRef<FJsonObject> RefreshNowResult(const FString& RequestId, const TArray<FString>& Targets, const FString& DataMode) const;
 		TSharedRef<FJsonObject> ViewportCaptureUnsupported(const FString& RequestId) const;
 		TSharedRef<FJsonObject> EditDiscoverResult(const FString& RequestId) const;
@@ -50,6 +52,11 @@ namespace UE::ProjectIntelligence
 		FString Token;
 		FString LastAppliedTransactionId;
 		FString LastAppliedSummary;
+		TMap<FString, FString> LastAppliedBackupFiles;
+		TArray<FString> LastAppliedAffectedAssets;
+		bool bLastAppliedSaved = false;
+		FString OwnedRuntimeSessionId;
+		bool bOwnsPIESession = false;
 		int32 Port = 0;
 		bool bActive = false;
 		TUniquePtr<FTcpListener> Listener;

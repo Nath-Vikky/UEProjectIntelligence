@@ -14,7 +14,7 @@ try:
     from .projections import apply_response_options
     from .identity import project_guard_diagnostics
     from .status import resolve_status
-    from . import editor, refresh, world
+    from . import diff as diff_service, editor, refresh, runtime, schema_service, world
     from .result import tool_response
 except ImportError:  # Allows direct execution as a script from Codex config.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -24,7 +24,7 @@ except ImportError:  # Allows direct execution as a script from Codex config.
     from uepi.projections import apply_response_options  # type: ignore
     from uepi.identity import project_guard_diagnostics  # type: ignore
     from uepi.status import resolve_status  # type: ignore
-    from uepi import editor, refresh, world  # type: ignore
+    from uepi import diff as diff_service, editor, refresh, runtime, schema_service, world  # type: ignore
     from uepi.result import tool_response  # type: ignore
 
 
@@ -172,6 +172,8 @@ TOOLS: list[dict[str, Any]] = [
             {
                 "from_generation": {"type": "integer"},
                 "to_generation": {"type": "integer"},
+                "mode": {"type": "string", "enum": ["generation", "transaction"]},
+                "transaction_id": {"type": "string"},
             }
         ),
     },
@@ -226,6 +228,42 @@ TOOLS: list[dict[str, Any]] = [
             }
         ),
     },
+    {
+        "name": "uepi_schema",
+        "description": "Read authoritative Editor reflection, operation, Blueprint node, or runtime function schemas.",
+        "inputSchema": read_schema(
+            {
+                "action": {"type": "string", "enum": ["asset_property", "class_property", "edit_operation", "blueprint_node", "runtime_function"]},
+                "asset": {"type": "string"},
+                "class_path": {"type": "string"},
+                "query": {"type": "string"},
+                "graph_schema": {"type": "string"},
+                "kind": {"type": "string"},
+                "struct_path": {"type": "string"},
+                "max_depth": {"type": "integer"},
+                "include_examples": {"type": "boolean"},
+            }
+        ),
+    },
+    {
+        "name": "uepi_runtime",
+        "description": "Run transaction-bound, UEPI-owned PIE verification with guarded read, input, invoke, wait, and assert actions.",
+        "inputSchema": read_schema(
+            {
+                "action": {"type": "string", "enum": ["status", "start", "stop", "input", "invoke", "read", "wait", "assert", "automation", "job_status"]},
+                "ticket_id": {"type": "string"},
+                "map": {"type": "string"},
+                "object_path": {"type": "string"},
+                "property": {"type": "string"},
+                "function": {"type": "string"},
+                "key": {"type": "string"},
+                "event": {"type": "string", "enum": ["pressed", "released"]},
+                "equals": {},
+                "timeout_seconds": {"type": "number"},
+                "poll_interval_ms": {"type": "integer"},
+            }
+        ),
+    },
 ]
 
 WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
@@ -248,7 +286,15 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_edit_apply",
         "description": "Apply an approved UEPI edit plan through the live editor bridge when preview and approval gates pass.",
-        "inputSchema": object_schema({"transaction_id": {"type": "string"}, "approved": {"type": "boolean"}}),
+        "inputSchema": object_schema(
+            {
+                "transaction_id": {"type": "string"},
+                "plan_hash": {"type": "string"},
+                "approval_nonce": {"type": "string"},
+                "approved": {"type": "boolean"},
+            },
+            ["transaction_id", "plan_hash", "approval_nonce", "approved"],
+        ),
     },
     {
         "name": "uepi_edit_validate",
@@ -440,6 +486,8 @@ class UEPIMCPServer:
                     ), arguments
                 )
             if name == "uepi_diff":
+                if str(arguments.get("mode") or "generation") == "transaction":
+                    return self._read_result(diff_service.execute(engine, arguments), arguments)
                 return self._read_result(
                     engine.diff(
                         from_generation=arguments.get("from_generation") if isinstance(arguments.get("from_generation"), int) else None,
@@ -452,6 +500,10 @@ class UEPIMCPServer:
                 return self._read_result(world.execute(engine, arguments), arguments)
             if name == "uepi_refresh":
                 return self._read_result(refresh.execute(engine, arguments), arguments)
+            if name == "uepi_schema":
+                return self._read_result(schema_service.execute(engine, arguments), arguments)
+            if name == "uepi_runtime":
+                return self._read_result(runtime.execute(engine, arguments), arguments)
             if profile_includes_edit_tools(self.args.tool_profile):
                 if name == "uepi_edit_discover":
                     return tool_response(edit.discover(engine.store))
@@ -472,6 +524,8 @@ class UEPIMCPServer:
                             engine.store,
                             transaction_id=str(arguments.get("transaction_id") or ""),
                             approved=bool(arguments.get("approved", False)),
+                            plan_hash=str(arguments.get("plan_hash") or ""),
+                            approval_nonce=str(arguments.get("approval_nonce") or ""),
                         )
                     )
                 if name == "uepi_edit_validate":

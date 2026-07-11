@@ -25,9 +25,13 @@
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/Texture.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerInput.h"
 #include "EngineUtils.h"
 #include "Engine/Blueprint.h"
 #include "Factories/MaterialInstanceConstantFactoryNew.h"
+#include "Factories/DataAssetFactory.h"
+#include "FileHelpers.h"
 #include "GameFramework/Actor.h"
 #include "HAL/FileManager.h"
 #include "IAssetTools.h"
@@ -38,6 +42,8 @@
 #include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_IfThenElse.h"
+#include "K2Node_InputKey.h"
+#include "K2Node_MakeStruct.h"
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
 #include "EdGraphSchema_K2_Actions.h"
@@ -46,13 +52,19 @@
 #include "Kismet2/CompilerResultsLog.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "EdGraphSchema_K2.h"
+#include "Edit/UEPIEditOperationRegistry.h"
 #include "Logging/TokenizedMessage.h"
 #include "Materials/MaterialInstanceConstant.h"
+#include "Animation/AnimBlueprint.h"
+#include "Animation/Skeleton.h"
+#include "AnimGraphNode_Slot.h"
+#include "Engine/DataAsset.h"
 #include "MaterialTypes.h"
 #include "Misc/App.h"
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
+#include "Misc/EngineVersion.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeLock.h"
@@ -60,6 +72,9 @@
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformProcess.h"
 #include "ScopedTransaction.h"
+#include "PackageTools.h"
+#include "PlayInEditorDataTypes.h"
+#include "Reflection/UEPIPropertyCodec.h"
 #include "GenericPlatform/GenericPlatformOutputDevices.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonReader.h"
@@ -850,6 +865,26 @@ namespace UE::ProjectIntelligence
 			AddNodeReference(NodeRefs, JsonString(Params, TEXT("ref")), Node);
 			AddNodeReference(NodeRefs, JsonString(Params, TEXT("node_ref")), Node);
 			AddNodeReference(NodeRefs, JsonString(Params, TEXT("result_ref")), Node);
+		}
+
+		UEdGraphNode* ResolveNodeReference(UEdGraph* Graph, const TSharedPtr<FJsonObject>& Params, const TMap<FString, UEdGraphNode*>& NodeRefs, FString& OutError)
+		{
+			const FString NodeRef = JsonString(Params, TEXT("node_ref"), JsonString(Params, TEXT("ref")));
+			UEdGraphNode* Node = nullptr;
+			if (!NodeRef.IsEmpty())
+			{
+				if (UEdGraphNode* const* Found = NodeRefs.Find(NodeRef)) Node = *Found;
+			}
+			else
+			{
+				Node = FindNodeByGuid(Graph, JsonString(Params, TEXT("node_guid"), JsonString(Params, TEXT("node_id"))));
+			}
+			if (!Node || Node->GetGraph() != Graph)
+			{
+				OutError = TEXT("Node reference was not found in the requested graph.");
+				return nullptr;
+			}
+			return Node;
 		}
 
 		UEdGraphPin* ResolveEndpointPin(UEdGraph* Graph, const TSharedPtr<FJsonObject>& Params, const TCHAR* Prefix, const FString& DefaultDirection, const TMap<FString, UEdGraphNode*>& NodeRefs, UEdGraphNode*& OutNode, FString& OutError)
@@ -1770,6 +1805,12 @@ namespace UE::ProjectIntelligence
 
 	void FUEPIEditorCommandBridge::Stop()
 	{
+		if (bOwnsPIESession && GEditor)
+		{
+			if (GEditor->PlayWorld) GEditor->RequestEndPlayMap(); else GEditor->CancelRequestPlaySession();
+			bOwnsPIESession = false;
+			OwnedRuntimeSessionId.Reset();
+		}
 		FSocket* PendingSocket = nullptr;
 		while (PendingSockets.Dequeue(PendingSocket))
 		{
@@ -2001,6 +2042,14 @@ namespace UE::ProjectIntelligence
 		if (Command == TEXT("editor.read_world"))
 		{
 			return WorldReadResult(RequestId, Params);
+		}
+		if (Command == TEXT("schema.get"))
+		{
+			return SchemaResult(RequestId, Params);
+		}
+		if (Command == TEXT("runtime.control"))
+		{
+			return RuntimeResult(RequestId, Params);
 		}
 		if (Command == TEXT("asset.refresh_now"))
 		{
@@ -2255,6 +2304,144 @@ namespace UE::ProjectIntelligence
 		return SuccessResponse(RequestId, Result);
 	}
 
+	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::SchemaResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const
+	{
+		const FString Action = JsonString(Params, TEXT("action"), TEXT("class_property"));
+		const int32 MaxDepth = FMath::Clamp(JsonInt(Params, TEXT("max_depth"), 8), 1, 16);
+		if (Action == TEXT("class_property"))
+		{
+			const FString ClassPath = JsonString(Params, TEXT("class_path"));
+			UClass* Class = LoadObject<UClass>(nullptr, *ClassPath);
+			if (!Class)
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_SCHEMA_CLASS_NOT_FOUND"), FString::Printf(TEXT("Class was not found: %s"), *ClassPath));
+			}
+			return SuccessResponse(RequestId, FUEPIPropertyCodec::BuildSchema(Class, MaxDepth));
+		}
+		if (Action == TEXT("asset_property"))
+		{
+			const FString AssetPath = JsonString(Params, TEXT("asset"));
+			UObject* Object = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
+			if (!Object)
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_SCHEMA_ASSET_NOT_FOUND"), FString::Printf(TEXT("Asset was not found: %s"), *AssetPath));
+			}
+			TSharedRef<FJsonObject> Result = FUEPIPropertyCodec::BuildSchema(Object->GetClass(), MaxDepth);
+			Result->SetStringField(TEXT("asset"), Object->GetPathName());
+			return SuccessResponse(RequestId, Result);
+		}
+		if (Action == TEXT("blueprint_node"))
+		{
+			const FString Kind = JsonString(Params, TEXT("kind"));
+			const TSet<FString> SupportedKinds = { TEXT("custom_event"), TEXT("input_key"), TEXT("function_call"), TEXT("make_struct"), TEXT("variable_get"), TEXT("variable_set"), TEXT("branch"), TEXT("print_string"), TEXT("animgraph_slot") };
+			if (!SupportedKinds.Contains(Kind))
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_SCHEMA_BLUEPRINT_NODE_KIND_UNSUPPORTED"), FString::Printf(TEXT("Blueprint node kind is not registered: %s"), *Kind));
+			}
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetStringField(TEXT("schema_version"), TEXT("uepi.blueprint-node-schema.v1"));
+			Result->SetStringField(TEXT("kind"), Kind);
+			Result->SetStringField(TEXT("graph_schema"), JsonString(Params, TEXT("graph_schema"), Kind == TEXT("animgraph_slot") ? TEXT("AnimGraph") : TEXT("K2")));
+			Result->SetBoolField(TEXT("returns_real_pins_after_create"), true);
+			Result->SetStringField(TEXT("connection_rule"), TEXT("Use returned pin_id/name and Graph Schema; never guess pins."));
+			if (Kind == TEXT("make_struct"))
+			{
+				UScriptStruct* Struct = LoadObject<UScriptStruct>(nullptr, *JsonString(Params, TEXT("struct_path")));
+				if (!Struct || !UK2Node_MakeStruct::CanBeMade(Struct))
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_SCHEMA_STRUCT_NOT_MAKEABLE"), TEXT("The requested struct is unavailable or cannot be exposed as a Make Struct node."));
+				}
+				Result->SetObjectField(TEXT("struct_schema"), FUEPIPropertyCodec::BuildSchema(Struct, MaxDepth));
+			}
+			return SuccessResponse(RequestId, Result);
+		}
+		return ErrorResponse(RequestId, TEXT("UEPI_SCHEMA_ACTION_UNSUPPORTED"), FString::Printf(TEXT("Schema action is not implemented by the Editor Bridge: %s"), *Action));
+	}
+
+	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::RuntimeResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params)
+	{
+		const UUEPISettings* Settings = GetDefault<UUEPISettings>();
+		const FString Action = JsonString(Params, TEXT("action"), TEXT("status"));
+		UWorld* PIEWorld = GEditor ? GEditor->PlayWorld : nullptr;
+		if (Action == TEXT("status"))
+		{
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetStringField(TEXT("runtime_session_id"), OwnedRuntimeSessionId);
+			Result->SetStringField(TEXT("state"), PIEWorld ? TEXT("running") : (bOwnsPIESession ? TEXT("starting") : TEXT("stopped")));
+			Result->SetBoolField(TEXT("owned_by_uepi"), bOwnsPIESession);
+			Result->SetStringField(TEXT("map"), PIEWorld && PIEWorld->GetOutermost() ? PIEWorld->GetOutermost()->GetName() : FString());
+			return SuccessResponse(RequestId, Result);
+		}
+		if (!Settings || !Settings->bAllowPIEControl)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_CAPABILITY_DISABLED"), TEXT("Controlled PIE is disabled in UEPI Project Settings."));
+		}
+		if (Action == TEXT("start"))
+		{
+			if (PIEWorld || bOwnsPIESession)
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_ALREADY_RUNNING"), TEXT("A PIE session is already active or starting."));
+			}
+			FRequestPlaySessionParams SessionParams;
+			SessionParams.SessionDestination = EPlaySessionDestinationType::InProcess;
+			SessionParams.WorldType = EPlaySessionWorldType::PlayInEditor;
+			SessionParams.bAllowOnlineSubsystem = false;
+			SessionParams.GlobalMapOverride = JsonString(Params, TEXT("map"));
+			OwnedRuntimeSessionId = FString::Printf(TEXT("uepi-runtime:%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+			bOwnsPIESession = true;
+			GEditor->RequestPlaySession(SessionParams);
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>(); Result->SetStringField(TEXT("runtime_session_id"), OwnedRuntimeSessionId); Result->SetStringField(TEXT("state"), TEXT("starting")); return SuccessResponse(RequestId, Result);
+		}
+		if (Action == TEXT("stop"))
+		{
+			if (!bOwnsPIESession)
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_NOT_OWNER"), TEXT("UEPI will not stop a PIE session it did not start."));
+			}
+			if (PIEWorld) GEditor->RequestEndPlayMap(); else GEditor->CancelRequestPlaySession();
+			const FString StoppedSession = OwnedRuntimeSessionId; OwnedRuntimeSessionId.Reset(); bOwnsPIESession = false;
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>(); Result->SetStringField(TEXT("runtime_session_id"), StoppedSession); Result->SetStringField(TEXT("state"), TEXT("stopping")); return SuccessResponse(RequestId, Result);
+		}
+		if (!PIEWorld || !bOwnsPIESession)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_SESSION_REQUIRED"), TEXT("A UEPI-owned PIE session is required."));
+		}
+		if (Action == TEXT("input"))
+		{
+			APlayerController* Controller = PIEWorld->GetFirstPlayerController();
+			const FKey Key(FName(*JsonString(Params, TEXT("key"))));
+			const FString Event = JsonString(Params, TEXT("event"), TEXT("pressed"));
+			if (!Controller || !Key.IsValid()) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_INPUT_INVALID"), TEXT("PIE PlayerController or input key is invalid."));
+			const bool bHandled = Controller->InputKey(FInputKeyParams(Key, Event == TEXT("released") ? IE_Released : IE_Pressed, 1.0, false));
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>(); Result->SetBoolField(TEXT("handled"), bHandled); Result->SetStringField(TEXT("key"), Key.ToString()); return SuccessResponse(RequestId, Result);
+		}
+		const FString ObjectPath = JsonString(Params, TEXT("object_path"));
+		UObject* Object = FindObject<UObject>(nullptr, *ObjectPath);
+		if (!Object || Object->GetWorld() != PIEWorld)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_OBJECT_NOT_FOUND"), TEXT("Runtime object was not found in the owned PIE world."));
+		}
+		if (Action == TEXT("read"))
+		{
+			const FString PropertyName = JsonString(Params, TEXT("property"));
+			FProperty* Property = FindFProperty<FProperty>(Object->GetClass(), *PropertyName);
+			if (!Property) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_PROPERTY_NOT_FOUND"), TEXT("Runtime property was not found."));
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>(); Result->SetStringField(TEXT("object_path"), Object->GetPathName()); Result->SetStringField(TEXT("property"), PropertyName); Result->SetField(TEXT("value"), FUEPIPropertyCodec::ReadValue(Property, Property->ContainerPtrToValuePtr<void>(Object))); return SuccessResponse(RequestId, Result);
+		}
+		if (Action == TEXT("invoke"))
+		{
+			if (!Settings->bAllowRuntimeInvoke) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_INVOKE_DISABLED"), TEXT("Runtime invoke is disabled."));
+			UFunction* Function = Object->FindFunction(FName(*JsonString(Params, TEXT("function"))));
+			if (!Function || !Function->HasAnyFunctionFlags(FUNC_BlueprintCallable) || Function->HasAnyFunctionFlags(FUNC_Exec) || Function->HasMetaData(TEXT("Latent")) || Function->ParmsSize > 0)
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_FUNCTION_NOT_ALLOWED"), TEXT("Runtime function must be allowlisted by BlueprintCallable semantics, non-Exec, non-Latent, and parameterless in P0."));
+			}
+			Object->ProcessEvent(Function, nullptr);
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>(); Result->SetStringField(TEXT("object_path"), Object->GetPathName()); Result->SetStringField(TEXT("function"), Function->GetName()); Result->SetBoolField(TEXT("invoked"), true); return SuccessResponse(RequestId, Result);
+		}
+		return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_ACTION_UNSUPPORTED"), FString::Printf(TEXT("Runtime action is unsupported: %s"), *Action));
+	}
+
 	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::RefreshNowResult(const FString& RequestId, const TArray<FString>& Targets, const FString& DataMode) const
 	{
 		FString RequestPath;
@@ -2339,59 +2526,35 @@ namespace UE::ProjectIntelligence
 		const bool bInputApplyEnabled = false;
 #endif
 
-		auto MakeOperation = [](const FString& Name, const FString& Domain, const FString& Status, bool bApplySupported)
+		FUEPIEditOperationRegistry& Registry = FUEPIEditOperationRegistry::Get();
+		Registry.EnsureBuiltinsRegistered();
+		TArray<TSharedPtr<FJsonValue>> Operations;
+		for (const FUEPIEditOperationDescriptor& Descriptor : Registry.GetDescriptors())
 		{
+			const bool bDomainEnabled =
+				(Descriptor.Domain == TEXT("blueprint") && bBlueprintApplyEnabled) ||
+				(Descriptor.Domain == TEXT("actor") && bActorApplyEnabled) ||
+				(Descriptor.Domain == TEXT("content") && bContentApplyEnabled) ||
+				(Descriptor.Domain == TEXT("asset") && bContentApplyEnabled) ||
+				(Descriptor.Domain == TEXT("material") && (Descriptor.Name == TEXT("material.apply_to_blueprint_component") ? bMaterialBlueprintApplyEnabled : bMaterialApplyEnabled)) ||
+				(Descriptor.Domain == TEXT("umg") && bUMGApplyEnabled) ||
+				(Descriptor.Domain == TEXT("input") && bInputApplyEnabled);
+			const bool bApplySupported = bDomainEnabled || ((Descriptor.Domain == TEXT("animgraph") || Descriptor.Domain == TEXT("animation")) && bBlueprintApplyEnabled);
 			TSharedRef<FJsonObject> Operation = MakeShared<FJsonObject>();
-			Operation->SetStringField(TEXT("name"), Name);
-			Operation->SetStringField(TEXT("domain"), Domain);
-			Operation->SetStringField(TEXT("status"), Status);
+			Operation->SetStringField(TEXT("name"), Descriptor.Name);
+			Operation->SetStringField(TEXT("domain"), Descriptor.Domain);
+			Operation->SetStringField(TEXT("risk"), Descriptor.Risk);
+			Operation->SetStringField(TEXT("rollback_mode"), Descriptor.RollbackMode);
+			Operation->SetStringField(TEXT("validation_mode"), Descriptor.ValidationMode);
+			Operation->SetBoolField(TEXT("requires_save"), Descriptor.bRequiresSave);
+			Operation->SetBoolField(TEXT("atomic_supported"), Descriptor.bAtomicSupported);
 			Operation->SetBoolField(TEXT("preview_supported"), true);
 			Operation->SetBoolField(TEXT("apply_supported"), bApplySupported);
-			return MakeShared<FJsonValueObject>(Operation);
-		};
-
-		TArray<TSharedPtr<FJsonValue>> Operations;
-		Operations.Add(MakeOperation(TEXT("blueprint.add_variable"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("blueprint.set_variable_default"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("blueprint.add_component"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("blueprint.set_component_property"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("blueprint.create_function"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("blueprint.add_event_node"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("blueprint.add_function_call_node"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("blueprint.add_variable_get_node"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("blueprint.add_variable_set_node"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("blueprint.add_branch_node"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("blueprint.add_print_string_node"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("blueprint.connect_pins"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("blueprint.compile"), TEXT("blueprint"), TEXT("alpha_apply"), bBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("actor.spawn"), TEXT("actor"), TEXT("alpha_apply"), bActorApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("actor.set_transform"), TEXT("actor"), TEXT("alpha_apply"), bActorApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("actor.set_property"), TEXT("actor"), TEXT("alpha_apply"), bActorApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("material.create_instance"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("material.set_scalar_parameter"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("material.set_vector_parameter"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("material.set_texture_parameter"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("material.apply_to_actor"), TEXT("material"), TEXT("alpha_apply"), bMaterialApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("material.apply_to_blueprint_component"), TEXT("material"), TEXT("alpha_apply"), bMaterialBlueprintApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("content.import"), TEXT("content"), TEXT("alpha_apply"), bContentApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("content.create_folder"), TEXT("content"), TEXT("alpha_apply"), bContentApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("content.duplicate_asset"), TEXT("content"), TEXT("alpha_apply"), bContentApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("content.rename_asset"), TEXT("content"), TEXT("alpha_apply"), bContentApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("widget.create"), TEXT("umg"), TEXT("alpha_apply"), bUMGApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("widget.add_text"), TEXT("umg"), TEXT("alpha_apply"), bUMGApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("widget.add_button"), TEXT("umg"), TEXT("alpha_apply"), bUMGApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("widget.set_slot"), TEXT("umg"), TEXT("alpha_apply"), bUMGApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("widget.bind_button_to_custom_event"), TEXT("umg"), TEXT("alpha_apply"), bUMGApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("input.create_action"), TEXT("input"), TEXT("alpha_apply"), bInputApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("input.create_mapping_context"), TEXT("input"), TEXT("alpha_apply"), bInputApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("input.add_key_mapping"), TEXT("input"), TEXT("alpha_apply"), bInputApplyEnabled));
-		Operations.Add(MakeOperation(TEXT("input.remove_key_mapping"), TEXT("input"), TEXT("alpha_apply"), bInputApplyEnabled));
-
-		const TArray<FString> UnsupportedContentOps;
-		for (const FString& Name : UnsupportedContentOps)
-		{
-			const FString Domain = Name.StartsWith(TEXT("widget.")) ? TEXT("umg") : (Name.StartsWith(TEXT("input.")) ? TEXT("input") : TEXT("content"));
-			Operations.Add(MakeOperation(Name, Domain, TEXT("unsupported_alpha"), false));
+			Operation->SetArrayField(TEXT("target_fields"), StringArrayToJsonValues(Descriptor.TargetFields));
+			TSharedRef<FJsonObject> InputSchema = MakeShared<FJsonObject>();
+			InputSchema->SetStringField(TEXT("type"), TEXT("object"));
+			Operation->SetObjectField(TEXT("input_schema"), InputSchema);
+			Operations.Add(MakeShared<FJsonValueObject>(Operation));
 		}
 
 		TSharedRef<FJsonObject> SettingsObject = MakeShared<FJsonObject>();
@@ -2408,7 +2571,11 @@ namespace UE::ProjectIntelligence
 		SettingsObject->SetNumberField(TEXT("max_assets_per_transaction"), Settings ? Settings->MaxWriteAssetsPerTransaction : 0);
 
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
-		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-discover.v1"));
+		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-discover.v2"));
+		Result->SetStringField(TEXT("catalog_version"), TEXT("2.0.0"));
+		Result->SetStringField(TEXT("catalog_hash"), Registry.GetCatalogHash());
+		Result->SetStringField(TEXT("engine_version"), FEngineVersion::Current().ToString());
+		Result->SetStringField(TEXT("plugin_build_id"), TEXT("uepi-vnext"));
 		Result->SetObjectField(TEXT("settings"), SettingsObject);
 		Result->SetArrayField(TEXT("operations"), Operations);
 		Result->SetArrayField(TEXT("capabilities"), StringArrayToJsonValues(FUEPIBridgeProtocol::WriteCapabilities()));
@@ -2441,6 +2608,33 @@ namespace UE::ProjectIntelligence
 
 		const FString TransactionId = JsonString(Params, TEXT("transaction_id"));
 		const TSharedPtr<FJsonObject> Plan = JsonObjectField(Params, TEXT("plan"));
+		if (!Plan.IsValid() || JsonString(Plan, TEXT("schema_version")) != TEXT("uepi.edit_plan.v2"))
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_PLAN_VERSION_UNSUPPORTED"), TEXT("Apply requires an immutable uepi.edit_plan.v2 generated by the current Preview."));
+		}
+		if (JsonString(Params, TEXT("plan_hash")) != JsonString(Plan, TEXT("plan_hash")) || JsonString(Params, TEXT("approval_nonce")) != JsonString(Plan, TEXT("approval_nonce")))
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_APPROVAL_MISMATCH"), TEXT("Apply approval identity does not match the immutable Preview plan."));
+		}
+		if (JsonString(Plan, TEXT("project_binding_id")) != UEPIProjectBindingId())
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_PROJECT_BINDING_MISMATCH"), TEXT("Edit plan belongs to a different project binding."));
+		}
+		if (JsonString(Plan, TEXT("editor_session_id")) != SessionId)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_EDITOR_SESSION_MISMATCH"), TEXT("Edit plan belongs to a different Editor session."));
+		}
+		FDateTime ExpiresAt;
+		if (!FDateTime::ParseIso8601(*JsonString(Plan, TEXT("expires_at")), ExpiresAt) || ExpiresAt < FDateTime::UtcNow())
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_PLAN_EXPIRED"), TEXT("Edit plan approval window has expired; run Preview again."));
+		}
+		FUEPIEditOperationRegistry& Registry = FUEPIEditOperationRegistry::Get();
+		Registry.EnsureBuiltinsRegistered();
+		if (JsonString(Plan, TEXT("catalog_hash")) != Registry.GetCatalogHash())
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_CATALOG_STALE"), TEXT("Operation catalog changed after Preview; run Preview again."));
+		}
 		const TArray<TSharedPtr<FJsonValue>>* Operations = Plan.IsValid() ? JsonArray(Plan, TEXT("operations")) : JsonArray(Params, TEXT("operations"));
 		if (!Operations)
 		{
@@ -2470,6 +2664,94 @@ namespace UE::ProjectIntelligence
 				}
 			}
 		}
+		if (AffectedAssets.Num() > Settings->MaxWriteAssetsPerTransaction)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TOO_MANY_ASSETS"), FString::Printf(TEXT("Affected asset count %d exceeds MaxWriteAssetsPerTransaction=%d before modification."), AffectedAssets.Num(), Settings->MaxWriteAssetsPerTransaction));
+		}
+		for (int32 Index = 0; Index < Operations->Num(); ++Index)
+		{
+			const TSharedPtr<FJsonObject> Operation = (*Operations)[Index].IsValid() ? (*Operations)[Index]->AsObject() : nullptr;
+			const FString Type = JsonString(Operation, TEXT("type"), JsonString(Operation, TEXT("operation")));
+			if (!Operation.IsValid() || Type.IsEmpty() || !Registry.FindOperation(Type).IsValid())
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_EDIT_OPERATION_UNSUPPORTED"), FString::Printf(TEXT("Operation %d is not present in the active Operation Registry: %s"), Index, *Type));
+			}
+			TSharedPtr<FJsonObject> OpParams = JsonObjectField(Operation, TEXT("params"));
+			if (!OpParams.IsValid()) OpParams = Operation;
+			if (Type == TEXT("asset.set_properties"))
+			{
+				const FString AssetPath = JsonString(OpParams, TEXT("asset"));
+				UObject* Object = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
+				const TSharedPtr<FJsonObject> Properties = JsonObjectField(OpParams, TEXT("properties"));
+				if (!Object || !Properties.IsValid())
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_PROPERTY_PREFLIGHT_FAILED"), TEXT("asset.set_properties requires a valid asset and properties object."));
+				}
+				UObject* Probe = DuplicateObject(Object, GetTransientPackage());
+				for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
+				{
+					TSharedPtr<FJsonValue> Before;
+					TSharedPtr<FJsonValue> After;
+					FString Error;
+					if (!FUEPIPropertyCodec::SetPropertyPath(Probe, Pair.Key, Pair.Value, Before, After, Error))
+					{
+						return ErrorResponse(RequestId, TEXT("UEPI_EDIT_PROPERTY_TYPE_MISMATCH"), FString::Printf(TEXT("Property preflight failed for %s: %s"), *Pair.Key, *Error));
+					}
+				}
+			}
+			else if (Type == TEXT("content.create_asset"))
+			{
+				const FString ClassPath = JsonString(OpParams, TEXT("class_path"));
+				UClass* AssetClass = LoadObject<UClass>(nullptr, *ClassPath);
+				if (!AssetClass || !AssetClass->IsChildOf(UDataAsset::StaticClass()))
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_ASSET_CLASS_UNSUPPORTED"), FString::Printf(TEXT("P0 content.create_asset requires a UDataAsset/UPrimaryDataAsset class: %s"), *ClassPath));
+				}
+			}
+		}
+		for (const FString& AssetPath : AffectedAssets)
+		{
+			if (!AssetPath.StartsWith(TEXT("/")))
+			{
+				continue;
+			}
+			const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
+			if (UPackage* ExistingPackage = FindPackage(nullptr, *PackageName))
+			{
+				if (ExistingPackage->IsDirty())
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TARGET_DIRTY"), FString::Printf(TEXT("Target package already has user changes: %s"), *PackageName));
+				}
+			}
+			const FString PackageFile = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+			if (IFileManager::Get().FileExists(*PackageFile) && IFileManager::Get().IsReadOnly(*PackageFile))
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TARGET_READ_ONLY"), FString::Printf(TEXT("Target package file is read-only: %s"), *PackageFile));
+			}
+		}
+		TMap<FString, FString> TransactionBackupFiles;
+		const FString BackupDirectory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("backups"), FPaths::MakeValidFileName(TransactionId));
+		IFileManager::Get().MakeDirectory(*BackupDirectory, true);
+		for (const FString& AssetPath : AffectedAssets)
+		{
+			if (!AssetPath.StartsWith(TEXT("/")))
+			{
+				continue;
+			}
+			const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
+			const FString PackageFile = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+			if (!IFileManager::Get().FileExists(*PackageFile))
+			{
+				TransactionBackupFiles.Add(PackageFile, FString());
+				continue;
+			}
+			const FString BackupFile = FPaths::Combine(BackupDirectory, FPaths::MakeValidFileName(PackageName) + FPackageName::GetAssetPackageExtension());
+			if (IFileManager::Get().Copy(*BackupFile, *PackageFile, true, true) != COPY_OK)
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_EDIT_BACKUP_FAILED"), FString::Printf(TEXT("Could not back up target package before modification: %s"), *PackageFile));
+			}
+			TransactionBackupFiles.Add(PackageFile, BackupFile);
+		}
 
 		TArray<TSharedPtr<FJsonValue>> OperationResults;
 		TArray<TSharedPtr<FJsonValue>> CompileResults;
@@ -2485,11 +2767,29 @@ namespace UE::ProjectIntelligence
 		for (int32 Index = 0; Index < Operations->Num(); ++Index)
 		{
 			const TSharedPtr<FJsonObject> Operation = (*Operations)[Index].IsValid() ? (*Operations)[Index]->AsObject() : nullptr;
-			const FString Type = JsonString(Operation, TEXT("type"), JsonString(Operation, TEXT("operation")));
+			FString Type = JsonString(Operation, TEXT("type"), JsonString(Operation, TEXT("operation")));
 			TSharedPtr<FJsonObject> OpParams = JsonObjectField(Operation, TEXT("params"));
 			if (!OpParams.IsValid())
 			{
 				OpParams = Operation;
+			}
+			if (Type == TEXT("blueprint.add_node"))
+			{
+				const FString Kind = JsonString(OpParams, TEXT("kind"));
+				if (Kind == TEXT("custom_event")) { Type = TEXT("blueprint.add_event_node"); OpParams->SetStringField(TEXT("event_kind"), TEXT("custom_event")); }
+				else if (Kind == TEXT("function_call")) Type = TEXT("blueprint.add_function_call_node");
+				else if (Kind == TEXT("variable_get")) Type = TEXT("blueprint.add_variable_get_node");
+				else if (Kind == TEXT("variable_set")) Type = TEXT("blueprint.add_variable_set_node");
+				else if (Kind == TEXT("branch")) Type = TEXT("blueprint.add_branch_node");
+				else if (Kind == TEXT("print_string")) Type = TEXT("blueprint.add_print_string_node");
+				else if (Kind != TEXT("make_struct") && Kind != TEXT("input_key"))
+				{
+					bAllOk = false; FailureMessage = FString::Printf(TEXT("Unsupported blueprint.add_node kind: %s"), *Kind); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
+				}
+			}
+			else if (Type == TEXT("animgraph.connect_pose"))
+			{
+				Type = TEXT("blueprint.connect_pins");
 			}
 
 			if (!Operation.IsValid() || Type.IsEmpty())
@@ -2503,7 +2803,78 @@ namespace UE::ProjectIntelligence
 			FString AssetPath;
 			FString Error;
 			UBlueprint* Blueprint = nullptr;
-			if (Type.StartsWith(TEXT("blueprint.")))
+			if (Type == TEXT("content.create_asset"))
+			{
+				if (!Settings->bAllowContentEdits)
+				{
+					bAllOk = false; FailureMessage = TEXT("Content edits are disabled."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
+				}
+				FString PackagePath;
+				FString AssetName;
+				if (!SplitDestinationPath(OpParams, TEXT("DA_UEPIAsset"), PackagePath, AssetName, Error))
+				{
+					bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break;
+				}
+				UClass* AssetClass = LoadObject<UClass>(nullptr, *JsonString(OpParams, TEXT("class_path")));
+				UDataAssetFactory* Factory = NewObject<UDataAssetFactory>();
+				Factory->DataAssetClass = AssetClass;
+				UObject* NewAsset = FAssetToolsModule::GetModule().Get().CreateAsset(AssetName, PackagePath, AssetClass, Factory, TEXT("UEPI"));
+				if (!NewAsset)
+				{
+					bAllOk = false; FailureMessage = TEXT("DataAsset creation failed."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
+				}
+				NewAsset->MarkPackageDirty();
+				AffectedAssets.AddUnique(NewAsset->GetPathName());
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetObjectField(TEXT("asset"), ObjectToJson(NewAsset));
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("DataAsset created."), Detail);
+				bMutated = true;
+				continue;
+			}
+			if (Type == TEXT("asset.set_properties"))
+			{
+				if (!Settings->bAllowContentEdits)
+				{
+					bAllOk = false; FailureMessage = TEXT("Content edits are disabled."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
+				}
+				AssetPath = JsonString(OpParams, TEXT("asset"));
+				UObject* Object = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
+				const TSharedPtr<FJsonObject> Properties = JsonObjectField(OpParams, TEXT("properties"));
+				if (!Object || !Properties.IsValid())
+				{
+					bAllOk = false; FailureMessage = TEXT("Asset or properties object is invalid."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
+				}
+				Object->Modify();
+				TArray<TSharedPtr<FJsonValue>> PropertyDiffs;
+				for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
+				{
+					TSharedPtr<FJsonValue> Before;
+					TSharedPtr<FJsonValue> After;
+					if (!FUEPIPropertyCodec::SetPropertyPath(Object, Pair.Key, Pair.Value, Before, After, Error))
+					{
+						bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break;
+					}
+					TSharedRef<FJsonObject> Diff = MakeShared<FJsonObject>(); Diff->SetStringField(TEXT("property_path"), Pair.Key); Diff->SetField(TEXT("before"), Before); Diff->SetField(TEXT("after"), After); PropertyDiffs.Add(MakeShared<FJsonValueObject>(Diff));
+				}
+				if (!bAllOk) break;
+				Object->PostEditChange(); Object->MarkPackageDirty(); AffectedAssets.AddUnique(Object->GetPathName());
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetStringField(TEXT("asset"), Object->GetPathName()); Detail->SetArrayField(TEXT("property_diff"), PropertyDiffs);
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Typed properties updated."), Detail); bMutated = true; continue;
+			}
+			if (Type == TEXT("animation.create_slot_group"))
+			{
+				USkeleton* Skeleton = LoadObject<USkeleton>(nullptr, *JsonString(OpParams, TEXT("skeleton")));
+				const FName GroupName(*JsonString(OpParams, TEXT("group_name"), TEXT("DefaultGroup")));
+				const FName SlotName(*JsonString(OpParams, TEXT("slot_name"), TEXT("DefaultSlot")));
+				if (!Skeleton || SlotName.IsNone() || GroupName.IsNone())
+				{
+					bAllOk = false; FailureMessage = TEXT("Valid skeleton, group_name, and slot_name are required."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
+				}
+				Skeleton->Modify(); Skeleton->AddSlotGroupName(GroupName); Skeleton->RegisterSlotNode(SlotName); Skeleton->SetSlotGroupName(SlotName, GroupName); Skeleton->PostEditChange(); Skeleton->MarkPackageDirty();
+				AffectedAssets.AddUnique(Skeleton->GetPathName());
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetStringField(TEXT("skeleton"), Skeleton->GetPathName()); Detail->SetStringField(TEXT("group_name"), GroupName.ToString()); Detail->SetStringField(TEXT("slot_name"), SlotName.ToString());
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Skeleton slot group registered."), Detail); bMutated = true; continue;
+			}
+			if (Type.StartsWith(TEXT("blueprint.")) || Type.StartsWith(TEXT("animgraph.")))
 			{
 				if (!Settings->bAllowBlueprintEdits)
 				{
@@ -2523,7 +2894,50 @@ namespace UE::ProjectIntelligence
 				AffectedAssets.AddUnique(AssetPath);
 			}
 
-			if (Type == TEXT("blueprint.add_variable"))
+			if (Type == TEXT("blueprint.add_node"))
+			{
+				FString GraphName;
+				UEdGraph* Graph = ResolveGraphForEdit(Blueprint, OpParams, GraphName, Error);
+				const FString Kind = JsonString(OpParams, TEXT("kind"));
+				UEdGraphNode* Node = nullptr;
+				if (!Graph)
+				{
+					bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break;
+				}
+				if (Kind == TEXT("make_struct"))
+				{
+					UScriptStruct* Struct = LoadObject<UScriptStruct>(nullptr, *JsonString(OpParams, TEXT("struct_path")));
+					if (!Struct || !UK2Node_MakeStruct::CanBeMade(Struct))
+					{
+						bAllOk = false; FailureMessage = TEXT("Struct cannot be used by a Make Struct node."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
+					}
+					Node = FEdGraphSchemaAction_K2NewNode::SpawnNode<UK2Node_MakeStruct>(Graph, NodePositionFromParams(OpParams, Index), EK2NewNodeFlags::None, [Struct](UK2Node_MakeStruct* NewNode) { NewNode->StructType = Struct; });
+				}
+				else if (Kind == TEXT("input_key"))
+				{
+					const FKey Key(FName(*JsonString(OpParams, TEXT("key"))));
+					if (!Key.IsValid()) { bAllOk = false; FailureMessage = TEXT("Input key is invalid."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+					Node = FEdGraphSchemaAction_K2NewNode::SpawnNode<UK2Node_InputKey>(Graph, NodePositionFromParams(OpParams, Index), EK2NewNodeFlags::None, [Key](UK2Node_InputKey* NewNode) { NewNode->InputKey = Key; });
+				}
+				if (!Node) { bAllOk = false; FailureMessage = TEXT("Generic Blueprint node creation failed."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+				ApplyPinDefaults(Node, OpParams); RegisterNodeReferences(NodeRefs, Operation, OpParams, Node); FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetStringField(TEXT("asset"), Blueprint->GetPathName()); Detail->SetObjectField(TEXT("node"), NodeToJson(Node, Graph));
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("Generic Blueprint node added."), Detail); bMutated = true; TouchedBlueprints.Add(Blueprint);
+			}
+			else if (Type == TEXT("animgraph.add_slot_node"))
+			{
+				UAnimBlueprint* AnimBlueprint = Cast<UAnimBlueprint>(Blueprint);
+				FString GraphName; UEdGraph* Graph = ResolveGraphForEdit(Blueprint, OpParams, GraphName, Error);
+				const FName SlotName(*JsonString(OpParams, TEXT("slot_name"), TEXT("DefaultSlot")));
+				if (!AnimBlueprint || !Graph || SlotName.IsNone()) { bAllOk = false; FailureMessage = TEXT("AnimBlueprint, AnimGraph, and slot_name are required."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+				if (AnimBlueprint->TargetSkeleton && !AnimBlueprint->TargetSkeleton->ContainsSlotName(SlotName)) { bAllOk = false; FailureMessage = TEXT("Slot is not registered on the AnimBlueprint target Skeleton."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+				UAnimGraphNode_Slot* Node = FEdGraphSchemaAction_K2NewNode::SpawnNode<UAnimGraphNode_Slot>(Graph, NodePositionFromParams(OpParams, Index), EK2NewNodeFlags::None, [SlotName](UAnimGraphNode_Slot* NewNode) { NewNode->Node.SlotName = SlotName; });
+				if (!Node) { bAllOk = false; FailureMessage = TEXT("AnimGraph Slot node creation failed."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
+				RegisterNodeReferences(NodeRefs, Operation, OpParams, Node); FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetStringField(TEXT("asset"), Blueprint->GetPathName()); Detail->SetObjectField(TEXT("node"), NodeToJson(Node, Graph)); Detail->SetStringField(TEXT("slot_name"), SlotName.ToString());
+				AddOperationResult(OperationResults, Index, Type, true, TEXT("AnimGraph Slot node added."), Detail); bMutated = true; TouchedBlueprints.Add(Blueprint);
+			}
+			else if (Type == TEXT("blueprint.add_variable"))
 			{
 				const FString VariableNameText = JsonString(OpParams, TEXT("name"));
 				if (VariableNameText.IsEmpty())
@@ -3039,6 +3453,36 @@ namespace UE::ProjectIntelligence
 				AddOperationResult(OperationResults, Index, Type, true, TEXT("Blueprint pins connected."), Detail);
 				bMutated = true;
 				TouchedBlueprints.Add(Blueprint);
+			}
+			else if (Type == TEXT("blueprint.set_pin_default"))
+			{
+				FString GraphName; UEdGraph* Graph = ResolveGraphForEdit(Blueprint, OpParams, GraphName, Error); UEdGraphNode* Node = nullptr;
+				UEdGraphPin* Pin = Graph ? ResolveEndpointPin(Graph, OpParams, TEXT("target"), TEXT("input"), NodeRefs, Node, Error) : nullptr;
+				const UEdGraphSchema* Schema = Graph ? Graph->GetSchema() : nullptr;
+				const TSharedPtr<FJsonValue> Value = OpParams->TryGetField(TEXT("value"));
+				if (!Pin || !Schema || !Value.IsValid())
+				{
+					bAllOk = false; FailureMessage = Error.IsEmpty() ? TEXT("Pin default request is incomplete.") : Error; AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
+				}
+				Schema->TrySetDefaultValue(*Pin, PinDefaultString(Value), true);
+				FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint); TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetObjectField(TEXT("node"), NodeToJson(Node, Graph)); Detail->SetStringField(TEXT("pin"), Pin->PinName.ToString()); AddOperationResult(OperationResults, Index, Type, true, TEXT("Pin default updated."), Detail); bMutated = true; TouchedBlueprints.Add(Blueprint);
+			}
+			else if (Type == TEXT("blueprint.disconnect_pins"))
+			{
+				FString GraphName; UEdGraph* Graph = ResolveGraphForEdit(Blueprint, OpParams, GraphName, Error); UEdGraphNode* Node = nullptr;
+				UEdGraphPin* Pin = Graph ? ResolveEndpointPin(Graph, OpParams, TEXT("target"), TEXT("input"), NodeRefs, Node, Error) : nullptr;
+				if (!Pin) { bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break; }
+				Pin->Modify(); Pin->BreakAllPinLinks(true); FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint); AddOperationResult(OperationResults, Index, Type, true, TEXT("Pin links disconnected.")); bMutated = true; TouchedBlueprints.Add(Blueprint);
+			}
+			else if (Type == TEXT("blueprint.remove_node") || Type == TEXT("blueprint.move_node") || Type == TEXT("blueprint.set_node_comment"))
+			{
+				FString GraphName; UEdGraph* Graph = ResolveGraphForEdit(Blueprint, OpParams, GraphName, Error); UEdGraphNode* Node = Graph ? ResolveNodeReference(Graph, OpParams, NodeRefs, Error) : nullptr;
+				if (!Node) { bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break; }
+				Graph->Modify(); Node->Modify();
+				if (Type == TEXT("blueprint.remove_node")) { Graph->RemoveNode(Node); }
+				else if (Type == TEXT("blueprint.move_node")) { const FVector2D Position = NodePositionFromParams(OpParams, Index); Node->NodePosX = FMath::RoundToInt(Position.X); Node->NodePosY = FMath::RoundToInt(Position.Y); }
+				else { Node->NodeComment = JsonString(OpParams, TEXT("comment")); Node->bCommentBubbleVisible = JsonBool(OpParams, TEXT("comment_visible"), false); }
+				FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint); AddOperationResult(OperationResults, Index, Type, true, TEXT("Blueprint node updated.")); bMutated = true; TouchedBlueprints.Add(Blueprint);
 			}
 			else if (Type == TEXT("blueprint.compile"))
 			{
@@ -4118,15 +4562,54 @@ namespace UE::ProjectIntelligence
 				}
 			}
 		}
+		if (!bValidationOk)
+		{
+			bAllOk = false;
+			Transaction.Cancel();
+		}
+
+		bool bSaved = false;
+		TArray<TSharedPtr<FJsonValue>> SavedFileHashes;
+		if (bAllOk && JsonBool(Params, TEXT("save"), false))
+		{
+			TArray<UPackage*> PackagesToSave;
+			for (const FString& AssetPath : AffectedAssets)
+			{
+				if (!AssetPath.StartsWith(TEXT("/")))
+				{
+					continue;
+				}
+				const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
+				if (UPackage* Package = FindPackage(nullptr, *PackageName))
+				{
+					PackagesToSave.AddUnique(Package);
+				}
+			}
+			bSaved = PackagesToSave.Num() == 0 || UEditorLoadingAndSavingUtils::SavePackages(PackagesToSave, true);
+			if (!bSaved)
+			{
+				bAllOk = false;
+				FailureMessage = TEXT("Touched-only package save failed.");
+			}
+			else
+			{
+				for (const TPair<FString, FString>& Pair : TransactionBackupFiles)
+				{
+					if (!IFileManager::Get().FileExists(*Pair.Key))
+					{
+						continue;
+					}
+					TSharedRef<FJsonObject> FileHash = MakeShared<FJsonObject>();
+					FileHash->SetStringField(TEXT("file"), Pair.Key);
+					FileHash->SetStringField(TEXT("md5"), LexToString(FMD5Hash::HashFile(*Pair.Key)));
+					SavedFileHashes.Add(MakeShared<FJsonValueObject>(FileHash));
+				}
+			}
+		}
 
 		FString RefreshRequestPath;
 		FString RefreshError;
-		if (AffectedAssets.Num() > Settings->MaxWriteAssetsPerTransaction)
-		{
-			bValidationOk = false;
-			FailureMessage = FString::Printf(TEXT("Affected asset count %d exceeds MaxWriteAssetsPerTransaction=%d."), AffectedAssets.Num(), Settings->MaxWriteAssetsPerTransaction);
-		}
-		else if (AffectedAssets.Num() > 0)
+		if (AffectedAssets.Num() > 0)
 		{
 			WriteRefreshRequest(AffectedAssets, TEXT("live"), RefreshRequestPath, RefreshError);
 		}
@@ -4135,6 +4618,9 @@ namespace UE::ProjectIntelligence
 		{
 			LastAppliedTransactionId = TransactionId;
 			LastAppliedSummary = FString::Printf(TEXT("%d operation(s), %d asset(s)"), Operations->Num(), AffectedAssets.Num());
+			LastAppliedBackupFiles = TransactionBackupFiles;
+			LastAppliedAffectedAssets = AffectedAssets;
+			bLastAppliedSaved = bSaved;
 		}
 
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -4142,14 +4628,16 @@ namespace UE::ProjectIntelligence
 		Result->SetStringField(TEXT("transaction_id"), TransactionId);
 		Result->SetBoolField(TEXT("applied"), bAllOk);
 		Result->SetBoolField(TEXT("validation_ok"), bValidationOk);
-		Result->SetBoolField(TEXT("saved"), false);
+		Result->SetBoolField(TEXT("saved"), bSaved);
+		Result->SetArrayField(TEXT("saved_file_hashes"), SavedFileHashes);
+		Result->SetStringField(TEXT("backup_directory"), BackupDirectory);
 		Result->SetStringField(TEXT("failure_message"), FailureMessage);
 		Result->SetArrayField(TEXT("affected_assets"), StringArrayToJsonValues(AffectedAssets));
 		Result->SetArrayField(TEXT("operations"), OperationResults);
 		Result->SetArrayField(TEXT("compile"), CompileResults);
 		Result->SetStringField(TEXT("refresh_request_path"), RefreshRequestPath);
 		Result->SetStringField(TEXT("refresh_error"), RefreshError);
-		Result->SetStringField(TEXT("rollback_strategy"), TEXT("editor_transaction_undo"));
+		Result->SetStringField(TEXT("rollback_strategy"), bSaved ? TEXT("file_backup_restore_and_package_reload") : TEXT("editor_transaction_undo"));
 
 		TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
 		Response->SetStringField(TEXT("id"), RequestId);
@@ -4186,38 +4674,52 @@ namespace UE::ProjectIntelligence
 			}
 		}
 
-		TArray<TSharedPtr<FJsonValue>> CompileResults;
+		TArray<TSharedPtr<FJsonValue>> ValidationResults;
 		bool bAllOk = true;
 		for (const FString& AssetPath : Assets)
 		{
-			UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *AssetPath);
-			if (!Blueprint)
+			UObject* Object = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
+			if (!IsValid(Object))
 			{
 				TSharedRef<FJsonObject> Missing = MakeShared<FJsonObject>();
 				Missing->SetBoolField(TEXT("ok"), false);
 				Missing->SetStringField(TEXT("asset"), AssetPath);
-				Missing->SetStringField(TEXT("error"), TEXT("Failed to load Blueprint."));
-				CompileResults.Add(MakeShared<FJsonValueObject>(Missing));
+				Missing->SetStringField(TEXT("validator"), TEXT("generic_uobject"));
+				Missing->SetStringField(TEXT("error"), TEXT("Failed to load a valid UObject for the affected target."));
+				ValidationResults.Add(MakeShared<FJsonValueObject>(Missing));
 				bAllOk = false;
 				continue;
 			}
-			TSharedRef<FJsonObject> CompileResult = CompileBlueprintToJson(Blueprint);
-			CompileResults.Add(MakeShared<FJsonValueObject>(CompileResult));
-			bAllOk &= CompileResult->GetBoolField(TEXT("ok"));
+			if (UBlueprint* Blueprint = Cast<UBlueprint>(Object))
+			{
+				TSharedRef<FJsonObject> CompileResult = CompileBlueprintToJson(Blueprint);
+				CompileResult->SetStringField(TEXT("validator"), TEXT("blueprint"));
+				ValidationResults.Add(MakeShared<FJsonValueObject>(CompileResult));
+				bAllOk &= CompileResult->GetBoolField(TEXT("ok"));
+			}
+			else
+			{
+				TSharedRef<FJsonObject> Valid = MakeShared<FJsonObject>();
+				Valid->SetBoolField(TEXT("ok"), true);
+				Valid->SetStringField(TEXT("asset"), AssetPath);
+				Valid->SetStringField(TEXT("class"), Object->GetClass() ? Object->GetClass()->GetPathName() : FString());
+				Valid->SetStringField(TEXT("validator"), TEXT("generic_uobject"));
+				ValidationResults.Add(MakeShared<FJsonValueObject>(Valid));
+			}
 		}
 
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
-		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-validate.v1"));
+		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-validate.v2"));
 		Result->SetStringField(TEXT("transaction_id"), JsonString(Params, TEXT("transaction_id")));
 		Result->SetBoolField(TEXT("validated"), bAllOk);
 		Result->SetArrayField(TEXT("assets"), StringArrayToJsonValues(Assets));
-		Result->SetArrayField(TEXT("compile"), CompileResults);
+		Result->SetArrayField(TEXT("validations"), ValidationResults);
 
 		TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
 		Response->SetStringField(TEXT("id"), RequestId);
 		Response->SetBoolField(TEXT("ok"), bAllOk);
 		Response->SetObjectField(TEXT("result"), Result);
-		Response->SetArrayField(TEXT("diagnostics"), bAllOk ? EmptyJsonArray() : DiagnosticsArray(TEXT("UEPI_EDIT_VALIDATE_FAILED"), TEXT("error"), TEXT("One or more Blueprint validations failed.")));
+		Response->SetArrayField(TEXT("diagnostics"), bAllOk ? EmptyJsonArray() : DiagnosticsArray(TEXT("UEPI_EDIT_VALIDATE_FAILED"), TEXT("error"), TEXT("One or more typed target validations failed.")));
 		return Response;
 	}
 
@@ -4233,21 +4735,58 @@ namespace UE::ProjectIntelligence
 			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_EDITOR_UNAVAILABLE"), TEXT("GEditor is not available."));
 		}
 		const bool bUndone = GEditor->UndoTransaction(false);
+		bool bFilesRestored = true;
+		TArray<UPackage*> PackagesToReload;
+		if (bLastAppliedSaved)
+		{
+			for (const TPair<FString, FString>& Pair : LastAppliedBackupFiles)
+			{
+				if (Pair.Value.IsEmpty())
+				{
+					if (IFileManager::Get().FileExists(*Pair.Key) && !IFileManager::Get().Delete(*Pair.Key, false, true, true))
+					{
+						bFilesRestored = false;
+					}
+				}
+				else if (IFileManager::Get().Copy(*Pair.Key, *Pair.Value, true, true) != COPY_OK)
+				{
+					bFilesRestored = false;
+				}
+			}
+			for (const FString& AssetPath : LastAppliedAffectedAssets)
+			{
+				const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
+				if (UPackage* Package = FindPackage(nullptr, *PackageName))
+				{
+					Package->SetDirtyFlag(false);
+					PackagesToReload.AddUnique(Package);
+				}
+			}
+			if (PackagesToReload.Num() > 0)
+			{
+				FText ReloadError;
+				bFilesRestored &= UPackageTools::ReloadPackages(PackagesToReload, ReloadError, EReloadPackagesInteractionMode::AssumePositive);
+			}
+		}
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-rollback.v1"));
 		Result->SetStringField(TEXT("transaction_id"), TransactionId);
 		Result->SetStringField(TEXT("summary"), LastAppliedSummary);
 		Result->SetBoolField(TEXT("undone"), bUndone);
-		if (bUndone)
+		Result->SetBoolField(TEXT("files_restored"), bFilesRestored);
+		if (bUndone && bFilesRestored)
 		{
 			LastAppliedTransactionId.Reset();
 			LastAppliedSummary.Reset();
+			LastAppliedBackupFiles.Reset();
+			LastAppliedAffectedAssets.Reset();
+			bLastAppliedSaved = false;
 		}
 		TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
 		Response->SetStringField(TEXT("id"), RequestId);
-		Response->SetBoolField(TEXT("ok"), bUndone);
+		Response->SetBoolField(TEXT("ok"), bUndone && bFilesRestored);
 		Response->SetObjectField(TEXT("result"), Result);
-		Response->SetArrayField(TEXT("diagnostics"), bUndone ? EmptyJsonArray() : DiagnosticsArray(TEXT("UEPI_EDIT_ROLLBACK_FAILED"), TEXT("error"), TEXT("GEditor undo transaction failed.")));
+		Response->SetArrayField(TEXT("diagnostics"), (bUndone && bFilesRestored) ? EmptyJsonArray() : DiagnosticsArray(TEXT("UEPI_EDIT_ROLLBACK_FAILED"), TEXT("error"), TEXT("Editor undo or persisted file restoration failed.")));
 		return Response;
 	}
 
@@ -4277,6 +4816,10 @@ namespace UE::ProjectIntelligence
 		Root->SetStringField(TEXT("started_at"), FDateTime::UtcNow().ToIso8601());
 		Root->SetStringField(TEXT("last_heartbeat"), FDateTime::UtcNow().ToIso8601());
 		Root->SetStringField(TEXT("heartbeat_at"), FDateTime::UtcNow().ToIso8601());
+		const UUEPISettings* Settings = GetDefault<UUEPISettings>();
+		Root->SetBoolField(TEXT("allow_save"), Settings && Settings->bAllowSavingPackages);
+		Root->SetBoolField(TEXT("allow_pie"), Settings && Settings->bAllowPIEControl);
+		Root->SetBoolField(TEXT("allow_runtime_invoke"), Settings && Settings->bAllowRuntimeInvoke);
 		TSharedRef<FJsonObject> Bridge = MakeShared<FJsonObject>();
 		Bridge->SetStringField(TEXT("host"), TEXT("127.0.0.1"));
 		Bridge->SetNumberField(TEXT("port"), Port);

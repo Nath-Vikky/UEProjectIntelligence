@@ -1,4 +1,5 @@
 #include "Bridge/UEPIBridgeProtocol.h"
+#include "Edit/UEPIEditOperationRegistry.h"
 
 namespace UE::ProjectIntelligence
 {
@@ -20,52 +21,23 @@ namespace UE::ProjectIntelligence
 			TEXT("editor.capture_viewport"),
 			TEXT("editor.read_output_log"),
 			TEXT("editor.read_world"),
+			TEXT("schema.get"),
+			TEXT("runtime.control"),
 			TEXT("asset.refresh_now")
 		};
 	}
 
 	TArray<FString> FUEPIBridgeProtocol::WriteCapabilities()
 	{
-		return {
+		TArray<FString> Capabilities = {
 			TEXT("edit.discover"),
 			TEXT("edit.apply"),
 			TEXT("edit.validate"),
-			TEXT("edit.rollback"),
-			TEXT("blueprint.add_variable"),
-			TEXT("blueprint.set_variable_default"),
-			TEXT("blueprint.add_component"),
-			TEXT("blueprint.set_component_property"),
-			TEXT("blueprint.create_function"),
-			TEXT("blueprint.add_event_node"),
-			TEXT("blueprint.add_function_call_node"),
-			TEXT("blueprint.add_variable_get_node"),
-			TEXT("blueprint.add_variable_set_node"),
-			TEXT("blueprint.add_branch_node"),
-			TEXT("blueprint.add_print_string_node"),
-			TEXT("blueprint.connect_pins"),
-			TEXT("blueprint.compile"),
-			TEXT("actor.spawn"),
-			TEXT("actor.set_transform"),
-			TEXT("actor.set_property"),
-			TEXT("material.create_instance"),
-			TEXT("material.set_scalar_parameter"),
-			TEXT("material.set_vector_parameter"),
-			TEXT("material.set_texture_parameter"),
-			TEXT("material.apply_to_actor"),
-			TEXT("material.apply_to_blueprint_component"),
-			TEXT("content.import"),
-			TEXT("content.create_folder"),
-			TEXT("content.duplicate_asset"),
-			TEXT("content.rename_asset"),
-			TEXT("widget.create"),
-			TEXT("widget.add_text"),
-			TEXT("widget.add_button"),
-			TEXT("widget.set_slot"),
-			TEXT("widget.bind_button_to_custom_event"),
-			TEXT("input.create_action"),
-			TEXT("input.create_mapping_context"),
-			TEXT("input.add_key_mapping"),
-			TEXT("input.remove_key_mapping")
+			TEXT("edit.rollback")
 		};
+		FUEPIEditOperationRegistry& Registry = FUEPIEditOperationRegistry::Get();
+		Registry.EnsureBuiltinsRegistered();
+		Capabilities.Append(Registry.GetOperationTypes());
+		return Capabilities;
 	}
 }
