@@ -1,6 +1,19 @@
 # Runtime Verification
 
-Runtime verification is transaction-bound. `uepi_edit_apply` may return a ticket describing allowed checks. The Agent must pass that ticket to `uepi_runtime`; a general remote-control session is not exposed.
+Runtime verification is transaction-bound. Preview must include a `verification_plan`; only then may successful Apply return a ticket. The ticket fixes the map, actions, functions, keys, and object/property reads approved by the user. The Agent must pass it to `uepi_runtime`; a general remote-control session is not exposed.
+
+```json
+{
+  "verification_plan": {
+    "map": "/Game/Maps/M_Test",
+    "timeout_seconds": 60,
+    "steps": [
+      {"action": "invoke", "function": "SubmitPublishedTemplate"},
+      {"action": "assert", "object_path": "/Game/...:PersistentLevel.Target", "property": "bCompleted", "equals": true}
+    ]
+  }
+}
+```
 
 ## Lifecycle
 
@@ -26,6 +39,8 @@ UEPI only controls a PIE session it started. Start fails if unrelated PIE is act
 - `stop`: end owned PIE and clean up.
 
 Runtime object handles are session-scoped and must not be reused after stop. Raw memory access, arbitrary reflection invocation, console commands, Python, shell, and taking over user-owned PIE are prohibited.
+
+Invoke must pass both gates: it appears in the approved verification ticket and its exact `FunctionOwnerClassPath:FunctionName` is present in Project Settings `AllowedRuntimeFunctions`. An empty project allowlist permits no invoke calls.
 
 ## Evidence
 

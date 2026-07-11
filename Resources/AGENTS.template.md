@@ -25,7 +25,7 @@ Use UE Project Intelligence before answering project-specific Unreal Engine ques
 - Never guess Blueprint pin names; use returned pins and GUIDs.
 - Use `uepi_schema` before reflected property writes and generic node construction.
 - Prefer one complete Plan v2 and one user approval; do not split a dependent edit merely to request more confirmations.
-- Use `uepi_runtime` only with the ticket returned by Apply, and stop UEPI-owned PIE after verification.
+- Put the exact map/actions/functions/keys/reads in `verification_plan` before asking for approval. Use `uepi_runtime` only with the ticket returned by Apply, and stop UEPI-owned PIE after verification.
 
 ## Typical Flow
 

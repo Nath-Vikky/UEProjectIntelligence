@@ -146,8 +146,11 @@ def run_doctor(project: Path, *, require_editor: bool = False) -> dict[str, Any]
         state = store.load_state("saved")
         identity = project_identity(project, state.project, store.root)
         checks.append(_check("saved_manifest", True, f"Saved manifest generation {state.generation} parsed successfully.", details={"path": state.manifest_path.as_posix(), "generation": state.generation}))
+        snapshot_engine = str(identity.get("engine_version") or "")
+        checks.append(_check("snapshot_engine", snapshot_engine.startswith("5.3.2"), f"Snapshot engine version is {snapshot_engine or 'missing'}."))
     except SnapshotStoreError as exc:
         checks.append(_check("saved_manifest", False, f"Saved Snapshot is unavailable: {exc}"))
+        checks.append(_skipped("snapshot_engine", "Snapshot engine cannot be checked without a saved manifest.", required=True))
 
     checks.append(_check("project_binding", bool(identity.get("project_binding_id")), f"Project binding is {identity.get('project_binding_id') or 'missing'}."))
 
@@ -160,7 +163,10 @@ def run_doctor(project: Path, *, require_editor: bool = False) -> dict[str, Any]
         checks.append(_check("editor_session_binding", matched, "Editor session matches this project." if matched else "Editor session belongs to another project.", required=require_editor))
         checks.append(_check("editor_pid_heartbeat", fresh and _pid_alive(session.get("pid")), f"Editor PID={session.get('pid')}, heartbeat_age_seconds={round(age, 3) if age is not None else None}.", required=require_editor))
         token_path = session.get("token_path")
-        token_ok = bool(token_path and Path(str(token_path)).expanduser().is_file())
+        token_candidate = Path(str(token_path)).expanduser() if token_path else None
+        if token_candidate and not token_candidate.is_absolute():
+            token_candidate = bridge_session_path(store).parent / token_candidate
+        token_ok = bool(token_candidate and token_candidate.is_file())
         checks.append(_check("bridge_token", token_ok, "Bridge token file is present." if token_ok else "Bridge token file is missing.", required=require_editor))
         probe = call_bridge(store, "editor.get_status", timeout=1.5, expected_identity=identity)
         checks.append(_check("bridge_probe", bool(probe.get("ok")), "Exact-project bridge probe succeeded." if probe.get("ok") else str((probe.get("error") or {}).get("message") or "Bridge probe failed."), required=require_editor))

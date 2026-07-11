@@ -53,6 +53,19 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             return engine._error(error["code"], error["message"], tool="uepi_runtime", operation=action)
         if action not in set(ticket.get("allowed_actions") or []):
             return engine._error("UEPI_RUNTIME_ACTION_NOT_APPROVED", f"Runtime action is not approved by the ticket: {action}", tool="uepi_runtime", operation=action)
+        if action == "start" and ticket.get("map") and str(arguments.get("map") or ticket.get("map")) != str(ticket.get("map")):
+            return engine._error("UEPI_RUNTIME_MAP_NOT_APPROVED", "Requested PIE map differs from the approved verification plan.", tool="uepi_runtime", operation=action)
+        if action == "start" and ticket.get("map") and not arguments.get("map"):
+            arguments = {**arguments, "map": ticket["map"]}
+        if action == "invoke" and str(arguments.get("function") or "") not in set(ticket.get("allowed_functions") or []):
+            return engine._error("UEPI_RUNTIME_FUNCTION_NOT_APPROVED", "Runtime function is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
+        if action == "input" and str(arguments.get("key") or "") not in set(ticket.get("allowed_keys") or []):
+            return engine._error("UEPI_RUNTIME_INPUT_NOT_APPROVED", "Runtime key is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
+        if action in {"read", "wait", "assert"}:
+            requested_read = {"object_path": str(arguments.get("object_path") or ""), "property": str(arguments.get("property") or "")}
+            allowed_reads = ticket.get("allowed_reads") or []
+            if not any(str(item.get("object_path") or "") == requested_read["object_path"] and str(item.get("property") or "") == requested_read["property"] for item in allowed_reads if isinstance(item, dict)):
+                return engine._error("UEPI_RUNTIME_READ_NOT_APPROVED", "Runtime object/property is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
 
     if action in {"status", "start", "stop", "input", "invoke", "read"}:
         response = _bridge(engine, action, arguments, ticket)

@@ -280,6 +280,7 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
                 "intent": {"type": "string"},
                 "operations": {"type": "array", "items": {"type": "object"}},
                 "evidence": {"type": "array", "items": {"type": "object"}},
+                "verification_plan": {"type": "object"},
             }
         ),
     },
@@ -517,6 +518,7 @@ class UEPIMCPServer:
                             intent=str(arguments.get("intent") or ""),
                             operations=operations if isinstance(operations, list) else [],
                             evidence=evidence if isinstance(evidence, list) else [],
+                            verification_plan=arguments.get("verification_plan") if isinstance(arguments.get("verification_plan"), dict) else None,
                         )
                     )
                 if name == "uepi_edit_apply":

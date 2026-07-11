@@ -80,4 +80,7 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, Category="Controlled Runtime")
 	bool bAllowRuntimeInvoke;
+
+	UPROPERTY(Config, EditAnywhere, Category="Controlled Runtime", meta=(ToolTip="Exact ClassPath:FunctionName entries allowed for transaction-bound runtime invoke."))
+	TArray<FString> AllowedRuntimeFunctions;
 };

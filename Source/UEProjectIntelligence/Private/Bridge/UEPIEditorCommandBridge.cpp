@@ -2535,11 +2535,14 @@ namespace UE::ProjectIntelligence
 		if (Action == TEXT("invoke"))
 		{
 			if (!Settings->bAllowRuntimeInvoke) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_INVOKE_DISABLED"), TEXT("Runtime invoke is disabled."));
-			UFunction* Function = Object->FindFunction(FName(*JsonString(Params, TEXT("function"))));
+			const FString FunctionName = JsonString(Params, TEXT("function"));
+			UFunction* Function = Object->FindFunction(FName(*FunctionName));
 			if (!Function || !Function->HasAnyFunctionFlags(FUNC_BlueprintCallable) || Function->HasAnyFunctionFlags(FUNC_Exec) || Function->HasMetaData(TEXT("Latent")) || Function->ParmsSize > 0)
 			{
 				return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_FUNCTION_NOT_ALLOWED"), TEXT("Runtime function must be allowlisted by BlueprintCallable semantics, non-Exec, non-Latent, and parameterless in P0."));
 			}
+			const FString FunctionKey = FString::Printf(TEXT("%s:%s"), Function->GetOwnerClass() ? *Function->GetOwnerClass()->GetPathName() : *Object->GetClass()->GetPathName(), *FunctionName);
+			if (!Settings->AllowedRuntimeFunctions.Contains(FunctionKey)) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_FUNCTION_NOT_ALLOWLISTED"), FString::Printf(TEXT("Runtime function is not in Project Settings allowlist: %s"), *FunctionKey));
 			Object->ProcessEvent(Function, nullptr);
 			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>(); Result->SetStringField(TEXT("object_path"), Object->GetPathName()); Result->SetStringField(TEXT("function"), Function->GetName()); Result->SetBoolField(TEXT("invoked"), true); return SuccessResponse(RequestId, Result);
 		}

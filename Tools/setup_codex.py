@@ -61,6 +61,8 @@ def _replace_managed_block(current: str, block: str) -> str:
         if end < len(current) and current[end] == "\n":
             end += 1
         return current[:start] + block + current[end:]
+    if "[mcp_servers.uepi]" in current:
+        raise ValueError("Codex config already contains an unmanaged [mcp_servers.uepi] block; remove or rename it before setup so duplicate TOML tables are not created.")
     prefix = current
     if prefix and not prefix.endswith("\n"):
         prefix += "\n"
