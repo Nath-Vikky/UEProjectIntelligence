@@ -15,7 +15,7 @@ try:
     from .identity import project_guard_diagnostics
     from .status import resolve_status
     from . import diff as diff_service, editor, refresh, runtime, schema_service, world
-    from .result import tool_response
+    from .result import envelope, tool_response
 except ImportError:  # Allows direct execution as a script from Codex config.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from uepi import __version__  # type: ignore
@@ -25,7 +25,7 @@ except ImportError:  # Allows direct execution as a script from Codex config.
     from uepi.identity import project_guard_diagnostics  # type: ignore
     from uepi.status import resolve_status  # type: ignore
     from uepi import diff as diff_service, editor, refresh, runtime, schema_service, world  # type: ignore
-    from uepi.result import tool_response  # type: ignore
+    from uepi.result import envelope, tool_response  # type: ignore
 
 
 def object_schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -410,6 +410,7 @@ class UEPIMCPServer:
         return tools
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        engine = None
         try:
             engine = self._engine()
             self._current_engine = engine
@@ -532,32 +533,12 @@ class UEPIMCPServer:
                     return tool_response(edit.validate(engine.store, transaction_id=str(arguments.get("transaction_id") or "")))
                 if name == "uepi_edit_rollback":
                     return tool_response(edit.rollback(engine.store, transaction_id=str(arguments.get("transaction_id") or "")))
-            return tool_response(
-                {
-                    "schema_version": "uepi.mcp-envelope.v2",
-                    "error": {
-                        "code": "UEPI_UNKNOWN_TOOL",
-                        "message": f"Unknown UEPI tool: {name}",
-                        "retryable": False,
-                        "candidates": [tool["name"] for tool in self.tools()],
-                    },
-                    "diagnostics": [],
-                }
-            )
+            return tool_response(engine._error("UEPI_UNKNOWN_TOOL", f"Unknown UEPI tool: {name}", candidates=[tool["name"] for tool in self.tools()], tool=name, operation="call"))
         except Exception as exc:  # Keep tool failures structured for LLM clients.
             diagnostic = traceback.format_exc(limit=5)
-            return tool_response(
-                {
-                    "schema_version": "uepi.mcp-envelope.v2",
-                    "error": {
-                        "code": "UEPI_TOOL_FAILED",
-                        "message": str(exc),
-                        "retryable": False,
-                        "candidates": [],
-                    },
-                    "diagnostics": [{"severity": "error", "message": diagnostic}],
-                }
-            )
+            if engine is not None:
+                return tool_response(engine._error("UEPI_TOOL_FAILED", str(exc), diagnostics=[{"severity": "error", "blocking": True, "code": "UEPI_TOOL_FAILED", "message": diagnostic}], tool=name, operation="call"))
+            return tool_response(envelope(tool=name, operation="call", project={}, editor={}, state={}, error={"code": "UEPI_TOOL_FAILED", "message": str(exc), "retryable": False, "candidates": []}, diagnostics=[{"severity": "error", "blocking": True, "code": "UEPI_TOOL_FAILED", "message": diagnostic}]))
 
     def resources(self) -> list[dict[str, Any]]:
         return [

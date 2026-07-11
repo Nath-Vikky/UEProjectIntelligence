@@ -30,6 +30,17 @@ Stages[2].Duration
 
 The current P0 path traversal supports nested structs and array elements. Whole arrays, sets, and maps can be replaced through their containing property. Before and after values are recorded in the transaction diff.
 
+Map values can be addressed with a JSON string key, for example `MetadataByRole{"Leader"}.Weight`.
+
+## Collection Modes
+
+Each item in `writes` accepts `replace`, `set_field`, `add`, `insert`, `remove`, or `clear`.
+
+- Array `add` accepts one typed element or a typed array; `insert` uses `{"index": 1, "value": <typed>}`; `remove` uses `{"index": 1}`.
+- Set `add` and `remove` accept one typed element.
+- Map `add` accepts `{"key": <typed>, "value": <typed>}`; `remove` accepts `{"key": <typed>}`.
+- `clear` ignores the value and applies only to array, set, or map properties.
+
 ## Example
 
 ```json

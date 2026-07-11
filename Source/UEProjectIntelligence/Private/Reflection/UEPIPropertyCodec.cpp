@@ -2,6 +2,8 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "UObject/SoftObjectPtr.h"
 #include "UObject/TextProperty.h"
 #include "UObject/UnrealType.h"
@@ -151,9 +153,31 @@ namespace UE::ProjectIntelligence
 			return Value.IsValid() && Value->TryGetBool(Out);
 		}
 
-		bool ParseSegment(const FString& Segment, FString& OutName, int32& OutIndex)
+		int32 JsonObjectInt(const TSharedPtr<FJsonObject>& Object, const TCHAR* Field, int32 DefaultValue)
+		{
+			int32 Result = DefaultValue;
+			return Object.IsValid() && Object->TryGetNumberField(Field, Result) ? Result : DefaultValue;
+		}
+
+		bool ParseSegment(const FString& Segment, FString& OutName, int32& OutIndex, FString& OutMapKey, bool& bOutHasMapKey)
 		{
 			OutIndex = INDEX_NONE;
+			OutMapKey.Reset();
+			bOutHasMapKey = false;
+			int32 Brace = INDEX_NONE;
+			if (Segment.FindChar(TEXT('{'), Brace))
+			{
+				OutName = Segment.Left(Brace);
+				const FString JsonKey = Segment.Mid(Brace + 1, Segment.Len() - Brace - 2);
+				TSharedPtr<FJsonValue> Parsed;
+				const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonKey);
+				if (OutName.IsEmpty() || !FJsonSerializer::Deserialize(Reader, Parsed) || !Parsed.IsValid() || !Parsed->TryGetString(OutMapKey))
+				{
+					return false;
+				}
+				bOutHasMapKey = true;
+				return true;
+			}
 			int32 Bracket = INDEX_NONE;
 			if (!Segment.FindChar(TEXT('['), Bracket))
 			{
@@ -163,6 +187,22 @@ namespace UE::ProjectIntelligence
 			OutName = Segment.Left(Bracket);
 			const FString IndexText = Segment.Mid(Bracket + 1).Replace(TEXT("]"), TEXT(""));
 			return !OutName.IsEmpty() && LexTryParseString(OutIndex, *IndexText);
+		}
+
+		FString MapKeyString(const FProperty* Property, const void* ValuePtr)
+		{
+			if (const FStrProperty* String = CastField<FStrProperty>(Property)) return String->GetPropertyValue(ValuePtr);
+			if (const FNameProperty* Name = CastField<FNameProperty>(Property)) return Name->GetPropertyValue(ValuePtr).ToString();
+			if (const FTextProperty* Text = CastField<FTextProperty>(Property)) return Text->GetPropertyValue(ValuePtr).ToString();
+			if (const FEnumProperty* Enum = CastField<FEnumProperty>(Property))
+			{
+				const int64 Raw = Enum->GetUnderlyingProperty()->GetSignedIntPropertyValue(ValuePtr);
+				return Enum->GetEnum() ? Enum->GetEnum()->GetNameStringByValue(Raw) : LexToString(Raw);
+			}
+			FString Exported;
+			Property->ExportTextItem_Direct(Exported, ValuePtr, nullptr, nullptr, PPF_None);
+			Exported.RemoveFromStart(TEXT("\"")); Exported.RemoveFromEnd(TEXT("\""));
+			return Exported;
 		}
 	}
 
@@ -410,7 +450,109 @@ namespace UE::ProjectIntelligence
 		return false;
 	}
 
-	bool FUEPIPropertyCodec::SetPropertyPath(UObject* Object, const FString& PropertyPath, const TSharedPtr<FJsonValue>& Value, TSharedPtr<FJsonValue>& OutBefore, TSharedPtr<FJsonValue>& OutAfter, FString& OutError)
+	bool FUEPIPropertyCodec::WriteValueWithMode(const FProperty* Property, void* ValuePtr, const TSharedPtr<FJsonValue>& Value, const FString& Mode, FString& OutError, int32 MaxDepth)
+	{
+		const FString NormalizedMode = Mode.IsEmpty() ? TEXT("replace") : Mode.ToLower();
+		if (NormalizedMode == TEXT("replace") || NormalizedMode == TEXT("set_field"))
+		{
+			return WriteValue(Property, ValuePtr, Value, OutError, 0, MaxDepth);
+		}
+		if (NormalizedMode == TEXT("clear"))
+		{
+			if (const FArrayProperty* Array = CastField<FArrayProperty>(Property)) { FScriptArrayHelper(Array, ValuePtr).EmptyValues(); return true; }
+			if (const FSetProperty* Set = CastField<FSetProperty>(Property)) { FScriptSetHelper(Set, ValuePtr).EmptyElements(); return true; }
+			if (const FMapProperty* Map = CastField<FMapProperty>(Property)) { FScriptMapHelper(Map, ValuePtr).EmptyValues(); return true; }
+			OutError = TEXT("clear is supported only for array, set, and map properties.");
+			return false;
+		}
+		if (const FArrayProperty* Array = CastField<FArrayProperty>(Property))
+		{
+			FScriptArrayHelper Helper(Array, ValuePtr);
+			if (NormalizedMode == TEXT("add"))
+			{
+				const TSharedPtr<FJsonValue> Input = NormalizeTypedInput(Value);
+				const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
+				if (Input.IsValid() && Input->TryGetArray(Items) && Items)
+				{
+					const int32 Start = Helper.AddValues(Items->Num());
+					for (int32 Index = 0; Index < Items->Num(); ++Index) if (!WriteValue(Array->Inner, Helper.GetRawPtr(Start + Index), (*Items)[Index], OutError, 0, MaxDepth)) return false;
+					return true;
+				}
+				const int32 Index = Helper.AddValue();
+				return WriteValue(Array->Inner, Helper.GetRawPtr(Index), Value, OutError, 0, MaxDepth);
+			}
+			const TSharedPtr<FJsonObject> Command = Value.IsValid() && Value->Type == EJson::Object ? Value->AsObject() : nullptr;
+			const int32 Index = Command.IsValid() ? JsonObjectInt(Command, TEXT("index"), INDEX_NONE) : INDEX_NONE;
+			if (NormalizedMode == TEXT("insert"))
+			{
+				const TSharedPtr<FJsonValue> Item = Command.IsValid() ? Command->TryGetField(TEXT("value")) : nullptr;
+				if (Index < 0 || Index > Helper.Num() || !Item.IsValid()) { OutError = TEXT("insert requires {index,value} within the array bounds."); return false; }
+				Helper.InsertValues(Index, 1); return WriteValue(Array->Inner, Helper.GetRawPtr(Index), Item, OutError, 0, MaxDepth);
+			}
+			if (NormalizedMode == TEXT("remove"))
+			{
+				if (!Helper.IsValidIndex(Index)) { OutError = TEXT("remove requires a valid {index} for an array."); return false; }
+				Helper.RemoveValues(Index, 1); return true;
+			}
+		}
+		if (const FSetProperty* Set = CastField<FSetProperty>(Property))
+		{
+			FScriptSetHelper Helper(Set, ValuePtr);
+			if (NormalizedMode == TEXT("add"))
+			{
+				const int32 Index = Helper.AddDefaultValue_Invalid_NeedsRehash();
+				if (!WriteValue(Set->ElementProp, Helper.GetElementPtr(Index), Value, OutError, 0, MaxDepth)) return false;
+				Helper.Rehash(); return true;
+			}
+			if (NormalizedMode == TEXT("remove"))
+			{
+				for (int32 Index = 0; Index < Helper.GetMaxIndex(); ++Index)
+				{
+					if (!Helper.IsValidIndex(Index)) continue;
+					uint8* Temp = static_cast<uint8*>(FMemory_Alloca(Set->ElementProp->GetSize())); Set->ElementProp->InitializeValue(Temp);
+					const bool bWritten = WriteValue(Set->ElementProp, Temp, Value, OutError, 0, MaxDepth);
+					const bool bMatch = bWritten && Set->ElementProp->Identical(Helper.GetElementPtr(Index), Temp);
+					Set->ElementProp->DestroyValue(Temp);
+					if (!bWritten) return false;
+					if (bMatch) { Helper.RemoveAt(Index); Helper.Rehash(); return true; }
+				}
+				OutError = TEXT("Set element was not found for remove."); return false;
+			}
+		}
+		if (const FMapProperty* Map = CastField<FMapProperty>(Property))
+		{
+			const TSharedPtr<FJsonObject> Entry = Value.IsValid() && Value->Type == EJson::Object ? Value->AsObject() : nullptr;
+			const TSharedPtr<FJsonValue> Key = Entry.IsValid() ? Entry->TryGetField(TEXT("key")) : nullptr;
+			const TSharedPtr<FJsonValue> EntryValue = Entry.IsValid() ? Entry->TryGetField(TEXT("value")) : nullptr;
+			if (!Key.IsValid()) { OutError = TEXT("Map add/remove requires {key,value?}."); return false; }
+			FScriptMapHelper Helper(Map, ValuePtr);
+			if (NormalizedMode == TEXT("add"))
+			{
+				if (!EntryValue.IsValid()) { OutError = TEXT("Map add requires {key,value}."); return false; }
+				const int32 Index = Helper.AddDefaultValue_Invalid_NeedsRehash();
+				if (!WriteValue(Map->KeyProp, Helper.GetKeyPtr(Index), Key, OutError, 0, MaxDepth) || !WriteValue(Map->ValueProp, Helper.GetValuePtr(Index), EntryValue, OutError, 0, MaxDepth)) return false;
+				Helper.Rehash(); return true;
+			}
+			if (NormalizedMode == TEXT("remove"))
+			{
+				for (int32 Index = 0; Index < Helper.GetMaxIndex(); ++Index)
+				{
+					if (!Helper.IsValidIndex(Index)) continue;
+					uint8* Temp = static_cast<uint8*>(FMemory_Alloca(Map->KeyProp->GetSize())); Map->KeyProp->InitializeValue(Temp);
+					const bool bWritten = WriteValue(Map->KeyProp, Temp, Key, OutError, 0, MaxDepth);
+					const bool bMatch = bWritten && Map->KeyProp->Identical(Helper.GetKeyPtr(Index), Temp);
+					Map->KeyProp->DestroyValue(Temp);
+					if (!bWritten) return false;
+					if (bMatch) { Helper.RemoveAt(Index); Helper.Rehash(); return true; }
+				}
+				OutError = TEXT("Map key was not found for remove."); return false;
+			}
+		}
+		OutError = FString::Printf(TEXT("Property write mode %s is unsupported for %s."), *NormalizedMode, Property ? *Property->GetCPPType() : TEXT("<null>"));
+		return false;
+	}
+
+	bool FUEPIPropertyCodec::SetPropertyPath(UObject* Object, const FString& PropertyPath, const TSharedPtr<FJsonValue>& Value, TSharedPtr<FJsonValue>& OutBefore, TSharedPtr<FJsonValue>& OutAfter, FString& OutError, const FString& Mode)
 	{
 		if (!IsValid(Object) || PropertyPath.IsEmpty()) { OutError = TEXT("Object and property path are required."); return false; }
 		TArray<FString> Segments; PropertyPath.ParseIntoArray(Segments, TEXT("."), true);
@@ -418,8 +560,8 @@ namespace UE::ProjectIntelligence
 		void* CurrentContainer = Object;
 		for (int32 SegmentIndex = 0; SegmentIndex < Segments.Num(); ++SegmentIndex)
 		{
-			FString Name; int32 ArrayIndex = INDEX_NONE;
-			if (!ParseSegment(Segments[SegmentIndex], Name, ArrayIndex)) { OutError = TEXT("Invalid property path segment."); return false; }
+			FString Name; int32 ArrayIndex = INDEX_NONE; FString MapKey; bool bHasMapKey = false;
+			if (!ParseSegment(Segments[SegmentIndex], Name, ArrayIndex, MapKey, bHasMapKey)) { OutError = TEXT("Invalid property path segment."); return false; }
 			FProperty* Property = FindFProperty<FProperty>(CurrentStruct, *Name);
 			if (!Property) { OutError = FString::Printf(TEXT("Property path field was not found: %s"), *Name); return false; }
 			void* PropertyPtr = Property->ContainerPtrToValuePtr<void>(CurrentContainer);
@@ -429,10 +571,21 @@ namespace UE::ProjectIntelligence
 				FScriptArrayHelper Helper(ArrayProperty, PropertyPtr); if (!Helper.IsValidIndex(ArrayIndex)) { OutError = TEXT("Array path index is out of range."); return false; }
 				Property = ArrayProperty->Inner; PropertyPtr = Helper.GetRawPtr(ArrayIndex);
 			}
+			if (bHasMapKey)
+			{
+				FMapProperty* MapProperty = CastField<FMapProperty>(Property); if (!MapProperty) { OutError = TEXT("Map-key path segment is not a map."); return false; }
+				FScriptMapHelper Helper(MapProperty, PropertyPtr); int32 Match = INDEX_NONE;
+				for (int32 Index = 0; Index < Helper.GetMaxIndex(); ++Index)
+				{
+					if (Helper.IsValidIndex(Index) && MapKeyString(MapProperty->KeyProp, Helper.GetKeyPtr(Index)) == MapKey) { Match = Index; break; }
+				}
+				if (Match == INDEX_NONE) { OutError = FString::Printf(TEXT("Map key was not found in property path: %s"), *MapKey); return false; }
+				Property = MapProperty->ValueProp; PropertyPtr = Helper.GetValuePtr(Match);
+			}
 			if (SegmentIndex == Segments.Num() - 1)
 			{
 				OutBefore = ReadValue(Property, PropertyPtr);
-				if (!WriteValue(Property, PropertyPtr, Value, OutError)) return false;
+				if (!WriteValueWithMode(Property, PropertyPtr, Value, Mode, OutError)) return false;
 				OutAfter = ReadValue(Property, PropertyPtr);
 				return true;
 			}

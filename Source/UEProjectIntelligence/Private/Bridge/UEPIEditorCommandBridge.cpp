@@ -352,14 +352,25 @@ namespace UE::ProjectIntelligence
 					OutError = TEXT("Each property write requires path, mode, and value.");
 					return nullptr;
 				}
-				if (Mode != TEXT("replace") && Mode != TEXT("set_field"))
-				{
-					OutError = FString::Printf(TEXT("Property write mode is not supported in this operation: %s"), *Mode);
-					return nullptr;
-				}
-				Properties->SetField(Path, TypedValue);
+				TSharedRef<FJsonObject> EncodedWrite = MakeShared<FJsonObject>();
+				EncodedWrite->SetStringField(TEXT("__uepi_write_mode"), Mode);
+				EncodedWrite->SetField(TEXT("__uepi_write_value"), TypedValue);
+				Properties->SetObjectField(Path, EncodedWrite);
 			}
 			return Properties;
+		}
+
+		FString PropertyWriteMode(const TSharedPtr<FJsonValue>& Value)
+		{
+			const TSharedPtr<FJsonObject> Object = Value.IsValid() && Value->Type == EJson::Object ? Value->AsObject() : nullptr;
+			return JsonString(Object, TEXT("__uepi_write_mode"), TEXT("replace"));
+		}
+
+		TSharedPtr<FJsonValue> PropertyWriteValue(const TSharedPtr<FJsonValue>& Value)
+		{
+			const TSharedPtr<FJsonObject> Object = Value.IsValid() && Value->Type == EJson::Object ? Value->AsObject() : nullptr;
+			const TSharedPtr<FJsonValue> Encoded = Object.IsValid() ? Object->TryGetField(TEXT("__uepi_write_value")) : nullptr;
+			return Encoded.IsValid() ? Encoded : Value;
 		}
 
 		FString BlueprintStatusString(const UBlueprint* Blueprint)
@@ -2825,7 +2836,7 @@ namespace UE::ProjectIntelligence
 					TSharedPtr<FJsonValue> Before;
 					TSharedPtr<FJsonValue> After;
 					FString Error;
-					if (!FUEPIPropertyCodec::SetPropertyPath(Probe, Pair.Key, Pair.Value, Before, After, Error))
+					if (!FUEPIPropertyCodec::SetPropertyPath(Probe, Pair.Key, PropertyWriteValue(Pair.Value), Before, After, Error, PropertyWriteMode(Pair.Value)))
 					{
 						return ErrorResponse(RequestId, TEXT("UEPI_EDIT_PROPERTY_TYPE_MISMATCH"), FString::Printf(TEXT("Property preflight failed for %s: %s"), *Pair.Key, *Error));
 					}
@@ -3043,7 +3054,7 @@ namespace UE::ProjectIntelligence
 				{
 					TSharedPtr<FJsonValue> Before;
 					TSharedPtr<FJsonValue> After;
-					if (!FUEPIPropertyCodec::SetPropertyPath(Object, Pair.Key, Pair.Value, Before, After, Error))
+					if (!FUEPIPropertyCodec::SetPropertyPath(Object, Pair.Key, PropertyWriteValue(Pair.Value), Before, After, Error, PropertyWriteMode(Pair.Value)))
 					{
 						bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break;
 					}
@@ -3307,7 +3318,7 @@ namespace UE::ProjectIntelligence
 				for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
 				{
 					TSharedPtr<FJsonValue> Before; TSharedPtr<FJsonValue> After;
-					if (!FUEPIPropertyCodec::SetPropertyPath(Template, Pair.Key, Pair.Value, Before, After, Error)) { bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break; }
+					if (!FUEPIPropertyCodec::SetPropertyPath(Template, Pair.Key, PropertyWriteValue(Pair.Value), Before, After, Error, PropertyWriteMode(Pair.Value))) { bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break; }
 					TSharedRef<FJsonObject> Diff = MakeShared<FJsonObject>(); Diff->SetStringField(TEXT("property_path"), Pair.Key); Diff->SetField(TEXT("before"), Before); Diff->SetField(TEXT("after"), After); PropertyDiffs.Add(MakeShared<FJsonValueObject>(Diff));
 				}
 				if (!bAllOk) break;
@@ -3894,7 +3905,7 @@ namespace UE::ProjectIntelligence
 					for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
 					{
 						TSharedPtr<FJsonValue> Before; TSharedPtr<FJsonValue> After;
-						if (!FUEPIPropertyCodec::SetPropertyPath(Actor, Pair.Key, Pair.Value, Before, After, Error)) { bAllOk = false; FailureMessage = Error; break; }
+						if (!FUEPIPropertyCodec::SetPropertyPath(Actor, Pair.Key, PropertyWriteValue(Pair.Value), Before, After, Error, PropertyWriteMode(Pair.Value))) { bAllOk = false; FailureMessage = Error; break; }
 						TSharedRef<FJsonObject> Diff = MakeShared<FJsonObject>(); Diff->SetStringField(TEXT("property_path"), Pair.Key); Diff->SetField(TEXT("before"), Before); Diff->SetField(TEXT("after"), After); PropertyDiffs.Add(MakeShared<FJsonValueObject>(Diff));
 					}
 					if (!bAllOk) break;

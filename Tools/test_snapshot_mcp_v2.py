@@ -1179,6 +1179,8 @@ def main() -> int:
             ]
             assert any("/Game/BP_MetadataOnly.BP_MetadataOnly" in request.get("target_object_paths", []) for request in metadata_requests)
             unknown = request(process, 6, "tools/call", {"name": "uepi_missing", "arguments": {}})["structuredContent"]
+            assert_envelope(unknown)
+            assert unknown["tool"] == "uepi_missing"
             assert unknown["error"]["code"] == "UEPI_UNKNOWN_TOOL"
             assert set(unknown["error"]["candidates"]) == EXPECTED_TOOLS
             discover = request(process, 62, "tools/call", {"name": "uepi_edit_discover", "arguments": {}})["structuredContent"]
