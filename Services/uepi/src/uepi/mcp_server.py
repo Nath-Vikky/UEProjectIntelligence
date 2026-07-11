@@ -14,6 +14,7 @@ try:
     from .projections import apply_response_options
     from .identity import project_guard_diagnostics
     from .status import resolve_status
+    from . import editor, refresh, world
     from .result import tool_response
 except ImportError:  # Allows direct execution as a script from Codex config.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -23,6 +24,7 @@ except ImportError:  # Allows direct execution as a script from Codex config.
     from uepi.projections import apply_response_options  # type: ignore
     from uepi.identity import project_guard_diagnostics  # type: ignore
     from uepi.status import resolve_status  # type: ignore
+    from uepi import editor, refresh, world  # type: ignore
     from uepi.result import tool_response  # type: ignore
 
 
@@ -73,6 +75,7 @@ TOOLS: list[dict[str, Any]] = [
                 "query": {"type": "string"},
                 "kind": {"type": "string"},
                 "limit": {"type": "integer"},
+                "scope": {"type": "string", "enum": ["project", "project_plugins", "engine"]},
             }
         ),
     },
@@ -169,6 +172,57 @@ TOOLS: list[dict[str, Any]] = [
             {
                 "from_generation": {"type": "integer"},
                 "to_generation": {"type": "integer"},
+            }
+        ),
+    },
+    {
+        "name": "uepi_editor",
+        "description": "Read short-lived live Editor status, selection, incremental output log, or viewport pixels.",
+        "inputSchema": read_schema(
+            {
+                "action": {"type": "string", "enum": ["status", "selection", "output_log", "viewport_capture"]},
+                "include_actors": {"type": "boolean"},
+                "include_assets": {"type": "boolean"},
+                "include_components": {"type": "boolean"},
+                "include_property_summary": {"type": "boolean"},
+                "since_utc": {"type": "string"},
+                "categories": {"type": "array", "items": {"type": "string"}},
+                "minimum_verbosity": {"type": "string"},
+                "regex": {"type": "string"},
+                "max_lines": {"type": "integer"},
+                "viewport": {"type": "string", "enum": ["active", "level", "pie"]},
+                "width": {"type": "integer"},
+                "height": {"type": "integer"},
+                "inline_image": {"type": "boolean"},
+                "include_camera_metadata": {"type": "boolean"},
+                "include_ui": {"type": "boolean"},
+            }
+        ),
+    },
+    {
+        "name": "uepi_world",
+        "description": "Read the live Editor or owned PIE world, actors, and components through the guarded Editor Bridge.",
+        "inputSchema": read_schema(
+            {
+                "action": {"type": "string", "enum": ["read", "actor", "component"]},
+                "world": {"type": "string", "enum": ["editor", "pie"]},
+                "filters": {"type": "object"},
+            }
+        ),
+    },
+    {
+        "name": "uepi_refresh",
+        "description": "Submit, inspect, or wait for a project-local targeted Snapshot or artifact refresh job.",
+        "inputSchema": read_schema(
+            {
+                "action": {"type": "string", "enum": ["request", "status", "wait"]},
+                "targets": {"type": "array", "items": {"type": "string"}},
+                "domains": {"type": "array", "items": {"type": "string"}},
+                "artifacts": {"type": "array", "items": {"type": "string"}},
+                "data_mode": {"type": "string", "enum": ["live", "saved"]},
+                "request_id": {"type": "string"},
+                "timeout_seconds": {"type": "number"},
+                "poll_interval_ms": {"type": "integer"},
             }
         ),
     },
@@ -323,6 +377,7 @@ class UEPIMCPServer:
                         query=str(arguments.get("query") or ""),
                         kind=arguments.get("kind") if isinstance(arguments.get("kind"), str) else None,
                         limit=int(arguments.get("limit") or 20),
+                        scope=str(arguments.get("scope") or "project"),
                     ), arguments
                 )
             if name == "uepi_context":
@@ -391,6 +446,12 @@ class UEPIMCPServer:
                         to_generation=arguments.get("to_generation") if isinstance(arguments.get("to_generation"), int) else None,
                     ), arguments
                 )
+            if name == "uepi_editor":
+                return self._read_result(editor.execute(engine, arguments), arguments)
+            if name == "uepi_world":
+                return self._read_result(world.execute(engine, arguments), arguments)
+            if name == "uepi_refresh":
+                return self._read_result(refresh.execute(engine, arguments), arguments)
             if profile_includes_edit_tools(self.args.tool_profile):
                 if name == "uepi_edit_discover":
                     return tool_response(edit.discover(engine.store))

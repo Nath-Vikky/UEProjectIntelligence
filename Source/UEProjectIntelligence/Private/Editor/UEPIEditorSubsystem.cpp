@@ -13,7 +13,9 @@
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/PlatformMisc.h"
 #include "Modules/ModuleManager.h"
+#include "Interfaces/IPluginManager.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonWriter.h"
@@ -61,6 +63,24 @@ namespace
 	FString UEPIRequestsDirectory()
 	{
 		return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("requests"));
+	}
+
+	FString UEPIProjectBindingId()
+	{
+		FString ProjectFile = FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath());
+		FPaths::NormalizeFilename(ProjectFile);
+		FPaths::CollapseRelativeDirectories(ProjectFile);
+#if PLATFORM_WINDOWS
+		ProjectFile = ProjectFile.ToLower();
+#endif
+		ProjectFile.RemoveFromEnd(TEXT("/"));
+		FTCHARToUTF8 Utf8(*ProjectFile);
+		FSHA256Signature Signature;
+		if (!FPlatformMisc::GetSHA256Signature(Utf8.Get(), static_cast<uint32>(Utf8.Length()), Signature))
+		{
+			return FString();
+		}
+		return FString::Printf(TEXT("sha256:%s"), *Signature.ToString().ToLower());
 	}
 
 	FString UEPIEditorSessionPath()
@@ -146,6 +166,91 @@ namespace
 		}
 		return Values;
 	}
+
+	void UEPIWriteProjectModuleManifest()
+	{
+		TSharedRef<FJsonObject> Manifest = MakeShared<FJsonObject>();
+		Manifest->SetStringField(TEXT("schema_version"), TEXT("uepi.project-modules.v1"));
+		Manifest->SetStringField(TEXT("project_file"), FPaths::ConvertRelativePathToFull(FPaths::GetProjectFilePath()));
+		Manifest->SetStringField(TEXT("project_binding_id"), UEPIProjectBindingId());
+
+		TArray<TSharedPtr<FJsonValue>> Modules;
+		TArray<TSharedPtr<FJsonValue>> Plugins;
+		TArray<TSharedPtr<FJsonValue>> AssetRoots = { MakeShared<FJsonValueString>(TEXT("/Game")) };
+		TArray<TSharedPtr<FJsonValue>> SourceRoots;
+		TSharedRef<FJsonObject> ProjectSource = MakeShared<FJsonObject>();
+		ProjectSource->SetStringField(TEXT("path"), FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("Source"))));
+		ProjectSource->SetStringField(TEXT("kind"), TEXT("project"));
+		SourceRoots.Add(MakeShared<FJsonValueObject>(ProjectSource));
+
+		TSharedPtr<FJsonObject> ProjectDescriptor;
+		if (UEPILoadJsonObject(FPaths::GetProjectFilePath(), ProjectDescriptor) && ProjectDescriptor.IsValid())
+		{
+			const TArray<TSharedPtr<FJsonValue>>* ModuleValues = nullptr;
+			if (ProjectDescriptor->TryGetArrayField(TEXT("Modules"), ModuleValues) && ModuleValues)
+			{
+				for (const TSharedPtr<FJsonValue>& ModuleValue : *ModuleValues)
+				{
+					if (const TSharedPtr<FJsonObject> Module = ModuleValue.IsValid() ? ModuleValue->AsObject() : nullptr)
+					{
+						TSharedRef<FJsonObject> ModuleObject = MakeShared<FJsonObject>();
+						FString ModuleName;
+						FString ModuleType;
+						Module->TryGetStringField(TEXT("Name"), ModuleName);
+						Module->TryGetStringField(TEXT("Type"), ModuleType);
+						ModuleObject->SetStringField(TEXT("name"), ModuleName);
+						ModuleObject->SetStringField(TEXT("type"), ModuleType);
+						ModuleObject->SetStringField(TEXT("owner"), TEXT("project"));
+						Modules.Add(MakeShared<FJsonValueObject>(ModuleObject));
+					}
+				}
+			}
+		}
+
+		for (const TSharedRef<IPlugin>& Plugin : IPluginManager::Get().GetEnabledPlugins())
+		{
+			if (Plugin->GetLoadedFrom() != EPluginLoadedFrom::Project)
+			{
+				continue;
+			}
+			TSharedRef<FJsonObject> PluginObject = MakeShared<FJsonObject>();
+			PluginObject->SetStringField(TEXT("name"), Plugin->GetName());
+			PluginObject->SetStringField(TEXT("descriptor"), Plugin->GetDescriptorFileName());
+			PluginObject->SetStringField(TEXT("type"), TEXT("project_plugin"));
+			PluginObject->SetBoolField(TEXT("enabled"), true);
+			PluginObject->SetBoolField(TEXT("can_contain_content"), Plugin->CanContainContent());
+			PluginObject->SetStringField(TEXT("mounted_asset_root"), Plugin->CanContainContent() ? Plugin->GetMountedAssetPath() : FString());
+			PluginObject->SetStringField(TEXT("content_directory"), Plugin->GetContentDir());
+			PluginObject->SetStringField(TEXT("source_directory"), FPaths::Combine(Plugin->GetBaseDir(), TEXT("Source")));
+			Plugins.Add(MakeShared<FJsonValueObject>(PluginObject));
+			if (Plugin->CanContainContent())
+			{
+				AssetRoots.Add(MakeShared<FJsonValueString>(Plugin->GetMountedAssetPath().LeftChop(1)));
+			}
+			const FString PluginSourcePath = FPaths::Combine(Plugin->GetBaseDir(), TEXT("Source"));
+			if (IFileManager::Get().DirectoryExists(*PluginSourcePath))
+			{
+				TSharedRef<FJsonObject> SourceRoot = MakeShared<FJsonObject>();
+				SourceRoot->SetStringField(TEXT("path"), FPaths::ConvertRelativePathToFull(PluginSourcePath));
+				SourceRoot->SetStringField(TEXT("kind"), TEXT("project_plugin"));
+				SourceRoot->SetStringField(TEXT("plugin"), Plugin->GetName());
+				SourceRoots.Add(MakeShared<FJsonValueObject>(SourceRoot));
+			}
+			for (const FModuleDescriptor& Module : Plugin->GetDescriptor().Modules)
+			{
+				TSharedRef<FJsonObject> ModuleObject = MakeShared<FJsonObject>();
+				ModuleObject->SetStringField(TEXT("name"), Module.Name.ToString());
+				ModuleObject->SetStringField(TEXT("owner"), Plugin->GetName());
+				Modules.Add(MakeShared<FJsonValueObject>(ModuleObject));
+			}
+		}
+		Manifest->SetArrayField(TEXT("modules"), Modules);
+		Manifest->SetArrayField(TEXT("plugins"), Plugins);
+		Manifest->SetArrayField(TEXT("asset_roots"), AssetRoots);
+		Manifest->SetArrayField(TEXT("source_roots"), SourceRoots);
+		Manifest->SetArrayField(TEXT("diagnostics"), TArray<TSharedPtr<FJsonValue>>());
+		UEPISaveJsonObject(Manifest, FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("project-modules.json")));
+	}
 }
 
 void UUEPIEditorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -153,6 +258,7 @@ void UUEPIEditorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	Super::Initialize(Collection);
 	if (!IsRunningCommandlet())
 	{
+		UEPIWriteProjectModuleManifest();
 		StartLiveSession();
 		StartEditorBridgeIfEnabled();
 		RegisterIncrementalDelegates();
@@ -548,9 +654,23 @@ void UUEPIEditorSubsystem::ProcessRefreshRequests()
 
 		FString SchemaVersion;
 		Request->TryGetStringField(TEXT("schema_version"), SchemaVersion);
-		if (!SchemaVersion.Equals(TEXT("uepi.refresh-request.v1"), ESearchCase::IgnoreCase))
+		const bool bRequestV2 = SchemaVersion.Equals(TEXT("uepi.refresh-request.v2"), ESearchCase::IgnoreCase);
+		if (!bRequestV2 && !SchemaVersion.Equals(TEXT("uepi.refresh-request.v1"), ESearchCase::IgnoreCase))
 		{
 			continue;
+		}
+		if (bRequestV2)
+		{
+			FString RequestBindingId;
+			Request->TryGetStringField(TEXT("project_binding_id"), RequestBindingId);
+			if (!RequestBindingId.IsEmpty() && RequestBindingId != UEPIProjectBindingId())
+			{
+				Request->SetStringField(TEXT("status"), TEXT("failed"));
+				Request->SetStringField(TEXT("error"), TEXT("UEPI_PROJECT_BINDING_MISMATCH"));
+				Request->SetStringField(TEXT("completed_at"), FDateTime::UtcNow().ToIso8601());
+				UEPISaveJsonObject(Request.ToSharedRef(), RequestPath);
+				continue;
+			}
 		}
 
 		FString Status;
@@ -559,7 +679,7 @@ void UUEPIEditorSubsystem::ProcessRefreshRequests()
 		{
 			Status = TEXT("pending");
 		}
-		if (!Status.Equals(TEXT("pending"), ESearchCase::IgnoreCase) && !Status.Equals(TEXT("running"), ESearchCase::IgnoreCase))
+		if (!Status.Equals(TEXT("queued"), ESearchCase::IgnoreCase) && !Status.Equals(TEXT("pending"), ESearchCase::IgnoreCase) && !Status.Equals(TEXT("running"), ESearchCase::IgnoreCase))
 		{
 			continue;
 		}
@@ -571,6 +691,10 @@ void UUEPIEditorSubsystem::ProcessRefreshRequests()
 		}
 
 		TArray<FString> TargetObjectPaths = UEPIStringArrayField(Request, TEXT("target_object_paths"));
+		for (const FString& Target : UEPIStringArrayField(Request, TEXT("targets")))
+		{
+			TargetObjectPaths.AddUnique(Target);
+		}
 		FString SingleTarget;
 		if (Request->TryGetStringField(TEXT("target_object_path"), SingleTarget) && !SingleTarget.IsEmpty())
 		{
@@ -588,22 +712,40 @@ void UUEPIEditorSubsystem::ProcessRefreshRequests()
 		}
 
 		Request->SetStringField(TEXT("status"), TEXT("running"));
-		Request->SetStringField(TEXT("started_at_utc"), FDateTime::UtcNow().ToIso8601());
+		Request->SetStringField(bRequestV2 ? TEXT("started_at") : TEXT("started_at_utc"), FDateTime::UtcNow().ToIso8601());
 		Request->SetStringField(TEXT("editor_session_id"), LiveSessionId);
-		UEPISaveJsonObject(Request.ToSharedRef(), RequestPath);
+		FString ActiveRequestPath = RequestPath;
+		if (bRequestV2 && RequestPath.EndsWith(TEXT(".queued.json")))
+		{
+			const FString RunningPath = RequestPath.LeftChop(12) + TEXT(".running.json");
+			if (IFileManager::Get().Move(*RunningPath, *RequestPath, true, true, false, true))
+			{
+				ActiveRequestPath = RunningPath;
+			}
+		}
+		UEPISaveJsonObject(Request.ToSharedRef(), ActiveRequestPath);
 
 		FString ReportPath;
 		FString Error;
 		const bool bOk = RunTargetedSnapshotScan(TargetObjectPaths, DataMode, ReportPath, Error);
-		Request->SetStringField(TEXT("status"), bOk ? TEXT("completed") : TEXT("failed"));
-		Request->SetStringField(TEXT("completed_at_utc"), FDateTime::UtcNow().ToIso8601());
+		Request->SetStringField(TEXT("status"), bOk ? (bRequestV2 ? TEXT("succeeded") : TEXT("completed")) : TEXT("failed"));
+		Request->SetStringField(bRequestV2 ? TEXT("completed_at") : TEXT("completed_at_utc"), FDateTime::UtcNow().ToIso8601());
 		Request->SetStringField(TEXT("editor_session_id"), LiveSessionId);
 		Request->SetStringField(TEXT("manifest_path"), ReportPath);
 		Request->SetStringField(TEXT("error"), Error);
-		UEPISaveJsonObject(Request.ToSharedRef(), RequestPath);
+		FString CompletedRequestPath = ActiveRequestPath;
+		if (bRequestV2 && ActiveRequestPath.EndsWith(TEXT(".running.json")))
+		{
+			CompletedRequestPath = ActiveRequestPath.LeftChop(13) + TEXT(".completed.json");
+		}
+		UEPISaveJsonObject(Request.ToSharedRef(), ActiveRequestPath);
+		if (CompletedRequestPath != ActiveRequestPath)
+		{
+			IFileManager::Get().Move(*CompletedRequestPath, *ActiveRequestPath, true, true, false, true);
+		}
 
 		LastRefreshRequestUtc = FDateTime::UtcNow().ToIso8601();
-		LastRefreshRequestPath = RequestPath;
+		LastRefreshRequestPath = CompletedRequestPath;
 		++ProcessedCount;
 	}
 

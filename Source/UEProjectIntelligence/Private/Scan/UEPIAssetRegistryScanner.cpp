@@ -729,7 +729,19 @@ void AppendProjectFileGraph(FProjectScanResult& Result)
 		}
 	}
 
-	TArray<FString> SourceRoots = { FPaths::Combine(FPaths::ProjectDir(), TEXT("Source")), FPaths::Combine(FPaths::ProjectPluginsDir(), TEXT("UEProjectIntelligence"), TEXT("Source")) };
+	TArray<FString> SourceRoots = { FPaths::Combine(FPaths::ProjectDir(), TEXT("Source")) };
+	for (const TSharedRef<IPlugin>& Plugin : IPluginManager::Get().GetEnabledPlugins())
+	{
+		if (Plugin->GetLoadedFrom() != EPluginLoadedFrom::Project)
+		{
+			continue;
+		}
+		const FString PluginSourceRoot = FPaths::Combine(Plugin->GetBaseDir(), TEXT("Source"));
+		if (IFileManager::Get().DirectoryExists(*PluginSourceRoot))
+		{
+			SourceRoots.AddUnique(PluginSourceRoot);
+		}
+	}
 	for (const FString& SourceRoot : SourceRoots)
 	{
 		TArray<FString> SourceFiles;

@@ -19,6 +19,7 @@ namespace UE::ProjectIntelligence
 			TEXT("editor.get_selection"),
 			TEXT("editor.capture_viewport"),
 			TEXT("editor.read_output_log"),
+			TEXT("editor.read_world"),
 			TEXT("asset.refresh_now")
 		};
 	}

@@ -33,7 +33,8 @@ namespace UE::ProjectIntelligence
 		TSharedRef<FJsonObject> ErrorResponse(const FString& RequestId, const FString& Code, const FString& Message) const;
 		TSharedRef<FJsonObject> StatusResult(const FString& RequestId) const;
 		TSharedRef<FJsonObject> SelectionResult(const FString& RequestId) const;
-		TSharedRef<FJsonObject> OutputLogResult(const FString& RequestId, int32 LineLimit) const;
+		TSharedRef<FJsonObject> OutputLogResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const;
+		TSharedRef<FJsonObject> WorldReadResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const;
 		TSharedRef<FJsonObject> RefreshNowResult(const FString& RequestId, const TArray<FString>& Targets, const FString& DataMode) const;
 		TSharedRef<FJsonObject> ViewportCaptureUnsupported(const FString& RequestId) const;
 		TSharedRef<FJsonObject> EditDiscoverResult(const FString& RequestId) const;

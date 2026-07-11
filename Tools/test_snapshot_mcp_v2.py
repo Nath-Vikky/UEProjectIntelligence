@@ -29,6 +29,9 @@ READ_TOOLS = {
     "uepi_animation",
     "uepi_impact",
     "uepi_diff",
+    "uepi_editor",
+    "uepi_world",
+    "uepi_refresh",
 }
 
 EDIT_TOOLS = {
@@ -1095,6 +1098,37 @@ def main() -> int:
             )["structuredContent"]
             assert wrong_project["ok"] is False
             assert wrong_project["error"]["code"] == "UEPI_PROJECT_MISMATCH"
+            editor_status = request(process, 56, "tools/call", {"name": "uepi_editor", "arguments": {"action": "status"}})["structuredContent"]
+            assert_envelope(editor_status)
+            assert editor_status["result"]["editor"]["connected"] is False
+            world_read = request(process, 57, "tools/call", {"name": "uepi_world", "arguments": {"action": "read", "world": "editor"}})["structuredContent"]
+            assert world_read["ok"] is False
+            assert world_read["error"]["code"] in {"UEPI_BRIDGE_NOT_CONFIGURED", "UEPI_BRIDGE_NOT_READY", "UEPI_WORLD_READ_FAILED"}
+            refresh_request = request(
+                process,
+                58,
+                "tools/call",
+                {
+                    "name": "uepi_refresh",
+                    "arguments": {
+                        "action": "request",
+                        "targets": ["/Game/BP_Hero.BP_Hero"],
+                        "domains": ["blueprint"],
+                    },
+                },
+            )["structuredContent"]
+            assert_envelope(refresh_request)
+            refresh_value = refresh_request["result"]["request"]
+            assert refresh_value["schema_version"] == "uepi.refresh-request.v2"
+            assert refresh_value["status"] in {"queued", "running"}
+            refresh_status = request(
+                process,
+                59,
+                "tools/call",
+                {"name": "uepi_refresh", "arguments": {"action": "status", "request_id": refresh_value["request_id"]}},
+            )["structuredContent"]
+            assert_envelope(refresh_status)
+            assert refresh_status["result"]["request"]["request_id"] == refresh_value["request_id"]
             live_context = request(
                 process,
                 46,
@@ -1128,7 +1162,7 @@ def main() -> int:
             assert "Event BeginPlay" in blueprint_names
             assert "Asset Fragment Node" in blueprint_names
             assert "Live Print String" in blueprint_names
-            assert any((root / "store" / "requests").glob("refresh-*.json"))
+            assert any((root / "store" / "requests").glob("*.json"))
             assert "semantic_summary" in blueprint["result"]
             assert blueprint["result"]["semantic_summary"]["schema_version"] == "uepi.blueprint-semantic-summary.v1"
             metadata_blueprint = request(process, 50, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_MetadataOnly.BP_MetadataOnly"}})["structuredContent"]
@@ -1139,7 +1173,7 @@ def main() -> int:
             assert "blueprint_graph_entities_not_present_in_snapshot" in metadata_blueprint["omissions"]
             metadata_requests = [
                 json.loads(path.read_text(encoding="utf-8"))
-                for path in (root / "store" / "requests").glob("refresh-*.json")
+                for path in (root / "store" / "requests").glob("*.json")
             ]
             assert any("/Game/BP_MetadataOnly.BP_MetadataOnly" in request.get("target_object_paths", []) for request in metadata_requests)
             unknown = request(process, 6, "tools/call", {"name": "uepi_missing", "arguments": {}})["structuredContent"]

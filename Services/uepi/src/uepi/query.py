@@ -7,7 +7,7 @@ from typing import Any
 
 from .blueprint_semantics import summarize_blueprint_semantics
 from .cache import SQLiteSnapshotCache, cache_status, sync_cache
-from .cpp_symbols import scan_cpp_symbols
+from .cpp_symbols import project_module_manifest, scan_cpp_symbols
 from .bridge_client import bridge_status, call_bridge, live_context
 from .identity import project_guard_diagnostics, project_identity
 from .status import resolve_status
@@ -681,17 +681,21 @@ class UEPIQueryEngine:
             ],
         )
 
-    def search(self, query: str = "", kind: str | None = None, limit: int = 20) -> dict[str, Any]:
+    def search(self, query: str = "", kind: str | None = None, limit: int = 20, scope: str = "project") -> dict[str, Any]:
         limit = max(1, min(int(limit or 20), 100))
         if self.cache:
-            matches = [_short_entity(entity) for entity in self.cache.search_entities(query, kind, limit)]
+            search_limit = 500 if scope == "project_plugins" else limit
+            matches = [_short_entity(entity) for entity in self.cache.search_entities(query, kind, search_limit)]
             query_source = "sqlite_cache"
         else:
             self._ensure_loaded()
             matches = [_short_entity(entity) for entity in self.entities if self._matches_entity(entity, query, kind)][:limit]
             query_source = "snapshot_fragments"
+        if scope == "project_plugins":
+            roots = [str(item).casefold() for item in project_module_manifest(self.store.root).get("asset_roots") or [] if str(item) != "/Game"]
+            matches = [item for item in matches if any(str(item.get("canonical_key") or "").casefold().startswith(root + "/") for root in roots)][:limit]
         return self._envelope(
-            {"query": query, "kind": kind, "matches": matches, "match_count": len(matches), "query_source": query_source},
+            {"query": query, "kind": kind, "scope": scope, "matches": matches, "match_count": len(matches), "query_source": query_source},
             tool="uepi_search",
             operation="entity_search",
         )

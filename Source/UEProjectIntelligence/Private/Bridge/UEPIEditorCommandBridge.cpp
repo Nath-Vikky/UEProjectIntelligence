@@ -25,6 +25,7 @@
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/Texture.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "Engine/Blueprint.h"
 #include "Factories/MaterialInstanceConstantFactoryNew.h"
 #include "GameFramework/Actor.h"
@@ -242,6 +243,23 @@ namespace UE::ProjectIntelligence
 			}
 			const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
 			return Object->TryGetArrayField(Field, Values) ? Values : nullptr;
+		}
+
+		TArray<FString> JsonStringArray(const TSharedPtr<FJsonObject>& Object, const TCHAR* Field)
+		{
+			TArray<FString> Result;
+			if (const TArray<TSharedPtr<FJsonValue>>* Values = JsonArray(Object, Field))
+			{
+				for (const TSharedPtr<FJsonValue>& Value : *Values)
+				{
+					FString Text;
+					if (Value.IsValid() && Value->TryGetString(Text) && !Text.IsEmpty())
+					{
+						Result.AddUnique(Text);
+					}
+				}
+			}
+			return Result;
 		}
 
 		TSharedPtr<FJsonObject> JsonObjectField(const TSharedPtr<FJsonObject>& Object, const TCHAR* Field)
@@ -1602,17 +1620,23 @@ namespace UE::ProjectIntelligence
 
 		bool WriteRefreshRequest(const TArray<FString>& Targets, const FString& DataMode, FString& OutRequestPath, FString& OutError)
 		{
-			const FString RequestIdPart = FGuid::NewGuid().ToString(EGuidFormats::Digits);
+			const FString RequestIdPart = FString::Printf(TEXT("uepi-refresh:%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 			const FString CreatedAt = FDateTime::UtcNow().ToIso8601();
-			const FString RequestPath = FPaths::Combine(UEPIRequestsDirectory(), FString::Printf(TEXT("refresh-%s-%s.json"), *CreatedAt.Replace(TEXT(":"), TEXT("")).Replace(TEXT("-"), TEXT("")), *RequestIdPart.Left(12)));
+			const FString SafeRequestId = RequestIdPart.Replace(TEXT(":"), TEXT("-"));
+			const FString RequestPath = FPaths::Combine(UEPIRequestsDirectory(), FString::Printf(TEXT("%s.queued.json"), *SafeRequestId));
 
 			TSharedRef<FJsonObject> Request = MakeShared<FJsonObject>();
-			Request->SetStringField(TEXT("schema_version"), TEXT("uepi.refresh-request.v1"));
+			Request->SetStringField(TEXT("schema_version"), TEXT("uepi.refresh-request.v2"));
 			Request->SetStringField(TEXT("request_id"), RequestIdPart);
-			Request->SetStringField(TEXT("status"), TEXT("pending"));
-			Request->SetStringField(TEXT("created_at_utc"), CreatedAt);
+			Request->SetStringField(TEXT("project_binding_id"), UEPIProjectBindingId());
+			Request->SetStringField(TEXT("status"), TEXT("queued"));
+			Request->SetStringField(TEXT("created_at"), CreatedAt);
+			Request->SetStringField(TEXT("expires_at"), (FDateTime::UtcNow() + FTimespan::FromMinutes(5.0)).ToIso8601());
 			Request->SetStringField(TEXT("data_mode"), DataMode);
+			Request->SetArrayField(TEXT("targets"), StringArrayToJsonValues(Targets));
 			Request->SetArrayField(TEXT("target_object_paths"), StringArrayToJsonValues(Targets));
+			Request->SetArrayField(TEXT("domains"), EmptyJsonArray());
+			Request->SetArrayField(TEXT("artifacts"), EmptyJsonArray());
 			Request->SetStringField(TEXT("reason"), TEXT("bridge_edit_apply"));
 			Request->SetStringField(TEXT("tool_name"), TEXT("uepi_bridge"));
 
@@ -1667,12 +1691,31 @@ namespace UE::ProjectIntelligence
 			Object->SetStringField(TEXT("name"), Actor->GetName());
 			Object->SetStringField(TEXT("path"), Actor->GetPathName());
 			Object->SetStringField(TEXT("class"), Actor->GetClass() ? Actor->GetClass()->GetPathName() : FString());
+			Object->SetStringField(TEXT("label"), Actor->GetActorLabel());
+			Object->SetStringField(TEXT("folder"), Actor->GetFolderPath().ToString());
+			Object->SetStringField(TEXT("level"), Actor->GetLevel() ? Actor->GetLevel()->GetPathName() : FString());
+			TArray<FString> Tags;
+			for (const FName& Tag : Actor->Tags)
+			{
+				Tags.Add(Tag.ToString());
+			}
+			Object->SetArrayField(TEXT("tags"), StringArrayToJsonValues(Tags));
 			const FTransform Transform = Actor->GetActorTransform();
 			TSharedRef<FJsonObject> Location = MakeShared<FJsonObject>();
 			Location->SetNumberField(TEXT("x"), Transform.GetLocation().X);
 			Location->SetNumberField(TEXT("y"), Transform.GetLocation().Y);
 			Location->SetNumberField(TEXT("z"), Transform.GetLocation().Z);
 			Object->SetObjectField(TEXT("location"), Location);
+			TSharedRef<FJsonObject> Rotation = MakeShared<FJsonObject>();
+			Rotation->SetNumberField(TEXT("pitch"), Transform.Rotator().Pitch);
+			Rotation->SetNumberField(TEXT("yaw"), Transform.Rotator().Yaw);
+			Rotation->SetNumberField(TEXT("roll"), Transform.Rotator().Roll);
+			Object->SetObjectField(TEXT("rotation"), Rotation);
+			TSharedRef<FJsonObject> Scale = MakeShared<FJsonObject>();
+			Scale->SetNumberField(TEXT("x"), Transform.GetScale3D().X);
+			Scale->SetNumberField(TEXT("y"), Transform.GetScale3D().Y);
+			Scale->SetNumberField(TEXT("z"), Transform.GetScale3D().Z);
+			Object->SetObjectField(TEXT("scale"), Scale);
 			Object->SetNumberField(TEXT("component_count"), Actor->GetComponents().Num());
 			return Object;
 		}
@@ -1953,8 +1996,11 @@ namespace UE::ProjectIntelligence
 		}
 		if (Command == TEXT("editor.read_output_log"))
 		{
-			const int32 LineLimit = JsonInt(Params, TEXT("line_limit"), 100);
-			return OutputLogResult(RequestId, LineLimit <= 0 ? 100 : LineLimit);
+			return OutputLogResult(RequestId, Params);
+		}
+		if (Command == TEXT("editor.read_world"))
+		{
+			return WorldReadResult(RequestId, Params);
 		}
 		if (Command == TEXT("asset.refresh_now"))
 		{
@@ -2079,19 +2125,49 @@ namespace UE::ProjectIntelligence
 		return Response;
 	}
 
-	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::OutputLogResult(const FString& RequestId, int32 LineLimit) const
+	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::OutputLogResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const
 	{
 		const FString OutputLogPath = AbsoluteLogFilename();
-		TArray<TSharedPtr<FJsonValue>> Lines;
-		for (const FString& Line : TailLines(OutputLogPath, LineLimit))
+		const int32 LineLimit = FMath::Clamp(JsonInt(Params, TEXT("line_limit"), 100), 1, 2000);
+		TArray<uint8> Bytes;
+		if (!FFileHelper::LoadFileToArray(Bytes, *OutputLogPath))
 		{
-			Lines.Add(MakeShared<FJsonValueString>(Line));
+			return ErrorResponse(RequestId, TEXT("UEPI_EDITOR_LOG_READ_FAILED"), TEXT("The active output log file could not be read."));
+		}
+		int64 ByteOffset = FMath::Max<int64>(0, Bytes.Num() - 1024 * 1024);
+		if (const TSharedPtr<FJsonObject> Cursor = JsonObjectField(Params, TEXT("cursor")))
+		{
+			double RequestedOffset = 0.0;
+			if (Cursor->TryGetNumberField(TEXT("byte_offset"), RequestedOffset))
+			{
+				ByteOffset = FMath::Clamp<int64>(static_cast<int64>(RequestedOffset), 0, Bytes.Num());
+			}
+		}
+		const int32 RemainingBytes = Bytes.Num() - static_cast<int32>(ByteOffset);
+		FString LogText;
+		if (RemainingBytes > 0)
+		{
+			FUTF8ToTCHAR Converter(reinterpret_cast<const ANSICHAR*>(Bytes.GetData() + ByteOffset), RemainingBytes);
+			LogText = FString(Converter.Length(), Converter.Get());
+		}
+		TArray<FString> ParsedLines;
+		LogText.ParseIntoArrayLines(ParsedLines, false);
+		TArray<TSharedPtr<FJsonValue>> Lines;
+		const int32 FirstLine = FMath::Max(0, ParsedLines.Num() - LineLimit);
+		for (int32 Index = FirstLine; Index < ParsedLines.Num(); ++Index)
+		{
+			Lines.Add(MakeShared<FJsonValueString>(ParsedLines[Index]));
 		}
 
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetStringField(TEXT("log_path"), OutputLogPath);
 		Result->SetNumberField(TEXT("line_count"), Lines.Num());
 		Result->SetArrayField(TEXT("lines"), Lines);
+		TSharedRef<FJsonObject> Cursor = MakeShared<FJsonObject>();
+		Cursor->SetStringField(TEXT("file_identity"), FMD5::HashAnsiString(*FString::Printf(TEXT("%s:%d"), *OutputLogPath, Bytes.Num())));
+		Cursor->SetNumberField(TEXT("byte_offset"), Bytes.Num());
+		Cursor->SetNumberField(TEXT("file_size"), Bytes.Num());
+		Result->SetObjectField(TEXT("cursor"), Cursor);
 
 		TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
 		Response->SetStringField(TEXT("id"), RequestId);
@@ -2099,6 +2175,84 @@ namespace UE::ProjectIntelligence
 		Response->SetObjectField(TEXT("result"), Result);
 		Response->SetArrayField(TEXT("diagnostics"), TArray<TSharedPtr<FJsonValue>>());
 		return Response;
+	}
+
+	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::WorldReadResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const
+	{
+		const FString WorldKind = JsonString(Params, TEXT("world"), TEXT("editor"));
+		UWorld* World = nullptr;
+		if (GEditor)
+		{
+			if (WorldKind.Equals(TEXT("pie"), ESearchCase::IgnoreCase))
+			{
+				for (const FWorldContext& Context : GEditor->GetWorldContexts())
+				{
+					if (Context.WorldType == EWorldType::PIE)
+					{
+						World = Context.World();
+						break;
+					}
+				}
+			}
+			else
+			{
+				World = GEditor->GetEditorWorldContext().World();
+			}
+		}
+		if (!World)
+		{
+			return ErrorResponse(RequestId, WorldKind.Equals(TEXT("pie"), ESearchCase::IgnoreCase) ? TEXT("UEPI_RUNTIME_SESSION_REQUIRED") : TEXT("UEPI_EDITOR_WORLD_UNAVAILABLE"), TEXT("The requested Unreal world is not available."));
+		}
+
+		const TSharedPtr<FJsonObject> Filters = JsonObjectField(Params, TEXT("filters"));
+		const TArray<FString> ClassPaths = Filters.IsValid() ? JsonStringArray(Filters, TEXT("class_paths")) : TArray<FString>();
+		const TArray<FString> Labels = Filters.IsValid() ? JsonStringArray(Filters, TEXT("labels")) : TArray<FString>();
+		const TArray<FString> ObjectPaths = Filters.IsValid() ? JsonStringArray(Filters, TEXT("object_paths")) : TArray<FString>();
+		TArray<TSharedPtr<FJsonValue>> ActorValues;
+		for (TActorIterator<AActor> It(World); It && ActorValues.Num() < 5000; ++It)
+		{
+			AActor* Actor = *It;
+			if (!Actor)
+			{
+				continue;
+			}
+			const FString ClassPath = Actor->GetClass() ? Actor->GetClass()->GetPathName() : FString();
+			if (ClassPaths.Num() > 0 && !ClassPaths.Contains(ClassPath))
+			{
+				continue;
+			}
+			if (Labels.Num() > 0 && !Labels.Contains(Actor->GetActorLabel()))
+			{
+				continue;
+			}
+			if (ObjectPaths.Num() > 0 && !ObjectPaths.Contains(Actor->GetPathName()))
+			{
+				continue;
+			}
+			TSharedRef<FJsonObject> ActorJson = ActorObject(Actor);
+			TArray<TSharedPtr<FJsonValue>> Components;
+			for (UActorComponent* Component : Actor->GetComponents())
+			{
+				if (!Component)
+				{
+					continue;
+				}
+				TSharedRef<FJsonObject> ComponentJson = MakeShared<FJsonObject>();
+				ComponentJson->SetStringField(TEXT("name"), Component->GetName());
+				ComponentJson->SetStringField(TEXT("path"), Component->GetPathName());
+				ComponentJson->SetStringField(TEXT("class"), Component->GetClass() ? Component->GetClass()->GetPathName() : FString());
+				Components.Add(MakeShared<FJsonValueObject>(ComponentJson));
+			}
+			ActorJson->SetArrayField(TEXT("components"), Components);
+			ActorValues.Add(MakeShared<FJsonValueObject>(ActorJson));
+		}
+
+		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetStringField(TEXT("world"), WorldKind.ToLower());
+		Result->SetStringField(TEXT("map"), World->GetOutermost() ? World->GetOutermost()->GetName() : FString());
+		Result->SetNumberField(TEXT("actor_count"), ActorValues.Num());
+		Result->SetArrayField(TEXT("actors"), ActorValues);
+		return SuccessResponse(RequestId, Result);
 	}
 
 	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::RefreshNowResult(const FString& RequestId, const TArray<FString>& Targets, const FString& DataMode) const

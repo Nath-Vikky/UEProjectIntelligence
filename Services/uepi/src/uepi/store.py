@@ -523,16 +523,27 @@ class SnapshotStore:
         reason: str,
         tool_name: str,
         data_mode: str = "live",
+        domains: list[str] | None = None,
+        artifacts: list[str] | None = None,
+        project_binding_id: str = "",
+        editor_session_id: str = "",
     ) -> Path:
         clean_targets = sorted({str(target).strip() for target in targets if str(target).strip()})
-        request_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:12]}"
+        request_id = f"uepi-refresh:{uuid4().hex}"
+        now = datetime.now(timezone.utc)
         request = {
-            "schema_version": "uepi.refresh-request.v1",
+            "schema_version": "uepi.refresh-request.v2",
             "request_id": request_id,
-            "status": "pending",
-            "created_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "project_binding_id": project_binding_id or None,
+            "editor_session_id": editor_session_id or None,
+            "status": "queued",
+            "created_at": now.isoformat().replace("+00:00", "Z"),
+            "expires_at": datetime.fromtimestamp(now.timestamp() + 300.0, timezone.utc).isoformat().replace("+00:00", "Z"),
             "data_mode": data_mode,
+            "targets": clean_targets,
             "target_object_paths": clean_targets,
+            "domains": sorted(set(domains or [])),
+            "artifacts": sorted(set(artifacts or [])),
             "reason": reason,
             "tool_name": tool_name,
         }
@@ -544,10 +555,11 @@ class SnapshotStore:
                 continue
             status = str(existing.get("status") or "pending").casefold()
             existing_targets = {str(item) for item in existing.get("target_object_paths") or [] if isinstance(item, str)}
-            if status in {"pending", "running"} and existing_targets.intersection(clean_targets):
+            if status in {"queued", "pending", "running"} and existing_targets.intersection(clean_targets):
                 return existing_path
-        path = self.requests_dir / f"refresh-{request_id}.json"
-        temp_path = path.with_suffix(".json.tmp")
+        safe_id = request_id.replace(":", "-")
+        path = self.requests_dir / f"{safe_id}.queued.json"
+        temp_path = path.with_suffix(".tmp")
         temp_path.write_text(json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8")
         temp_path.replace(path)
         return path
@@ -562,7 +574,7 @@ class SnapshotStore:
             except SnapshotStoreError:
                 continue
             status = str(request.get("status") or "pending").casefold()
-            if status in {"pending", "running"}:
+            if status in {"queued", "pending", "running"}:
                 count += 1
         return count
 
