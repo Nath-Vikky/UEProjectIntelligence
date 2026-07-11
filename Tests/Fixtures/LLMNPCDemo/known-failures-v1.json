@@ -1,0 +1,36 @@
+{
+  "schema_version": "uepi.audit-known-failures.v1",
+  "baseline_commit": "102a59f67293a621f41b9b98ac3b312875ae1e37",
+  "failures": [
+    {
+      "id": "wrong_project",
+      "severity": "p0",
+      "expected_vnext_code": "UEPI_PROJECT_BINDING_MISMATCH",
+      "baseline": "Session routing accepts fuzzy project identifiers and can fall back when only one unrelated Editor is online."
+    },
+    {
+      "id": "scope_drift",
+      "severity": "p0",
+      "expected_vnext_code": "UEPI_QUERY_SCOPE_VIOLATION",
+      "baseline": "Context scope is not applied as a hard filter before search and ranking."
+    },
+    {
+      "id": "unsupported_apply_next_action",
+      "severity": "p0",
+      "expected_vnext_code": "UEPI_EDIT_OPERATION_UNSUPPORTED",
+      "baseline": "Unknown operations produce warning diagnostics and Preview can still offer an Apply next action."
+    },
+    {
+      "id": "save_false",
+      "severity": "p0",
+      "expected_vnext_code": "UEPI_EDIT_SAVE_NOT_IMPLEMENTED",
+      "baseline": "Apply exposes a save capability switch but returns saved=false without touched-only package persistence."
+    },
+    {
+      "id": "blueprint_only_validate",
+      "severity": "p0",
+      "expected_vnext_code": "UEPI_EDIT_VALIDATOR_NOT_FOUND",
+      "baseline": "Generic validation loads all affected assets as UBlueprint and cannot validate non-Blueprint targets by type."
+    }
+  ]
+}

@@ -1,0 +1,364 @@
+{
+  "schema_version": "uepi.mcp-contract-snapshot.v1",
+  "captured_at_utc": "2026-07-11T12:24:52.480931Z",
+  "uepi_version": "2.0.0.dev0",
+  "profiles": {
+    "readonly": [
+      "uepi_status",
+      "uepi_overview",
+      "uepi_search",
+      "uepi_context",
+      "uepi_asset",
+      "uepi_blueprint",
+      "uepi_blueprint_trace",
+      "uepi_animation",
+      "uepi_impact",
+      "uepi_diff"
+    ],
+    "codex": [
+      "uepi_status",
+      "uepi_overview",
+      "uepi_search",
+      "uepi_context",
+      "uepi_asset",
+      "uepi_blueprint",
+      "uepi_blueprint_trace",
+      "uepi_animation",
+      "uepi_impact",
+      "uepi_diff",
+      "uepi_edit_discover",
+      "uepi_edit_preview",
+      "uepi_edit_apply",
+      "uepi_edit_validate",
+      "uepi_edit_rollback"
+    ]
+  },
+  "tools": [
+    {
+      "name": "uepi_status",
+      "description": "Return Snapshot-backed UEPI project status, freshness, counts, and LLM readiness.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "uepi_overview",
+      "description": "Return a compact project overview with entity-kind and relation-type counts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_search",
+      "description": "Search indexed UE project entities by asset path, display name, kind, or attributes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_context",
+      "description": "Build a bounded static context bundle for a natural-language UE project question.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          },
+          "live": {
+            "type": "boolean"
+          },
+          "scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_items": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "question"
+        ]
+      }
+    },
+    {
+      "name": "uepi_asset",
+      "description": "Resolve and read one indexed entity or asset with nearby graph context.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string"
+          },
+          "refresh": {
+            "type": "string"
+          },
+          "include_snapshot": {
+            "type": "boolean"
+          },
+          "relation_limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    },
+    {
+      "name": "uepi_blueprint",
+      "description": "Read Blueprint graph/node/pin entities and relations for an indexed Blueprint asset.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string"
+          },
+          "refresh": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    },
+    {
+      "name": "uepi_blueprint_trace",
+      "description": "Trace static Blueprint execution/data/delegate/call relations from an indexed Blueprint snapshot.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string"
+          },
+          "relation_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_depth": {
+            "type": "integer"
+          },
+          "max_paths": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    },
+    {
+      "name": "uepi_animation",
+      "description": "Read indexed animation, skeleton, track, notify, curve, motion-summary, optional bone-motion profiles, reconstruction profiles, driver track curves, and full-pose sample artifacts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string"
+          },
+          "refresh": {
+            "type": "string"
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    },
+    {
+      "name": "uepi_impact",
+      "description": "Return incoming/outgoing relations and affected entities for one asset or entity.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string"
+          },
+          "relation_limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset"
+        ]
+      }
+    },
+    {
+      "name": "uepi_diff",
+      "description": "Compare two saved Snapshot generations by stable entity and relation IDs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from_generation": {
+            "type": "integer"
+          },
+          "to_generation": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_edit_discover",
+      "description": "Discover the experimental UEPI edit operation catalog without modifying Unreal assets.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "uepi_edit_preview",
+      "description": "Create a dry-run UEPI edit operation plan without modifying Unreal assets.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "intent": {
+            "type": "string"
+          },
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_edit_apply",
+      "description": "Apply an approved UEPI edit plan through the live editor bridge when preview and approval gates pass.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "transaction_id": {
+            "type": "string"
+          },
+          "approved": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_edit_validate",
+      "description": "Validate an applied UEPI edit transaction through the optional live editor bridge.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "transaction_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "uepi_edit_rollback",
+      "description": "Rollback the last applied UEPI edit transaction through the optional live editor bridge.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "transaction_id": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ],
+  "server_instructions": "UEPI is a project-local Unreal Engine 5.3.2 MCP. Always call uepi_status before other tools. Prefer uepi_context to build bounded evidence before answering project questions. Treat Blueprint pin links and evidence as the source of truth. Distinguish live, saved, stale, and refresh_requested data. The Codex profile exposes read and edit tools together so the agent can choose. Edit apply may be available when the editor bridge is online, but it must never run without edit_preview, explicit user approval, validate, and post-edit diff. Never guess Blueprint pin names; use returned pins and GUIDs.\n\nUse uepi_search or uepi_context to identify the minimum set of assets needed for the user's question.\nuepi_context supports routes such as auto, project_overview, input_to_gameplay, blueprint_behavior, animation_playback, ui_flow, asset_dependency_impact, data_driven_behavior, gas_ability_flow, ai_behavior_flow, and network_replication_flow.\nThen call the narrow domain tool: uepi_asset for local context, uepi_blueprint for Blueprint graph/node/pin semantic summaries, uepi_blueprint_trace for static flow paths, uepi_animation for animation/skeleton/track summaries and include=[\"bone_motion_profile\"] when the user asks how bones move over time. For procedural animation recreation, call uepi_animation with include=[\"reconstruction_profile\"] or include=[\"driver_track_curves\"]; use include=[\"full_pose_artifact\"] only when high-fidelity all-bone pose samples are needed. In animation bone-motion profiles, start from driver_bones and motion_intent_groups for procedural generation decisions, then use changed_bones as sampled evidence. Use uepi_impact for dependency impact.\nReads never require the Unreal Editor when the snapshot/cache is current. If a read response includes diagnostic code UEPI_REFRESH_REQUESTED, a targeted editor refresh request has been queued under the Snapshot Store; retry the same read after the editor processes it. If UEPI_SNAPSHOT_STALE appears, ask the user to open the editor/plugin before expecting realtime data.\nTreat uepi_diff as a generation-level saved snapshot comparison, not a live editor diff.\n\nFor Blueprint writes, choose the design before choosing operations. Prefer compact, idiomatic Blueprint graphs that use state variables, loops, timers, custom events, or helper functions for repeated behavior. Avoid unrolling repeated gameplay logic into many duplicate nodes unless the user explicitly asks for that visual shape. Include the considered alternatives and chosen design rationale in edit_preview evidence; if the current operation catalog cannot express the better design, say so before falling back to a larger graph.",
+  "bridge": {
+    "protocol_source": "Source/UEProjectIntelligence/Private/Bridge/UEPIBridgeProtocol.cpp",
+    "read_capabilities": [
+      "editor.get_status",
+      "editor.get_selection",
+      "editor.capture_viewport",
+      "editor.read_output_log",
+      "asset.refresh_now"
+    ],
+    "write_capabilities": [
+      "edit.discover",
+      "edit.apply",
+      "edit.validate",
+      "edit.rollback",
+      "blueprint.add_variable",
+      "blueprint.set_variable_default",
+      "blueprint.add_component",
+      "blueprint.set_component_property",
+      "blueprint.create_function",
+      "blueprint.add_event_node",
+      "blueprint.add_function_call_node",
+      "blueprint.add_variable_get_node",
+      "blueprint.add_variable_set_node",
+      "blueprint.add_branch_node",
+      "blueprint.add_print_string_node",
+      "blueprint.connect_pins",
+      "blueprint.compile",
+      "actor.spawn",
+      "actor.set_transform",
+      "actor.set_property",
+      "material.create_instance",
+      "material.set_scalar_parameter",
+      "material.set_vector_parameter",
+      "material.set_texture_parameter",
+      "material.apply_to_actor",
+      "material.apply_to_blueprint_component",
+      "content.import",
+      "content.create_folder",
+      "content.duplicate_asset",
+      "content.rename_asset",
+      "widget.create",
+      "widget.add_text",
+      "widget.add_button",
+      "widget.set_slot",
+      "widget.bind_button_to_custom_event",
+      "input.create_action",
+      "input.create_mapping_context",
+      "input.add_key_mapping",
+      "input.remove_key_mapping"
+    ]
+  }
+}
