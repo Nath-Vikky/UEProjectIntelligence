@@ -1360,54 +1360,6 @@ namespace UE::ProjectIntelligence
 			return Object;
 		}
 
-		UClass* ResolveActorClassForSpawn(const TSharedPtr<FJsonObject>& Params, FString& OutError)
-		{
-			const FString ClassPath = JsonString(Params, TEXT("actor_class"), JsonString(Params, TEXT("class"), JsonString(Params, TEXT("asset"))));
-			if (ClassPath.IsEmpty())
-			{
-				OutError = TEXT("actor.spawn requires actor_class, class, or asset.");
-				return nullptr;
-			}
-
-			if (UClass* Class = ResolveClassByPathOrName(ClassPath))
-			{
-				if (!Class->IsChildOf(AActor::StaticClass()))
-				{
-					OutError = FString::Printf(TEXT("Resolved class is not an AActor: %s"), *Class->GetPathName());
-					return nullptr;
-				}
-				return Class;
-			}
-			if (UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *NormalizeBlueprintObjectPath(ClassPath)))
-			{
-				UClass* GeneratedClass = Blueprint->GeneratedClass ? Blueprint->GeneratedClass : Blueprint->SkeletonGeneratedClass;
-				if (GeneratedClass && GeneratedClass->IsChildOf(AActor::StaticClass()))
-				{
-					return GeneratedClass;
-				}
-			}
-
-			OutError = FString::Printf(TEXT("Failed to resolve actor class for spawn: %s"), *ClassPath);
-			return nullptr;
-		}
-
-		FTransform JsonTransformFromParams(const TSharedPtr<FJsonObject>& Params)
-		{
-			TSharedPtr<FJsonObject> TransformObject = JsonObjectField(Params, TEXT("transform"));
-			if (!TransformObject.IsValid())
-			{
-				TransformObject = Params;
-			}
-
-			FVector Location = FVector::ZeroVector;
-			FRotator Rotation = FRotator::ZeroRotator;
-			FVector Scale = FVector::OneVector;
-			JsonVector(JsonObjectField(TransformObject, TEXT("location")), Location);
-			JsonRotator(JsonObjectField(TransformObject, TEXT("rotation")), Rotation);
-			JsonVector(JsonObjectField(TransformObject, TEXT("scale")), Scale);
-			return FTransform(Rotation, Location, Scale);
-		}
-
 		UWorld* EditorWorld()
 		{
 			return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
@@ -2822,6 +2774,20 @@ namespace UE::ProjectIntelligence
 			}
 			TSharedPtr<FJsonObject> OpParams = JsonObjectField(Operation, TEXT("params"));
 			if (!OpParams.IsValid()) OpParams = Operation;
+			if (Type.StartsWith(TEXT("actor.")))
+			{
+				FUEPIEditContext Context;
+				Context.TransactionId = TransactionId;
+				Context.ProjectId = UEPIProjectBindingId();
+				Context.AssetAllowList = AffectedAssets;
+				Context.bDryRun = true;
+				const FUEPIEditResult Preflight = Registry.FindOperation(Type)->Preview(Context, *OpParams);
+				if (!Preflight.bOk)
+				{
+					return ErrorResponse(RequestId, Preflight.ErrorCode.IsEmpty() ? TEXT("UEPI_EDIT_PRECHECK_FAILED") : Preflight.ErrorCode, Preflight.Message);
+				}
+				continue;
+			}
 			if (Type == TEXT("asset.set_properties"))
 			{
 				const FString AssetPath = ResolveOperationAsset(OpParams, TEXT("asset"), PlannedAssetPaths);
@@ -3009,6 +2975,25 @@ namespace UE::ProjectIntelligence
 			if (!OpParams.IsValid())
 			{
 				OpParams = Operation;
+			}
+			if (Type.StartsWith(TEXT("actor.")))
+			{
+				FUEPIEditContext Context;
+				Context.TransactionId = TransactionId;
+				Context.ProjectId = UEPIProjectBindingId();
+				Context.AssetAllowList = AffectedAssets;
+				Context.bDryRun = false;
+				Context.bAllowSave = JsonBool(Params, TEXT("save"), false);
+				const FUEPIEditResult OperationResult = Registry.FindOperation(Type)->Apply(Context, *OpParams);
+				AddOperationResult(OperationResults, Index, Type, OperationResult.bOk, OperationResult.Message, OperationResult.Result);
+				if (!OperationResult.bOk)
+				{
+					bAllOk = false;
+					FailureMessage = OperationResult.Message;
+					break;
+				}
+				bMutated = true;
+				continue;
 			}
 			if (Type == TEXT("blueprint.add_node"))
 			{
@@ -3879,170 +3864,6 @@ namespace UE::ProjectIntelligence
 					FailureMessage = TEXT("Blueprint compile returned errors.");
 					break;
 				}
-			}
-			else if (Type == TEXT("actor.set_transform"))
-			{
-				if (!Settings->bAllowActorEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Actor write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				TArray<AActor*> Actors = ResolveActorTargets(OpParams);
-				if (Actors.Num() == 0)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("actor.set_transform did not resolve any target actors.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				TSharedPtr<FJsonObject> SetObject = JsonObjectField(JsonObjectField(OpParams, TEXT("operation")), TEXT("set"));
-				if (!SetObject.IsValid())
-				{
-					SetObject = JsonObjectField(OpParams, TEXT("set"));
-				}
-				if (!SetObject.IsValid())
-				{
-					SetObject = OpParams;
-				}
-				TArray<FString> ActorPaths;
-				for (AActor* Actor : Actors)
-				{
-					Actor->Modify();
-					FTransform Transform = Actor->GetActorTransform();
-					FVector VectorValue;
-					FRotator RotatorValue;
-					if (JsonVector(JsonObjectField(SetObject, TEXT("location")), VectorValue))
-					{
-						Transform.SetLocation(VectorValue);
-					}
-					if (JsonRotator(JsonObjectField(SetObject, TEXT("rotation")), RotatorValue))
-					{
-						Transform.SetRotation(RotatorValue.Quaternion());
-					}
-					if (JsonVector(JsonObjectField(SetObject, TEXT("scale")), VectorValue))
-					{
-						Transform.SetScale3D(VectorValue);
-					}
-					Actor->SetActorTransform(Transform, false, nullptr, ETeleportType::TeleportPhysics);
-					ActorPaths.Add(Actor->GetPathName());
-				}
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetArrayField(TEXT("actors"), StringArrayToJsonValues(ActorPaths));
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("Actor transform updated."), Detail);
-				bMutated = true;
-			}
-			else if (Type == TEXT("actor.spawn"))
-			{
-				if (!Settings->bAllowActorEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Actor write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				UWorld* World = EditorWorld();
-				if (!World)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("No editor world is available for actor.spawn.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				UClass* ActorClass = ResolveActorClassForSpawn(OpParams, Error);
-				if (!ActorClass)
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				FActorSpawnParameters SpawnParameters;
-				SpawnParameters.Name = FName(*JsonString(OpParams, TEXT("name")));
-				SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-				AActor* Actor = World->SpawnActor<AActor>(ActorClass, JsonTransformFromParams(OpParams), SpawnParameters);
-				if (!Actor)
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Failed to spawn actor of class %s."), *ActorClass->GetPathName());
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				const FString Label = JsonString(OpParams, TEXT("label"));
-				if (!Label.IsEmpty())
-				{
-					Actor->SetActorLabel(Label);
-				}
-				Actor->Modify();
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetObjectField(TEXT("actor"), ActorObject(Actor));
-				Detail->SetStringField(TEXT("actor_class"), ActorClass->GetPathName());
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("Actor spawned in the editor world."), Detail);
-				bMutated = true;
-			}
-			else if (Type == TEXT("actor.set_property"))
-			{
-				if (!Settings->bAllowActorEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Actor write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				const FString PropertyName = JsonString(OpParams, TEXT("property"));
-				TArray<AActor*> Actors = ResolveActorTargets(OpParams);
-				if (Actors.Num() == 0 || PropertyName.IsEmpty())
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("actor.set_property requires target actors and property.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				TArray<FString> ActorPaths;
-				for (AActor* Actor : Actors)
-				{
-					Actor->Modify();
-					if (!SetSimplePropertyValue(Actor, PropertyName, OpParams, Error))
-					{
-						bAllOk = false;
-						FailureMessage = Error;
-						break;
-					}
-					ActorPaths.Add(Actor->GetPathName());
-				}
-				if (!bAllOk)
-				{
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetArrayField(TEXT("actors"), StringArrayToJsonValues(ActorPaths));
-				Detail->SetStringField(TEXT("property"), PropertyName);
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("Actor property updated."), Detail);
-				bMutated = true;
-			}
-			else if (Type == TEXT("actor.set_properties"))
-			{
-				if (!Settings->bAllowActorEdits) { bAllOk = false; FailureMessage = TEXT("Actor edits are disabled."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
-				TArray<AActor*> Actors = ResolveActorTargets(OpParams);
-				const TSharedPtr<FJsonObject> Properties = PropertyWritesObject(OpParams, Error);
-				if (Actors.Num() == 0 || !Properties.IsValid()) { bAllOk = false; FailureMessage = Error.IsEmpty() ? TEXT("Actor targets or typed writes are invalid.") : Error; AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
-				TArray<TSharedPtr<FJsonValue>> ActorDiffs;
-				for (AActor* Actor : Actors)
-				{
-					Actor->Modify(); TArray<TSharedPtr<FJsonValue>> PropertyDiffs;
-					for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
-					{
-						TSharedPtr<FJsonValue> Before; TSharedPtr<FJsonValue> After;
-						if (!FUEPIPropertyCodec::SetPropertyPath(Actor, Pair.Key, PropertyWriteValue(Pair.Value), Before, After, Error, PropertyWriteMode(Pair.Value))) { bAllOk = false; FailureMessage = Error; break; }
-						TSharedRef<FJsonObject> Diff = MakeShared<FJsonObject>(); Diff->SetStringField(TEXT("property_path"), Pair.Key); Diff->SetField(TEXT("before"), Before); Diff->SetField(TEXT("after"), After); PropertyDiffs.Add(MakeShared<FJsonValueObject>(Diff));
-					}
-					if (!bAllOk) break;
-					Actor->PostEditChange(); TSharedRef<FJsonObject> ActorDiff = MakeShared<FJsonObject>(); ActorDiff->SetStringField(TEXT("actor"), Actor->GetPathName()); ActorDiff->SetArrayField(TEXT("property_diff"), PropertyDiffs); ActorDiffs.Add(MakeShared<FJsonValueObject>(ActorDiff));
-				}
-				if (!bAllOk) { AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break; }
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetArrayField(TEXT("actors"), ActorDiffs); AddOperationResult(OperationResults, Index, Type, true, TEXT("Actor typed properties updated."), Detail); bMutated = true;
 			}
 			else if (Type == TEXT("material.create_instance"))
 			{
