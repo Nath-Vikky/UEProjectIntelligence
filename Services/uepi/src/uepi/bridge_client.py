@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import socket
 import struct
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -23,11 +24,16 @@ def read_bridge_session(store: SnapshotStore) -> dict[str, Any] | None:
     path = bridge_session_path(store)
     if not path.exists():
         return None
-    try:
-        value = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return value if isinstance(value, dict) else None
+    for attempt in range(3):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            if attempt < 2:
+                time.sleep(0.01)
+                continue
+            return None
+        return value if isinstance(value, dict) else None
+    return None
 
 
 def _token_path_candidates(session: dict[str, Any], session_path: Path) -> list[Path]:

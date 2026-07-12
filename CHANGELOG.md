@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Completed the UE5.3.2 LLMNPCDemo Golden: exact DefaultSlot read, reflected MotionTemplate schema, one-approval DataAsset create/configure/validate/save/refresh/diff, typed runtime invoke, Waving start/completion assertions, viewport capture, log check, PIE cleanup, and restart persistence readback.
+- Added authoritative runtime function schemas, typed invocation arguments and outputs, approved target selectors, and exact target/function/argument bindings in runtime tickets.
+- Corrected Editor reflection semantics so `BlueprintReadOnly` does not block guarded writes to `EditAnywhere` properties, while retaining strict `CPF_Edit` and unsafe-flag checks.
+- Made Bridge JSON replacement atomic, retried transient session-file reads, and deferred new PrimaryDataAsset registry notification until same-plan identity properties are final.
+
 ## 2.0.0-alpha.4
 
 - Fixed UE5.3.2 Editor startup crashes in global session-path hashing and hardened exact project/session routing before edit dispatch.

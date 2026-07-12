@@ -203,10 +203,11 @@ def _runtime_ticket(store: SnapshotStore, plan: dict[str, Any]) -> dict[str, Any
     steps = [item for item in verification.get("steps") or [] if isinstance(item, dict)]
     requested_actions = {str(item.get("action") or "") for item in steps}
     allowed_actions = sorted(({"start", "stop"} | requested_actions) & {"start", "stop", "input", "invoke", "read", "wait", "assert"})
-    allowed_functions = sorted({str(item.get("function")) for item in steps if item.get("action") == "invoke" and item.get("function")} | {str(item) for item in verification.get("allowed_functions") or [] if isinstance(item, str)})
+    allowed_functions = sorted({str(item.get("function")) for item in steps if item.get("action") in {"invoke", "wait", "assert"} and item.get("function")} | {str(item) for item in verification.get("allowed_functions") or [] if isinstance(item, str)})
     allowed_keys = sorted({str(item.get("key")) for item in steps if item.get("action") == "input" and item.get("key")} | {str(item) for item in verification.get("allowed_keys") or [] if isinstance(item, str)})
     allowed_reads = [item for item in verification.get("allowed_reads") or [] if isinstance(item, dict)]
-    allowed_reads.extend({"object_path": str(item.get("object_path")), "property": str(item.get("property"))} for item in steps if item.get("action") in {"read", "wait", "assert"} and item.get("object_path") and item.get("property"))
+    allowed_reads.extend({key: item[key] for key in ("object_path", "target", "property", "function", "field", "arguments", "equals") if key in item} for item in steps if item.get("action") in {"read", "wait", "assert"})
+    allowed_invocations = [{key: item[key] for key in ("object_path", "target", "function", "arguments") if key in item} for item in steps if item.get("action") == "invoke"]
     ticket_id = f"uepi-runtime-ticket:{uuid4().hex}"
     ticket = {
         "schema_version": "uepi.runtime-ticket.v1",
@@ -221,6 +222,7 @@ def _runtime_ticket(store: SnapshotStore, plan: dict[str, Any]) -> dict[str, Any
         "timeout_seconds": min(120.0, max(1.0, float(verification.get("timeout_seconds") or 60.0))),
         "allowed_actions": allowed_actions,
         "allowed_functions": allowed_functions,
+        "allowed_invocations": allowed_invocations,
         "allowed_keys": allowed_keys,
         "allowed_reads": allowed_reads,
     }
@@ -324,8 +326,11 @@ def preview(
                 diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_FUNCTION_NOT_APPROVED", "message": f"Invoke step {step_index} requires an exact function name.", "phase": "preview", "retryable": False, "recoverable": True})
             elif action == "input" and not step.get("key"):
                 diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_INPUT_NOT_APPROVED", "message": f"Input step {step_index} requires an exact key.", "phase": "preview", "retryable": False, "recoverable": True})
-            elif action in {"read", "wait", "assert"} and (not step.get("object_path") or not step.get("property")):
-                diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_READ_NOT_APPROVED", "message": f"Read/assert step {step_index} requires object_path and property.", "phase": "preview", "retryable": False, "recoverable": True})
+            elif action in {"read", "wait", "assert"}:
+                has_target = bool(step.get("object_path") or isinstance(step.get("target"), dict))
+                has_observation = bool(step.get("property") or step.get("function"))
+                if not has_target or not has_observation:
+                    diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_READ_NOT_APPROVED", "message": f"Read/assert step {step_index} requires an exact object selector and property or allowlisted function.", "phase": "preview", "retryable": False, "recoverable": True})
     affected = sorted(set(affected))
     dependencies = sorted(set(dependencies) - set(affected))
     status = resolve_status(

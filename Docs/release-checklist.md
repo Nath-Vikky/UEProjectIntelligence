@@ -50,7 +50,7 @@
 
 ## Real Machine Beta Gate
 
-- [ ] LLMNPCDemo Golden passes and is recorded.
+- [x] LLMNPCDemo Golden passes and is recorded.
 - [ ] Third Person Golden passes and is recorded.
 - [ ] Minimal blank Blueprint project passes and is recorded.
 - [ ] Two-project routing and mismatch rejection pass.

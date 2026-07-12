@@ -91,14 +91,25 @@ namespace UE::ProjectIntelligence
 			Schema->SetStringField(TEXT("cpp_type"), Property->GetCPPType());
 			Schema->SetStringField(TEXT("property_class"), Property->GetClass()->GetName());
 			Schema->SetStringField(TEXT("kind"), UEPIPropertyCodecKind(Property));
-			const bool bFlagBlocked = Property->HasAnyPropertyFlags(CPF_EditConst | CPF_BlueprintReadOnly | CPF_Transient | CPF_DuplicateTransient | CPF_NonPIEDuplicateTransient | CPF_Deprecated);
-			const bool bEditable = UEPIPropertyCodecKind(Property) != TEXT("unsupported") && !bFlagBlocked && Property->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible);
+			const bool bFlagBlocked = Property->HasAnyPropertyFlags(CPF_EditConst | CPF_Transient | CPF_DuplicateTransient | CPF_NonPIEDuplicateTransient | CPF_Deprecated);
+			const bool bEditable = UEPIPropertyCodecKind(Property) != TEXT("unsupported") && !bFlagBlocked && Property->HasAnyPropertyFlags(CPF_Edit);
 			Schema->SetBoolField(TEXT("editable"), bEditable);
 			Schema->SetBoolField(TEXT("read_only"), !bEditable);
 			Schema->SetStringField(TEXT("read_only_reason"), bEditable ? FString() : (bFlagBlocked ? TEXT("property_flags") : TEXT("unsupported_or_not_editable")));
 			Schema->SetBoolField(TEXT("transient"), Property->HasAnyPropertyFlags(CPF_Transient));
 			Schema->SetBoolField(TEXT("editor_only"), Property->HasAnyPropertyFlags(CPF_EditorOnly));
-			Schema->SetArrayField(TEXT("flags"), {});
+			TArray<TSharedPtr<FJsonValue>> Flags;
+			for (const TPair<EPropertyFlags, const TCHAR*>& Flag : {
+				TPair<EPropertyFlags, const TCHAR*>(CPF_Edit, TEXT("Edit")),
+				TPair<EPropertyFlags, const TCHAR*>(CPF_EditConst, TEXT("EditConst")),
+				TPair<EPropertyFlags, const TCHAR*>(CPF_BlueprintVisible, TEXT("BlueprintVisible")),
+				TPair<EPropertyFlags, const TCHAR*>(CPF_BlueprintReadOnly, TEXT("BlueprintReadOnly")),
+				TPair<EPropertyFlags, const TCHAR*>(CPF_Transient, TEXT("Transient")),
+				TPair<EPropertyFlags, const TCHAR*>(CPF_EditorOnly, TEXT("EditorOnly")) })
+			{
+				if (Property->HasAnyPropertyFlags(Flag.Key)) Flags.Add(MakeShared<FJsonValueString>(Flag.Value));
+			}
+			Schema->SetArrayField(TEXT("flags"), Flags);
 			Schema->SetStringField(TEXT("edit_condition"), Property->GetMetaData(TEXT("EditCondition")));
 			Schema->SetStringField(TEXT("clamp_min"), Property->GetMetaData(TEXT("ClampMin")));
 			Schema->SetStringField(TEXT("clamp_max"), Property->GetMetaData(TEXT("ClampMax")));
@@ -379,7 +390,7 @@ namespace UE::ProjectIntelligence
 			OutError = TEXT("Invalid property, value pointer, JSON value, or property depth.");
 			return false;
 		}
-		if (Property->HasAnyPropertyFlags(CPF_EditConst | CPF_BlueprintReadOnly | CPF_Transient | CPF_DuplicateTransient | CPF_NonPIEDuplicateTransient | CPF_Deprecated))
+		if (Property->HasAnyPropertyFlags(CPF_EditConst | CPF_Transient | CPF_DuplicateTransient | CPF_NonPIEDuplicateTransient | CPF_Deprecated))
 		{
 			OutError = FString::Printf(TEXT("Property is not writable: %s"), *Property->GetName());
 			return false;
@@ -596,6 +607,11 @@ namespace UE::ProjectIntelligence
 			if (!ParseSegment(Segments[SegmentIndex], Name, ArrayIndex, MapKey, bHasMapKey)) { OutError = TEXT("Invalid property path segment."); return false; }
 			FProperty* Property = FindFProperty<FProperty>(CurrentStruct, *Name);
 			if (!Property) { OutError = FString::Printf(TEXT("Property path field was not found: %s"), *Name); return false; }
+			if (!Property->HasAnyPropertyFlags(CPF_Edit) || Property->HasAnyPropertyFlags(CPF_EditConst | CPF_Transient | CPF_DuplicateTransient | CPF_NonPIEDuplicateTransient | CPF_Deprecated))
+			{
+				OutError = FString::Printf(TEXT("Property path field is not editor-writable: %s"), *Name);
+				return false;
+			}
 			void* PropertyPtr = Property->ContainerPtrToValuePtr<void>(CurrentContainer);
 			if (ArrayIndex != INDEX_NONE)
 			{

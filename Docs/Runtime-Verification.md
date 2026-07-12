@@ -32,7 +32,7 @@ UEPI only controls a PIE session it started. Start fails if unrelated PIE is act
 - `status`: ownership and PIE state.
 - `start`: start PIE for the ticket and optional permitted map.
 - `input`: send an allowlisted key pressed/released event.
-- `invoke`: invoke an allowlisted parameterless, non-latent Blueprint-callable function.
+- `invoke`: invoke an allowlisted, non-latent Blueprint-callable function with Schema-validated typed arguments and typed return/out values.
 - `read`: read a permitted runtime property/object state.
 - `wait`: bounded polling for a permitted condition.
 - `assert`: record a structured expected/actual result.

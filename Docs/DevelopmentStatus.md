@@ -21,7 +21,7 @@
 - Blueprint/AnimGraph preflight tracks same-plan variables, functions, components, graph nodes, and node references before the first mutation; Apply resolves the corresponding live objects for node creation, pin maintenance, typed properties, compile, validation, and touched-only save.
 - Operation descriptors separate write targets from read-only dependencies. Both participate in stale-plan fingerprints, while only write targets consume mutation budgets and enter backup, validation, save, refresh, and rollback sets.
 - Exact Blueprint reads traverse only structural containment relations, and Blueprint node schemas return stable/reflected real pin names without constructing unsafe transient graph nodes.
-- Transaction-bound UEPI-owned PIE status/start/stop/input/parameterless invoke/read/wait/assert and cleanup.
+- Transaction-bound UEPI-owned PIE status/start/stop/input/typed allowlisted invoke/read/wait/assert and cleanup. Runtime tickets bind exact targets, functions, arguments, observations, and maps; function Schema and typed outputs are available to the Agent.
 - Project-local Codex setup script, machine-readable Doctor, public schemas, v2 contract snapshot, release packaging, architecture/safety/edit/runtime guides, and real-machine report templates.
 
 ## Verified In This Development Pass
@@ -37,10 +37,13 @@
 - A clean blank Blueprint project starts from the alpha.4 Win64 archive, generates saved generation 1 through `UEPIIndex`, passes offline Doctor with no failures, and answers offline Status/Overview queries.
 - Two simultaneous Editor projects bind distinct localhost bridge ports, each exact-project Doctor reaches its own 64-operation catalog, and a request naming the other project is rejected with `UEPI_PROJECT_MISMATCH`.
 - The blank-project DataAsset transaction creates, types, validates, saves, reads, diffs, and rolls back a new `PrimaryAssetLabel`; the package is removed, the journal is `rolled_back`, and exact current-view reads return `UEPI_ASSET_TOMBSTONED` without diagnostics.
+- The LLMNPCDemo Golden exact-read the existing `DefaultGroup.DefaultSlot`, reflected writable MotionTemplate and runtime function schemas, created and persisted `MT_Wave_Asset_Manny_v1` after one approval, and returned a complete property diff.
+- Controlled PIE invoked `SubmitPublishedTemplate` with typed arguments, observed Waving enter `Playing` and finish `Completed`, captured a non-empty viewport, found no new runtime error log lines, and stopped cleanly. Editor restart preserved every configured property and 40 exact-session status samples had zero failures.
+- Golden hardening corrected `BlueprintReadOnly` reflection semantics, added parameterized allowlisted invoke and typed return values, made Bridge session JSON replacement atomic, and deferred new PrimaryDataAsset registration until same-plan identity properties are final.
 
 ## Beta Blockers
 
-- Run and record the remaining LLMNPCDemo real-machine matrix. Third Person, blank-project, and two-project routing records now pass.
+- Package and reinstall the post-Golden build so the downloadable archive contains the LLMNPCDemo runtime/schema, atomic session, multi-project, and rollback fixes.
 - Exercise every migrated write domain through Discover -> Preview -> one approval -> Apply -> Validate -> Save -> restart -> Diff/Rollback.
 - Complete and record the AnimGraph same-plan Slot/pose-link Golden scenario on UE 5.3.2.
 - Produce and reinstall the next complete release zip containing the post-alpha.4 multi-project and rollback fixes; alpha.4 archive installation and isolated source `BuildPlugin` already pass.

@@ -5,13 +5,13 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Engine/DataAsset.h"
-#include "Factories/DataAssetFactory.h"
 #include "HAL/FileManager.h"
 #include "IAssetTools.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Reflection/UEPIPropertyCodec.h"
 #include "UEPISettings.h"
+#include "UObject/Package.h"
 
 namespace UE::ProjectIntelligence
 {
@@ -152,7 +152,7 @@ namespace UE::ProjectIntelligence
 				}
 				if (Descriptor.Name == TEXT("content.create_asset"))
 				{
-					UClass* Class = LoadObject<UClass>(nullptr, *JsonString(Params, TEXT("asset_class"), JsonString(Params, TEXT("class_path")))); FString Path, Name, Error; SplitDestination(Params, TEXT("DA_UEPIAsset"), Path, Name, Error); UDataAssetFactory* Factory = NewObject<UDataAssetFactory>(); Factory->DataAssetClass = Class; UObject* Asset = FAssetToolsModule::GetModule().Get().CreateAsset(Name, Path, Class, Factory, TEXT("UEPI")); if (!Asset) return Failure(TEXT("UEPI_EDIT_APPLY_FAILED"), TEXT("DataAsset creation failed.")); Asset->MarkPackageDirty(); TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetObjectField(TEXT("asset"), AssetJson(Asset)); Detail->SetStringField(TEXT("asset_path"), Asset->GetPathName()); return Success(TEXT("DataAsset created."), Detail);
+					UClass* Class = LoadObject<UClass>(nullptr, *JsonString(Params, TEXT("asset_class"), JsonString(Params, TEXT("class_path")))); FString Path, Name, Error; SplitDestination(Params, TEXT("DA_UEPIAsset"), Path, Name, Error); const FString PackageName = Path / Name; UPackage* Package = CreatePackage(*PackageName); UObject* Asset = Package && Class ? NewObject<UObject>(Package, Class, FName(*Name), RF_Public | RF_Standalone | RF_Transactional) : nullptr; if (!Asset) return Failure(TEXT("UEPI_EDIT_APPLY_FAILED"), TEXT("DataAsset creation failed.")); Asset->MarkPackageDirty(); TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetObjectField(TEXT("asset"), AssetJson(Asset)); Detail->SetStringField(TEXT("asset_path"), Asset->GetPathName()); return Success(TEXT("DataAsset created."), Detail);
 				}
 				if (Descriptor.Name == TEXT("asset.set_properties"))
 				{

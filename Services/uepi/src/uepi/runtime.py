@@ -12,6 +12,23 @@ from .bridge_client import call_bridge
 MUTATING_ACTIONS = {"start", "stop", "input", "invoke"}
 
 
+def _approved_subset(arguments: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+    return {field: arguments[field] for field in fields if field in arguments}
+
+
+def _matches_approved(requested: dict[str, Any], approved: list[Any]) -> bool:
+    return any(isinstance(item, dict) and item == requested for item in approved)
+
+
+def _value_at_path(value: Any, path: str) -> Any:
+    current = value
+    for segment in [item for item in path.split(".") if item]:
+        if not isinstance(current, dict) or segment not in current:
+            return None
+        current = current[segment]
+    return current
+
+
 def _ticket_path(store: Any, ticket_id: str) -> Path:
     return store.store_dir / "runtime" / f"{ticket_id.replace(':', '-')}.json"
 
@@ -62,15 +79,20 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             return engine._error("UEPI_RUNTIME_MAP_NOT_APPROVED", "Requested PIE map differs from the approved verification plan.", tool="uepi_runtime", operation=action)
         if action == "start" and ticket.get("map") and not arguments.get("map"):
             arguments = {**arguments, "map": ticket["map"]}
-        if action == "invoke" and str(arguments.get("function") or "") not in set(ticket.get("allowed_functions") or []):
-            return engine._error("UEPI_RUNTIME_FUNCTION_NOT_APPROVED", "Runtime function is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
+        if action == "invoke":
+            if str(arguments.get("function") or "") not in set(ticket.get("allowed_functions") or []):
+                return engine._error("UEPI_RUNTIME_FUNCTION_NOT_APPROVED", "Runtime function is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
+            requested_invoke = _approved_subset(arguments, ("object_path", "target", "function", "arguments"))
+            if not _matches_approved(requested_invoke, ticket.get("allowed_invocations") or []):
+                return engine._error("UEPI_RUNTIME_INVOCATION_NOT_APPROVED", "Runtime target, function, or arguments differ from the approved verification plan.", tool="uepi_runtime", operation=action)
         if action == "input" and str(arguments.get("key") or "") not in set(ticket.get("allowed_keys") or []):
             return engine._error("UEPI_RUNTIME_INPUT_NOT_APPROVED", "Runtime key is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
         if action in {"read", "wait", "assert"}:
-            requested_read = {"object_path": str(arguments.get("object_path") or ""), "property": str(arguments.get("property") or "")}
-            allowed_reads = ticket.get("allowed_reads") or []
-            if not any(str(item.get("object_path") or "") == requested_read["object_path"] and str(item.get("property") or "") == requested_read["property"] for item in allowed_reads if isinstance(item, dict)):
+            requested_read = _approved_subset(arguments, ("object_path", "target", "property", "function", "field", "arguments", "equals"))
+            if not _matches_approved(requested_read, ticket.get("allowed_reads") or []):
                 return engine._error("UEPI_RUNTIME_READ_NOT_APPROVED", "Runtime object/property is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
+            if arguments.get("function") and str(arguments.get("function")) not in set(ticket.get("allowed_functions") or []):
+                return engine._error("UEPI_RUNTIME_FUNCTION_NOT_APPROVED", "Runtime observation function is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
 
     if action in {"status", "start", "stop", "input", "invoke", "read"}:
         response = _bridge(engine, action, arguments, ticket)
@@ -88,15 +110,18 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         expected = arguments.get("equals")
         deadline = time.monotonic() + timeout
         last: dict[str, Any] = {}
+        observed: Any = None
         while time.monotonic() <= deadline:
-            response = _bridge(engine, "read", arguments, ticket)
+            bridge_action = "invoke" if arguments.get("function") else "read"
+            response = _bridge(engine, bridge_action, arguments, ticket)
             if response.get("ok") and isinstance(response.get("result"), dict):
                 last = response["result"]
-                if last.get("value") == expected:
-                    return engine._envelope({"matched": True, "assertion": action == "assert", "observed": last}, tool="uepi_runtime", operation=action)
+                observed = _value_at_path(last, str(arguments.get("field") or "value"))
+                if observed == expected:
+                    return engine._envelope({"matched": True, "assertion": action == "assert", "observed": last, "observed_value": observed}, tool="uepi_runtime", operation=action)
             time.sleep(interval)
         code = "UEPI_RUNTIME_ASSERT_FAILED" if action == "assert" else "UEPI_RUNTIME_WAIT_TIMEOUT"
         _cleanup_owned_pie(engine, ticket)
-        return engine._error(code, f"Runtime condition did not match before timeout; last value: {last.get('value')!r}", tool="uepi_runtime", operation=action)
+        return engine._error(code, f"Runtime condition did not match before timeout; last value: {observed!r}", tool="uepi_runtime", operation=action)
 
     return engine._error("UEPI_RUNTIME_ACTION_UNSUPPORTED", f"Runtime action is not implemented: {action}", tool="uepi_runtime", operation=action)

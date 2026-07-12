@@ -32,7 +32,7 @@ Domain handlers own operation-specific preflight and mutation. Every public writ
 
 ## Runtime Path
 
-Successful Apply can return a transaction-bound runtime verification ticket. UEPI may then own a PIE session and perform allowlisted status, input, parameterless Blueprint-callable invoke, read, wait, assert, and stop actions. It never takes over a PIE session it did not start and always attempts cleanup.
+Successful Apply can return a transaction-bound runtime verification ticket. UEPI may then own a PIE session and perform allowlisted status, input, typed Blueprint-callable invoke, read, wait, assert, and stop actions. Runtime tickets bind exact target selectors, function names, typed arguments, observation paths, and the approved map. It never takes over a PIE session it did not start and always attempts cleanup.
 
 ## Source Layout
 

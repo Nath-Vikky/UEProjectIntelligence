@@ -20,6 +20,7 @@ from uepi.bridge_client import _read_token  # noqa: E402
 from uepi.diff import build_transaction_diff  # noqa: E402
 from uepi.edit import _asset_values  # noqa: E402
 from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
+from uepi.runtime import _approved_subset, _matches_approved, _value_at_path  # noqa: E402
 from uepi.store import resolve_store_root  # noqa: E402
 from uepi_doctor import _capability_settings, _pid_alive  # noqa: E402
 
@@ -142,6 +143,24 @@ def assert_plan_v2_contract() -> None:
         "risk",
         "approval",
     }.issubset(set(schema["required"]))
+
+
+def assert_runtime_ticket_contract() -> None:
+    target = {"class": "/Script/Test.MotionComponent"}
+    approved = {
+        "target": target,
+        "function": "SubmitTemplate",
+        "arguments": {"TemplateId": {"type": "name", "value": "gesture.wave"}},
+    }
+    requested = _approved_subset(
+        {**approved, "ticket_id": "ignored", "timeout_seconds": 5},
+        ("object_path", "target", "function", "arguments"),
+    )
+    assert _matches_approved(requested, [approved])
+    assert not _matches_approved({**requested, "function": "OtherFunction"}, [approved])
+    observed = {"outputs": {"return_value": {"fields": {"bPlaying": {"value": True}}}}}
+    assert _value_at_path(observed, "outputs.return_value.fields.bPlaying.value") is True
+    assert _value_at_path(observed, "outputs.return_value.fields.Missing.value") is None
 
 
 def send_message(process: subprocess.Popen[bytes], message: dict[str, Any]) -> None:
@@ -1028,6 +1047,7 @@ def main() -> int:
     assert_doctor_contract()
     assert_edit_asset_scope_contract()
     assert_plan_v2_contract()
+    assert_runtime_ticket_contract()
     with tempfile.TemporaryDirectory(prefix="uepi_snapshot_mcp_") as temp_dir:
         root = Path(temp_dir)
         write_fixture(root)

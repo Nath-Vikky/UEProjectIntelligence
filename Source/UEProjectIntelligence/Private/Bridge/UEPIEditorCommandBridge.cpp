@@ -32,6 +32,7 @@
 #include "Logging/TokenizedMessage.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/Skeleton.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "Misc/App.h"
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
@@ -58,6 +59,7 @@
 #include "UnrealClient.h"
 #include "WidgetBlueprint.h"
 #include "UObject/UnrealType.h"
+#include "UObject/UObjectIterator.h"
 
 namespace UE::ProjectIntelligence
 {
@@ -242,6 +244,133 @@ namespace UE::ProjectIntelligence
 				}
 			}
 			return Result;
+		}
+
+		TSharedPtr<FJsonObject> JsonObjectField(const TSharedPtr<FJsonObject>& Object, const TCHAR* Field);
+
+		FString RuntimeFunctionKey(const UFunction* Function)
+		{
+			return Function
+				? FString::Printf(TEXT("%s:%s"), Function->GetOwnerClass() ? *Function->GetOwnerClass()->GetPathName() : TEXT(""), *Function->GetName())
+				: FString();
+		}
+
+		bool RuntimeFunctionSemanticsAllowed(const UFunction* Function, FString& OutError)
+		{
+			if (!Function || !Function->HasAnyFunctionFlags(FUNC_BlueprintCallable))
+			{
+				OutError = TEXT("Runtime function must be BlueprintCallable.");
+				return false;
+			}
+			if (Function->HasAnyFunctionFlags(FUNC_Exec) || Function->HasMetaData(TEXT("Latent")))
+			{
+				OutError = TEXT("Runtime function must be non-Exec and non-Latent.");
+				return false;
+			}
+			return true;
+		}
+
+		UObject* ResolveRuntimeObject(UWorld* PIEWorld, const TSharedPtr<FJsonObject>& Params, FString& OutError)
+		{
+			const FString ObjectPath = JsonString(Params, TEXT("object_path"));
+			if (!ObjectPath.IsEmpty())
+			{
+				UObject* Object = FindObject<UObject>(nullptr, *ObjectPath);
+				if (Object && Object->GetWorld() == PIEWorld) return Object;
+				OutError = FString::Printf(TEXT("Runtime object was not found in the owned PIE world: %s"), *ObjectPath);
+				return nullptr;
+			}
+
+			const TSharedPtr<FJsonObject> Target = JsonObjectField(Params, TEXT("target"));
+			const FString ClassPath = JsonString(Target, TEXT("class"), JsonString(Target, TEXT("class_path")));
+			if (!Target.IsValid() || ClassPath.IsEmpty())
+			{
+				OutError = TEXT("Runtime object_path or target.class is required.");
+				return nullptr;
+			}
+			UClass* TargetClass = LoadObject<UClass>(nullptr, *ClassPath);
+			if (!TargetClass)
+			{
+				OutError = FString::Printf(TEXT("Runtime target class was not found: %s"), *ClassPath);
+				return nullptr;
+			}
+			const FName ActorTag(*JsonString(Target, TEXT("actor_tag")));
+			const FString ObjectName = JsonString(Target, TEXT("object_name"));
+			TArray<UObject*> Matches;
+			for (TObjectIterator<UObject> It; It; ++It)
+			{
+				UObject* Candidate = *It;
+				if (!IsValid(Candidate) || Candidate->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject) || Candidate->GetWorld() != PIEWorld || !Candidate->IsA(TargetClass)) continue;
+				if (!ObjectName.IsEmpty() && !Candidate->GetName().Equals(ObjectName, ESearchCase::CaseSensitive)) continue;
+				AActor* OwnerActor = Cast<AActor>(Candidate);
+				if (!OwnerActor)
+				{
+					if (const UActorComponent* Component = Cast<UActorComponent>(Candidate)) OwnerActor = Component->GetOwner();
+					else OwnerActor = Candidate->GetTypedOuter<AActor>();
+				}
+				if (!ActorTag.IsNone() && (!OwnerActor || !OwnerActor->ActorHasTag(ActorTag))) continue;
+				Matches.Add(Candidate);
+			}
+			if (Matches.Num() != 1)
+			{
+				OutError = FString::Printf(TEXT("Runtime target selector resolved %d objects; exactly one is required."), Matches.Num());
+				return nullptr;
+			}
+			return Matches[0];
+		}
+
+		bool InvokeRuntimeFunction(UObject* Object, UFunction* Function, const TSharedPtr<FJsonObject>& Arguments, TSharedRef<FJsonObject>& OutResult, FString& OutError)
+		{
+			if (!Object || !Function)
+			{
+				OutError = TEXT("Runtime object or function is invalid.");
+				return false;
+			}
+			uint8* Parameters = Function->ParmsSize > 0 ? static_cast<uint8*>(FMemory_Alloca(Function->ParmsSize)) : nullptr;
+			if (Parameters) FMemory::Memzero(Parameters, Function->ParmsSize);
+			TArray<FProperty*> ParameterProperties;
+			for (TFieldIterator<FProperty> It(Function); It; ++It)
+			{
+				FProperty* Property = *It;
+				if (!Property || !Property->HasAnyPropertyFlags(CPF_Parm)) continue;
+				ParameterProperties.Add(Property);
+				Property->InitializeValue_InContainer(Parameters);
+			}
+
+			auto DestroyParameters = [&ParameterProperties, Parameters]()
+			{
+				for (int32 Index = ParameterProperties.Num() - 1; Index >= 0; --Index) ParameterProperties[Index]->DestroyValue_InContainer(Parameters);
+			};
+			for (FProperty* Property : ParameterProperties)
+			{
+				const bool bReturn = Property->HasAnyPropertyFlags(CPF_ReturnParm);
+				const bool bOutputOnly = Property->HasAnyPropertyFlags(CPF_OutParm) && !Property->HasAnyPropertyFlags(CPF_ReferenceParm);
+				if (bReturn || bOutputOnly) continue;
+				const TSharedPtr<FJsonValue> Value = Arguments.IsValid() ? Arguments->TryGetField(Property->GetName()) : nullptr;
+				if (!Value.IsValid())
+				{
+					OutError = FString::Printf(TEXT("Runtime argument is required: %s"), *Property->GetName());
+					DestroyParameters();
+					return false;
+				}
+				if (!FUEPIPropertyCodec::WriteValue(Property, Property->ContainerPtrToValuePtr<void>(Parameters), Value, OutError))
+				{
+					OutError = FString::Printf(TEXT("Runtime argument %s is invalid: %s"), *Property->GetName(), *OutError);
+					DestroyParameters();
+					return false;
+				}
+			}
+
+			Object->ProcessEvent(Function, Parameters);
+			TSharedRef<FJsonObject> Outputs = MakeShared<FJsonObject>();
+			for (FProperty* Property : ParameterProperties)
+			{
+				if (!Property->HasAnyPropertyFlags(CPF_ReturnParm | CPF_OutParm)) continue;
+				Outputs->SetField(Property->HasAnyPropertyFlags(CPF_ReturnParm) ? TEXT("return_value") : Property->GetName(), FUEPIPropertyCodec::ReadValue(Property, Property->ContainerPtrToValuePtr<void>(Parameters)));
+			}
+			OutResult->SetObjectField(TEXT("outputs"), Outputs);
+			DestroyParameters();
+			return true;
 		}
 
 		TSharedPtr<FJsonObject> JsonObjectField(const TSharedPtr<FJsonObject>& Object, const TCHAR* Field)
@@ -528,7 +657,17 @@ namespace UE::ProjectIntelligence
 		bool SaveJsonObject(const TSharedRef<FJsonObject>& Object, const FString& Path)
 		{
 			IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
-			return FFileHelper::SaveStringToFile(JsonObjectToString(Object), *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+			const FString TemporaryPath = Path + FString::Printf(TEXT(".tmp.%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+			if (!FFileHelper::SaveStringToFile(JsonObjectToString(Object), *TemporaryPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			{
+				return false;
+			}
+			if (!IFileManager::Get().Move(*Path, *TemporaryPath, true, true))
+			{
+				IFileManager::Get().Delete(*TemporaryPath, false, true);
+				return false;
+			}
+			return true;
 		}
 
 		TSharedRef<FJsonObject> ActorObject(AActor* Actor)
@@ -1178,6 +1317,38 @@ namespace UE::ProjectIntelligence
 			}
 			return SuccessResponse(RequestId, Result);
 		}
+		if (Action == TEXT("runtime_function"))
+		{
+			const FString ClassPath = JsonString(Params, TEXT("class_path"));
+			const FString FunctionName = JsonString(Params, TEXT("query"), JsonString(Params, TEXT("function")));
+			UClass* Class = LoadObject<UClass>(nullptr, *ClassPath);
+			UFunction* Function = Class ? Class->FindFunctionByName(FName(*FunctionName)) : nullptr;
+			if (!Class)
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_SCHEMA_CLASS_NOT_FOUND"), FString::Printf(TEXT("Class was not found: %s"), *ClassPath));
+			}
+			if (!Function)
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_SCHEMA_RUNTIME_FUNCTION_NOT_FOUND"), FString::Printf(TEXT("Runtime function was not found: %s"), *FunctionName));
+			}
+			FString SemanticError;
+			const bool bSemanticsAllowed = RuntimeFunctionSemanticsAllowed(Function, SemanticError);
+			const FString FunctionKey = RuntimeFunctionKey(Function);
+			const UUEPISettings* Settings = GetDefault<UUEPISettings>();
+			const bool bAllowlisted = Settings && Settings->bAllowRuntimeInvoke && Settings->AllowedRuntimeFunctions.Contains(FunctionKey);
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetStringField(TEXT("schema_version"), TEXT("uepi.runtime-function-schema.v1"));
+			Result->SetStringField(TEXT("class_path"), Class->GetPathName());
+			Result->SetStringField(TEXT("function"), Function->GetName());
+			Result->SetStringField(TEXT("function_key"), FunctionKey);
+			Result->SetBoolField(TEXT("blueprint_callable"), Function->HasAnyFunctionFlags(FUNC_BlueprintCallable));
+			Result->SetBoolField(TEXT("blueprint_pure"), Function->HasAnyFunctionFlags(FUNC_BlueprintPure));
+			Result->SetBoolField(TEXT("allowlisted"), bAllowlisted);
+			Result->SetBoolField(TEXT("invocation_supported"), bSemanticsAllowed && bAllowlisted);
+			Result->SetStringField(TEXT("blocked_reason"), bSemanticsAllowed ? (bAllowlisted ? FString() : TEXT("runtime_function_not_allowlisted")) : SemanticError);
+			Result->SetObjectField(TEXT("parameter_schema"), FUEPIPropertyCodec::BuildSchema(Function, MaxDepth));
+			return SuccessResponse(RequestId, Result);
+		}
 		return ErrorResponse(RequestId, TEXT("UEPI_SCHEMA_ACTION_UNSUPPORTED"), FString::Printf(TEXT("Schema action is not implemented by the Editor Bridge: %s"), *Action));
 	}
 
@@ -1238,11 +1409,11 @@ namespace UE::ProjectIntelligence
 			const bool bHandled = Controller->InputKey(FInputKeyParams(Key, Event == TEXT("released") ? IE_Released : IE_Pressed, 1.0, false));
 			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>(); Result->SetBoolField(TEXT("handled"), bHandled); Result->SetStringField(TEXT("key"), Key.ToString()); return SuccessResponse(RequestId, Result);
 		}
-		const FString ObjectPath = JsonString(Params, TEXT("object_path"));
-		UObject* Object = FindObject<UObject>(nullptr, *ObjectPath);
-		if (!Object || Object->GetWorld() != PIEWorld)
+		FString ObjectError;
+		UObject* Object = ResolveRuntimeObject(PIEWorld, Params, ObjectError);
+		if (!Object)
 		{
-			return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_OBJECT_NOT_FOUND"), TEXT("Runtime object was not found in the owned PIE world."));
+			return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_OBJECT_NOT_FOUND"), ObjectError);
 		}
 		if (Action == TEXT("read"))
 		{
@@ -1256,14 +1427,22 @@ namespace UE::ProjectIntelligence
 			if (!Settings->bAllowRuntimeInvoke) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_INVOKE_DISABLED"), TEXT("Runtime invoke is disabled."));
 			const FString FunctionName = JsonString(Params, TEXT("function"));
 			UFunction* Function = Object->FindFunction(FName(*FunctionName));
-			if (!Function || !Function->HasAnyFunctionFlags(FUNC_BlueprintCallable) || Function->HasAnyFunctionFlags(FUNC_Exec) || Function->HasMetaData(TEXT("Latent")) || Function->ParmsSize > 0)
+			FString SemanticError;
+			if (!RuntimeFunctionSemanticsAllowed(Function, SemanticError))
 			{
-				return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_FUNCTION_NOT_ALLOWED"), TEXT("Runtime function must be allowlisted by BlueprintCallable semantics, non-Exec, non-Latent, and parameterless in P0."));
+				return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_FUNCTION_NOT_ALLOWED"), SemanticError);
 			}
-			const FString FunctionKey = FString::Printf(TEXT("%s:%s"), Function->GetOwnerClass() ? *Function->GetOwnerClass()->GetPathName() : *Object->GetClass()->GetPathName(), *FunctionName);
+			const FString FunctionKey = RuntimeFunctionKey(Function);
 			if (!Settings->AllowedRuntimeFunctions.Contains(FunctionKey)) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_FUNCTION_NOT_ALLOWLISTED"), FString::Printf(TEXT("Runtime function is not in Project Settings allowlist: %s"), *FunctionKey));
-			Object->ProcessEvent(Function, nullptr);
-			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>(); Result->SetStringField(TEXT("object_path"), Object->GetPathName()); Result->SetStringField(TEXT("function"), Function->GetName()); Result->SetBoolField(TEXT("invoked"), true); return SuccessResponse(RequestId, Result);
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetStringField(TEXT("object_path"), Object->GetPathName());
+			Result->SetStringField(TEXT("function"), Function->GetName());
+			if (!InvokeRuntimeFunction(Object, Function, JsonObjectField(Params, TEXT("arguments")), Result, SemanticError))
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_ARGUMENT_INVALID"), SemanticError);
+			}
+			Result->SetBoolField(TEXT("invoked"), true);
+			return SuccessResponse(RequestId, Result);
 		}
 		return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_ACTION_UNSUPPORTED"), FString::Printf(TEXT("Runtime action is unsupported: %s"), *Action));
 	}
@@ -1676,6 +1855,7 @@ namespace UE::ProjectIntelligence
 		TSet<UBlueprint*> TouchedBlueprints;
 		FUEPIEditExecutionState HandlerExecutionState;
 		TMap<FString, FString> OperationAssets;
+		TArray<TWeakObjectPtr<UObject>> PendingAssetRegistryCreates;
 
 		const FText TransactionText = FText::FromString(TransactionId.IsEmpty() ? FString(TEXT("UEPI edit transaction")) : FString::Printf(TEXT("UEPI edit %s"), *TransactionId));
 		FScopedTransaction Transaction(TEXT("UEProjectIntelligence"), TransactionText, nullptr, true);
@@ -1740,7 +1920,7 @@ namespace UE::ProjectIntelligence
 				}
 				else if (Type == TEXT("content.create_asset") || Type == TEXT("content.duplicate_asset"))
 				{
-					const TSharedPtr<FJsonObject> Asset = JsonObjectField(OperationResult.Result, TEXT("asset")); const FString AssetPath = JsonString(Asset, TEXT("path")); if (!AssetPath.IsEmpty()) { AffectedAssets.AddUnique(AssetPath); const FString OpId = OperationId(Operation); if (!OpId.IsEmpty()) OperationAssets.Add(OpId, AssetPath); }
+					const TSharedPtr<FJsonObject> Asset = JsonObjectField(OperationResult.Result, TEXT("asset")); const FString AssetPath = JsonString(Asset, TEXT("path")); if (!AssetPath.IsEmpty()) { AffectedAssets.AddUnique(AssetPath); const FString OpId = OperationId(Operation); if (!OpId.IsEmpty()) OperationAssets.Add(OpId, AssetPath); if (Type == TEXT("content.create_asset")) PendingAssetRegistryCreates.Add(FindObject<UObject>(nullptr, *AssetPath)); }
 				}
 				else if (Type == TEXT("content.rename_asset"))
 				{
@@ -1793,6 +1973,10 @@ namespace UE::ProjectIntelligence
 
 		if (bAllOk)
 		{
+			for (const TWeakObjectPtr<UObject>& PendingAsset : PendingAssetRegistryCreates)
+			{
+				if (UObject* Asset = PendingAsset.Get()) FAssetRegistryModule::AssetCreated(Asset);
+			}
 			for (UBlueprint* Blueprint : TouchedBlueprints)
 			{
 				TSharedRef<FJsonObject> CompileResult = CompileBlueprintToJson(Blueprint);

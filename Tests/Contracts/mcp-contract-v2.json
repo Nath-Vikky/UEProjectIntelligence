@@ -1,6 +1,6 @@
 {
   "schema_version": "uepi.mcp-contract-snapshot.v2",
-  "captured_at_utc": "2026-07-12T01:30:16.400995Z",
+  "captured_at_utc": "2026-07-12T07:12:38.829068Z",
   "uepi_version": "2.0.0.dev0",
   "profiles": {
     "readonly": [
@@ -1538,10 +1538,19 @@
           "object_path": {
             "type": "string"
           },
+          "target": {
+            "type": "object"
+          },
           "property": {
             "type": "string"
           },
           "function": {
+            "type": "string"
+          },
+          "arguments": {
+            "type": "object"
+          },
+          "field": {
             "type": "string"
           },
           "key": {
