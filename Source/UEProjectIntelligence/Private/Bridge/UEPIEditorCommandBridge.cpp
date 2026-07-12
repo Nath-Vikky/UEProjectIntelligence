@@ -597,7 +597,9 @@ namespace UE::ProjectIntelligence
 				break;
 			}
 			const FIPv4Endpoint Endpoint(FIPv4Address(127, 0, 0, 1), static_cast<uint16>(CandidatePort));
-			Listener = MakeUnique<FTcpListener>(Endpoint, FTimespan::FromMilliseconds(100), true);
+			// A bridge belongs to exactly one Editor session. Port reuse can route a
+			// localhost client to another open project on Windows.
+			Listener = MakeUnique<FTcpListener>(Endpoint, FTimespan::FromMilliseconds(100), false);
 			if (Listener.IsValid() && Listener->IsActive())
 			{
 				Port = CandidatePort;
