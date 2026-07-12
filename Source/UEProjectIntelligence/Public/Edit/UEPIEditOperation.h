@@ -20,6 +20,7 @@ namespace UE::ProjectIntelligence
 		FString TransactionId;
 		FString ProjectId;
 		TArray<FString> AssetAllowList;
+		TMap<FString, FString> ResolvedAssets;
 		bool bDryRun = true;
 		bool bAllowSave = false;
 		bool bAllowDelete = false;

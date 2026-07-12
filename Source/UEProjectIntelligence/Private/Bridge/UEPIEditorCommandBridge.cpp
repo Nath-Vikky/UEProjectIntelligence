@@ -2700,11 +2700,23 @@ namespace UE::ProjectIntelligence
 				Context.TransactionId = TransactionId;
 				Context.ProjectId = UEPIProjectBindingId();
 				Context.AssetAllowList = AffectedAssets;
+				Context.ResolvedAssets = PlannedAssetPaths;
 				Context.bDryRun = true;
 				const FUEPIEditResult Preflight = Registry.FindOperation(Type)->Preview(Context, *OpParams);
 				if (!Preflight.bOk)
 				{
 					return ErrorResponse(RequestId, Preflight.ErrorCode.IsEmpty() ? TEXT("UEPI_EDIT_PRECHECK_FAILED") : Preflight.ErrorCode, Preflight.Message);
+				}
+				if (Type == TEXT("input.create_action") || Type == TEXT("input.create_mapping_context"))
+				{
+					FString PackagePath; FString AssetName; FString DestinationError;
+					const FString DefaultName = Type == TEXT("input.create_action") ? TEXT("IA_UEPIAction") : TEXT("IMC_UEPIContext");
+					if (!SplitDestinationPath(OpParams, DefaultName, PackagePath, AssetName, DestinationError))
+					{
+						return ErrorResponse(RequestId, TEXT("UEPI_EDIT_DESTINATION_INVALID"), DestinationError);
+					}
+					const FString OpId = OperationId(Operation);
+					if (!OpId.IsEmpty()) PlannedAssetPaths.Add(OpId, FString::Printf(TEXT("%s/%s.%s"), *PackagePath, *AssetName, *AssetName));
 				}
 				continue;
 			}
@@ -2902,6 +2914,7 @@ namespace UE::ProjectIntelligence
 				Context.TransactionId = TransactionId;
 				Context.ProjectId = UEPIProjectBindingId();
 				Context.AssetAllowList = AffectedAssets;
+				Context.ResolvedAssets = OperationAssets;
 				Context.bDryRun = false;
 				Context.bAllowSave = JsonBool(Params, TEXT("save"), false);
 				const FUEPIEditResult OperationResult = Registry.FindOperation(Type)->Apply(Context, *OpParams);

@@ -25,6 +25,19 @@ namespace UE::ProjectIntelligence
 			return Object.TryGetStringField(Field, Value) ? Value : DefaultValue;
 		}
 
+		FString ResolveAsset(const FUEPIEditContext& Context, const FJsonObject& Params, const TCHAR* Field, const TCHAR* AlternateField = nullptr)
+		{
+			FString Direct = JsonString(Params, Field, AlternateField ? JsonString(Params, AlternateField) : FString());
+			if (!Direct.IsEmpty()) return Direct;
+			const TSharedPtr<FJsonObject>* Reference = nullptr;
+			if (!Params.TryGetObjectField(Field, Reference) || !Reference || !Reference->IsValid()) return FString();
+			FString Ref = JsonString(**Reference, TEXT("$ref"));
+			int32 Fragment = INDEX_NONE;
+			if (Ref.FindChar(TEXT('#'), Fragment)) Ref = Ref.Left(Fragment);
+			if (const FString* Resolved = Context.ResolvedAssets.Find(Ref)) return *Resolved;
+			return FString();
+		}
+
 		FUEPIEditResult Failure(const FString& Code, const FString& Message)
 		{
 			FUEPIEditResult Result; Result.ErrorCode = Code; Result.Message = Message; return Result;
@@ -81,15 +94,16 @@ namespace UE::ProjectIntelligence
 			return true;
 		}
 
-		UInputMappingContext* LoadContext(const FJsonObject& Params)
+		UInputMappingContext* LoadContext(const FUEPIEditContext& Context, const FJsonObject& Params)
 		{
-			const FString Path = JsonString(Params, TEXT("context"), JsonString(Params, TEXT("mapping_context"), JsonString(Params, TEXT("asset"))));
+			FString Path = ResolveAsset(Context, Params, TEXT("context"), TEXT("mapping_context"));
+			if (Path.IsEmpty()) Path = ResolveAsset(Context, Params, TEXT("asset"));
 			return Path.IsEmpty() ? nullptr : LoadObject<UInputMappingContext>(nullptr, *Path);
 		}
 
-		UInputAction* LoadAction(const FJsonObject& Params)
+		UInputAction* LoadAction(const FUEPIEditContext& Context, const FJsonObject& Params)
 		{
-			const FString Path = JsonString(Params, TEXT("action"), JsonString(Params, TEXT("input_action")));
+			const FString Path = ResolveAsset(Context, Params, TEXT("action"), TEXT("input_action"));
 			return Path.IsEmpty() ? nullptr : LoadObject<UInputAction>(nullptr, *Path);
 		}
 
@@ -109,7 +123,7 @@ namespace UE::ProjectIntelligence
 			virtual FUEPIEditOperationDescriptor GetDescriptor() const override { return Descriptor; }
 			virtual FUEPIEditResult Validate(const FUEPIEditContext& Context, const FJsonObject& Params) override { return Preview(Context, Params); }
 
-			virtual FUEPIEditResult Preview(const FUEPIEditContext&, const FJsonObject& Params) override
+			virtual FUEPIEditResult Preview(const FUEPIEditContext& EditContext, const FJsonObject& Params) override
 			{
 #if !UEPI_WITH_ENHANCED_INPUT
 				return Failure(TEXT("UEPI_EDIT_REQUIRED_PLUGIN_UNAVAILABLE"), TEXT("Enhanced Input is not enabled for this project build."));
@@ -129,10 +143,16 @@ namespace UE::ProjectIntelligence
 					}
 					return Success(TEXT("Enhanced Input asset preflight passed."));
 				}
-				UInputMappingContext* Context = LoadContext(Params); UInputAction* Action = LoadAction(Params); const FKey Key(FName(*JsonString(Params, TEXT("key"))));
-				if (!Context || !Action || !Key.IsValid()) return Failure(TEXT("UEPI_EDIT_INPUT_MAPPING_INVALID"), TEXT("A valid mapping context, input action, and key are required."));
+				FString ContextPath = ResolveAsset(EditContext, Params, TEXT("context"), TEXT("mapping_context"));
+				if (ContextPath.IsEmpty()) ContextPath = ResolveAsset(EditContext, Params, TEXT("asset"));
+				const FString ActionPath = ResolveAsset(EditContext, Params, TEXT("action"), TEXT("input_action"));
+				UInputMappingContext* Context = LoadContext(EditContext, Params); UInputAction* Action = LoadAction(EditContext, Params); const FKey Key(FName(*JsonString(Params, TEXT("key"))));
+				const bool bPlannedContext = EditContext.ResolvedAssets.FindKey(ContextPath) != nullptr;
+				const bool bPlannedAction = EditContext.ResolvedAssets.FindKey(ActionPath) != nullptr;
+				if ((!Context && !bPlannedContext) || (!Action && !bPlannedAction) || !Key.IsValid()) return Failure(TEXT("UEPI_EDIT_INPUT_MAPPING_INVALID"), TEXT("A valid or prior-plan mapping context, input action, and key are required."));
 				if (Descriptor.Name == TEXT("input.remove_key_mapping"))
 				{
+					if (!Context || !Action) return Failure(TEXT("UEPI_EDIT_INPUT_MAPPING_NOT_FOUND"), TEXT("Removing a key mapping requires existing assets."));
 					const bool bExists = Context->GetMappings().ContainsByPredicate([Action, Key](const FEnhancedActionKeyMapping& Item) { return Item.Action == Action && Item.Key == Key; });
 					if (!bExists) return Failure(TEXT("UEPI_EDIT_INPUT_MAPPING_NOT_FOUND"), TEXT("No matching Enhanced Input key mapping exists."));
 				}
@@ -167,7 +187,7 @@ namespace UE::ProjectIntelligence
 					MappingContext->PostEditChange(); MappingContext->MarkPackageDirty(); TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetObjectField(TEXT("asset"), AssetJson(MappingContext)); Detail->SetNumberField(TEXT("mapping_count"), MappingContext->GetMappings().Num());
 					return Success(TEXT("InputMappingContext created."), Detail);
 				}
-				UInputMappingContext* MappingContext = LoadContext(Params); UInputAction* Action = LoadAction(Params); const FKey Key(FName(*JsonString(Params, TEXT("key")))); const int32 Before = MappingContext->GetMappings().Num(); MappingContext->Modify();
+				UInputMappingContext* MappingContext = LoadContext(Context, Params); UInputAction* Action = LoadAction(Context, Params); const FKey Key(FName(*JsonString(Params, TEXT("key")))); const int32 Before = MappingContext->GetMappings().Num(); MappingContext->Modify();
 				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetStringField(TEXT("context"), MappingContext->GetPathName()); Detail->SetStringField(TEXT("action"), Action->GetPathName()); Detail->SetStringField(TEXT("key"), Key.ToString()); Detail->SetNumberField(TEXT("mapping_count_before"), Before);
 				if (Descriptor.Name == TEXT("input.add_key_mapping")) { FEnhancedActionKeyMapping& Mapping = MappingContext->MapKey(Action, Key); Detail->SetObjectField(TEXT("mapping"), MappingJson(Mapping)); }
 				else MappingContext->UnmapKey(Action, Key);
