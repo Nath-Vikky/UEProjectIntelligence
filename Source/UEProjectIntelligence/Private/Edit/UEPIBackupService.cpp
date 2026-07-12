@@ -1,5 +1,6 @@
 #include "Edit/UEPIBackupService.h"
 
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "HAL/FileManager.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
@@ -62,6 +63,10 @@ namespace UE::ProjectIntelligence
 				const FString* BackupFile = BackupFiles.Find(PackageFile);
 				if (BackupFile && BackupFile->IsEmpty())
 				{
+					if (UObject* NewAsset = FindObject<UObject>(nullptr, *AssetPath))
+					{
+						FAssetRegistryModule::AssetDeleted(NewAsset);
+					}
 					PackagesToUnload.AddUnique(Package);
 				}
 				else
