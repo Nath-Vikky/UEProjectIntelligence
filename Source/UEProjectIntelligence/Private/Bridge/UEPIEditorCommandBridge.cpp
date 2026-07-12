@@ -6,6 +6,7 @@
 #include "Common/TcpListener.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "EdGraphSchema_K2.h"
 #include "Editor.h"
 #include "Engine/Selection.h"
 #include "Engine/World.h"
@@ -21,6 +22,7 @@
 #include "ImageUtils.h"
 #include "InputCoreTypes.h"
 #include "K2Node_MakeStruct.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "Kismet2/CompilerResultsLog.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Edit/UEPIEditOperationRegistry.h"
@@ -459,6 +461,50 @@ namespace UE::ProjectIntelligence
 		{
 			const FString Candidate = FGenericPlatformOutputDevices::GetAbsoluteLogFilename();
 			return FPaths::ConvertRelativePathToFull(Candidate);
+		}
+
+		void AddBlueprintPinSchema(
+			TArray<TSharedPtr<FJsonValue>>& Pins,
+			const FName PinName,
+			const TCHAR* Direction,
+			const FString& Category,
+			bool bRequiredForConnection)
+		{
+			TSharedRef<FJsonObject> PinSchema = MakeShared<FJsonObject>();
+			PinSchema->SetStringField(TEXT("pin_name"), PinName.ToString());
+			PinSchema->SetStringField(TEXT("direction"), Direction);
+			PinSchema->SetStringField(TEXT("category"), Category);
+			PinSchema->SetBoolField(TEXT("is_exec"), Category == UEdGraphSchema_K2::PC_Exec.ToString());
+			PinSchema->SetBoolField(TEXT("required_for_connection"), bRequiredForConnection);
+			Pins.Add(MakeShared<FJsonValueObject>(PinSchema));
+		}
+
+		TArray<TSharedPtr<FJsonValue>> BlueprintNodePinSchema(const FString& Kind)
+		{
+			TArray<TSharedPtr<FJsonValue>> Pins;
+			if (Kind == TEXT("custom_event"))
+			{
+				AddBlueprintPinSchema(Pins, UEdGraphSchema_K2::PN_Then, TEXT("output"), UEdGraphSchema_K2::PC_Exec.ToString(), true);
+			}
+			else if (Kind == TEXT("print_string"))
+			{
+				AddBlueprintPinSchema(Pins, UEdGraphSchema_K2::PN_Execute, TEXT("input"), UEdGraphSchema_K2::PC_Exec.ToString(), true);
+				AddBlueprintPinSchema(Pins, UEdGraphSchema_K2::PN_Then, TEXT("output"), UEdGraphSchema_K2::PC_Exec.ToString(), true);
+				if (const UFunction* Function = UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, PrintString)))
+				{
+					for (TFieldIterator<FProperty> It(Function); It; ++It)
+					{
+						const FProperty* Property = *It;
+						if (!Property || !Property->HasAnyPropertyFlags(CPF_Parm) || Property->HasAnyPropertyFlags(CPF_ReturnParm))
+						{
+							continue;
+						}
+						const bool bOutput = Property->HasAnyPropertyFlags(CPF_OutParm) && !Property->HasAnyPropertyFlags(CPF_ReferenceParm);
+						AddBlueprintPinSchema(Pins, Property->GetFName(), bOutput ? TEXT("output") : TEXT("input"), Property->GetClass()->GetName(), false);
+					}
+				}
+			}
+			return Pins;
 		}
 
 		TArray<FString> TailLines(const FString& Path, int32 LineLimit)
@@ -1112,7 +1158,13 @@ namespace UE::ProjectIntelligence
 			Result->SetStringField(TEXT("kind"), Kind);
 			Result->SetStringField(TEXT("graph_schema"), JsonString(Params, TEXT("graph_schema"), Kind == TEXT("animgraph_slot") ? TEXT("AnimGraph") : TEXT("K2")));
 			Result->SetBoolField(TEXT("returns_real_pins_after_create"), true);
-			Result->SetStringField(TEXT("connection_rule"), TEXT("Use returned pin_id/name and Graph Schema; never guess pins."));
+			const TArray<TSharedPtr<FJsonValue>> Pins = BlueprintNodePinSchema(Kind);
+			Result->SetArrayField(TEXT("pins"), Pins);
+			Result->SetStringField(TEXT("pins_scope"), TEXT("stable_same_plan_connection_pins"));
+			Result->SetBoolField(TEXT("same_plan_pin_names_available"), Pins.Num() > 0);
+			Result->SetStringField(TEXT("connection_rule"), Pins.Num() > 0
+				? TEXT("For same-plan nodes, use a pin_name returned in pins; after creation, prefer the returned real pin_id. Never guess pins.")
+				: TEXT("Create the node first and use its returned real pin_id/name; this node kind does not expose a same-plan pin schema."));
 			if (Kind == TEXT("make_struct"))
 			{
 				UScriptStruct* Struct = LoadObject<UScriptStruct>(nullptr, *JsonString(Params, TEXT("struct_path")));

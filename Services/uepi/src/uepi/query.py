@@ -25,6 +25,16 @@ BLUEPRINT_KINDS = {
     "dfg_value",
 }
 
+BLUEPRINT_SCOPE_RELATIONS = {
+    "contains_graph",
+    "contains_node",
+    "has_pin",
+    "contains_basic_block",
+    "defines_value",
+    "uses_value",
+    "overrides_event",
+}
+
 ANIMATION_KINDS = {
     "skeleton",
     "bone",
@@ -534,12 +544,23 @@ class UEPIQueryEngine:
             }
         ]
 
-    def _domain_entities_for_asset(self, asset: dict[str, Any], domain_kinds: set[str], limit: int) -> list[dict[str, Any]]:
+    def _domain_entities_for_asset(
+        self,
+        asset: dict[str, Any],
+        domain_kinds: set[str],
+        limit: int,
+        relation_types: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         asset_id = str(asset.get("id") or "")
         if self.cache:
             return [
                 _short_entity(entity, include_snapshot=True)
-                for entity in self.cache.domain_entities_for_asset(asset_id, domain_kinds, max(1, int(limit)))
+                for entity in self.cache.domain_entities_for_asset(
+                    asset_id,
+                    domain_kinds,
+                    max(1, int(limit)),
+                    relation_types=relation_types,
+                )
             ]
 
         self._ensure_loaded()
@@ -550,6 +571,8 @@ class UEPIQueryEngine:
             current = queue.popleft()
             adjacent = self.outgoing.get(current, []) + self.incoming.get(current, [])
             for relation in adjacent:
+                if relation_types and str(relation.get("type") or "") not in relation_types:
+                    continue
                 next_id = relation.get("to_id") if relation.get("from_id") == current else relation.get("from_id")
                 if not isinstance(next_id, str) or next_id in seen:
                     continue
@@ -791,7 +814,12 @@ class UEPIQueryEngine:
                 tool="uepi_blueprint",
                 operation="graph_summary",
             )
-        domain_entities = self._domain_entities_for_asset(entity, BLUEPRINT_KINDS, max(1, min(limit, 1000)))
+        domain_entities = self._domain_entities_for_asset(
+            entity,
+            BLUEPRINT_KINDS,
+            max(1, min(limit, 1000)),
+            relation_types=BLUEPRINT_SCOPE_RELATIONS,
+        )
         node_class_set = {str(item).casefold() for item in (node_classes or [])}
         semantic_set = {str(item).casefold() for item in (semantic_kinds or [])}
 
@@ -898,7 +926,12 @@ class UEPIQueryEngine:
                 operation="static_flow_trace",
             )
         allowed = set(relation_types or ["exec_flows_to", "data_flows_to", "delegate_flows_to", "calls_function"])
-        blueprint_entities = self._domain_entities_for_asset(entity, BLUEPRINT_KINDS, 1000)
+        blueprint_entities = self._domain_entities_for_asset(
+            entity,
+            BLUEPRINT_KINDS,
+            1000,
+            relation_types=BLUEPRINT_SCOPE_RELATIONS,
+        )
         domain_ids = {str(item.get("id")) for item in blueprint_entities if item.get("id")}
         if not domain_ids:
             freshness, diagnostics = self._domain_refresh_for_missing_snapshot(

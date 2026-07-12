@@ -516,13 +516,21 @@ class SQLiteSnapshotCache:
         ).fetchall()
         return [relation for row in rows if (relation := self._relation_from_row(row))]
 
-    def domain_entities_for_asset(self, asset_id: str, domain_kinds: set[str], limit: int) -> list[dict[str, Any]]:
+    def domain_entities_for_asset(
+        self,
+        asset_id: str,
+        domain_kinds: set[str],
+        limit: int,
+        relation_types: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         seen = {asset_id}
         results: list[dict[str, Any]] = []
         frontier = [asset_id]
         while frontier and len(results) < limit:
             current = frontier.pop(0)
             for relation in self.relations_for_entity(current, limit=1000):
+                if relation_types and str(relation.get("type") or "") not in relation_types:
+                    continue
                 next_id = relation.get("to_id") if relation.get("from_id") == current else relation.get("from_id")
                 if not isinstance(next_id, str) or next_id in seen:
                     continue

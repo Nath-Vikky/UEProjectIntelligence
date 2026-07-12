@@ -876,7 +876,19 @@ def write_fixture(root: Path) -> None:
                 "evidence": [],
             }
         ],
-        "relations": [],
+        "relations": [
+            {
+                "id": "rel-metadata-only-hard-reference",
+                "type": "hard_references",
+                "from_id": metadata_only_asset_id,
+                "to_id": asset_id,
+                "source_layer": "asset_registry",
+                "derived": False,
+                "confidence": 1.0,
+                "attributes": {},
+                "evidence": [],
+            }
+        ],
         "diagnostics": [],
     }
     metadata_only_path = objects / "aametadataonlyfragment.json"
@@ -1223,6 +1235,9 @@ def main() -> int:
             assert metadata_blueprint["diagnostics"][0]["code"] == "UEPI_REFRESH_REQUESTED"
             assert metadata_blueprint["diagnostics"][0]["target_object_path"] == "/Game/BP_MetadataOnly.BP_MetadataOnly"
             assert "blueprint_graph_entities_not_present_in_snapshot" in metadata_blueprint["omissions"]
+            assert metadata_blueprint["result"]["blueprint_entities"] == []
+            assert metadata_blueprint["result"]["relations"] == []
+            assert "BP_Hero" not in " ".join(metadata_blueprint["result"]["semantic_summary"]["summary_lines"])
             metadata_requests = [
                 json.loads(path.read_text(encoding="utf-8"))
                 for path in (root / "store" / "requests").glob("*.json")
