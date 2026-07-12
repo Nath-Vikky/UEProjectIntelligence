@@ -1,6 +1,6 @@
 # UE Project Intelligence Development Status
 
-`main` is the experimental `2.0.0-alpha.2` vNext line for UE 5.3.2 and Codex.
+`main` is the experimental `2.0.0-alpha.3` vNext line for UE 5.3.2 and Codex.
 
 ## Implemented
 

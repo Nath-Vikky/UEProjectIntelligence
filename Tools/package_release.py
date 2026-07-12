@@ -180,6 +180,13 @@ def main(argv: list[str] | None = None) -> int:
     plugin_root = args.plugin_root.resolve()
     validate_release_inputs(plugin_root)
 
+    # Archive names, manifests, and the installed descriptor must identify the same release.
+    descriptor_version = str(load_plugin_descriptor(plugin_root).get("VersionName") or "").strip()
+    if descriptor_version != args.version:
+        raise RuntimeError(
+            f"Requested version {args.version} does not match UEProjectIntelligence.uplugin VersionName {descriptor_version or '<empty>'}."
+        )
+
     kinds = ["source", "prebuilt"] if args.kind == "both" else [args.kind]
     if "prebuilt" in kinds and not (plugin_root / "Binaries" / "Win64").is_dir():
         raise RuntimeError("A prebuilt release requires Binaries/Win64 built with UE 5.3.2.")

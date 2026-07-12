@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.0-alpha.3
+
+- Migrated Actor write operations from the Bridge apply branch into concrete Registry handlers with authoritative preflight and typed property diffs.
+- Migrated Enhanced Input creation and key-mapping operations into concrete Registry handlers with optional-module blocking, destination checks, and same-plan created-asset capture.
+- Migrated Material Instance creation, typed parameter writes, and actor/Blueprint component assignment into concrete Registry handlers with full preflight and same-plan references.
+- Migrated DataAsset creation, typed UObject writes, explicit save targets, folder/copy/rename/import operations into concrete Registry handlers with planned-class preflight.
+- Migrated Widget Blueprint creation, Text/Button insertion, Canvas slot layout, and button event binding into concrete Registry handlers with planned-widget support.
+- Migrated Animation Slot registration, Montage creation/tracks/segments/sections/blend, and preview-mesh writes into concrete Registry handlers with same-plan skeleton and Montage state.
+- Migrated Blueprint and AnimGraph variable/component/function/node/pin/compile writes into concrete Registry handlers with full preflight and same-plan graph-object references.
+- Removed the final per-operation mutation branches, fallback Bridge handler, and migrated-domain helper code from the Editor Bridge; the Registry is now the single write capability and execution source.
+- Kept the release marked experimental alpha until the UE5.3.2 real-machine matrix is complete.
+
 ## 2.0.0-alpha.2
 
 - Added exact project/session binding, authoritative Status v2, MCP envelope v2, hard scope, exact reads, projection, payload budgets, and opaque pagination.
@@ -12,14 +24,6 @@
 - Bound Runtime tickets to an explicitly approved verification plan and added per-project exact function allowlisting on top of ticket function/key/read/map guards.
 - Extracted backup/restore, touched-package save, phase journal, and typed Validator Registry services from the Editor Bridge apply pipeline.
 - Completed nested Plan v2 base/risk/approval/verification structure, dependency-bound refs, Class/SoftClass typed values, richer transaction diff, runtime failure cleanup, and dual-artifact release packaging.
-- Migrated Actor write operations from the Bridge apply branch into concrete Registry handlers with authoritative preflight and typed property diffs.
-- Migrated Enhanced Input creation and key-mapping operations into concrete Registry handlers with optional-module blocking, destination checks, and same-plan created-asset capture.
-- Migrated Material Instance creation, typed parameter writes, and actor/Blueprint component assignment into concrete Registry handlers with full preflight and same-plan references.
-- Migrated DataAsset creation, typed UObject writes, explicit save targets, folder/copy/rename/import operations into concrete Registry handlers with planned-class preflight.
-- Migrated Widget Blueprint creation, Text/Button insertion, Canvas slot layout, and button event binding into concrete Registry handlers with planned-widget support.
-- Migrated Animation Slot registration, Montage creation/tracks/segments/sections/blend, and preview-mesh writes into concrete Registry handlers with same-plan skeleton and Montage state.
-- Migrated Blueprint and AnimGraph variable/component/function/node/pin/compile writes into concrete Registry handlers with full preflight and same-plan graph-object references.
-- Removed the final per-operation mutation branches, fallback Bridge handler, and migrated-domain helper code from the Editor Bridge; the Registry is now the single write capability and execution source.
 - Added project-plugin content/source indexing, project-local Codex setup, machine-readable Doctor, versioned public schemas, v2 contract export, and source/prebuilt release packaging.
 - Kept the release marked experimental alpha until the UE5.3.2 real-machine matrix is complete.
 
