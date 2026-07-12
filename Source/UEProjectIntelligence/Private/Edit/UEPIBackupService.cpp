@@ -49,6 +49,7 @@ namespace UE::ProjectIntelligence
 				bOk = false;
 			}
 		}
+		TArray<UPackage*> PackagesToUnload;
 		TArray<UPackage*> PackagesToReload;
 		for (const FString& AssetPath : AffectedAssets)
 		{
@@ -57,7 +58,25 @@ namespace UE::ProjectIntelligence
 			if (UPackage* Package = FindPackage(nullptr, *PackageName))
 			{
 				Package->SetDirtyFlag(false);
-				PackagesToReload.AddUnique(Package);
+				const FString PackageFile = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+				const FString* BackupFile = BackupFiles.Find(PackageFile);
+				if (BackupFile && BackupFile->IsEmpty())
+				{
+					PackagesToUnload.AddUnique(Package);
+				}
+				else
+				{
+					PackagesToReload.AddUnique(Package);
+				}
+			}
+		}
+		if (PackagesToUnload.Num() > 0)
+		{
+			FText UnloadError;
+			if (!UPackageTools::UnloadPackages(PackagesToUnload, UnloadError, true))
+			{
+				bOk = false;
+				OutError = UnloadError.ToString();
 			}
 		}
 		if (PackagesToReload.Num() > 0)

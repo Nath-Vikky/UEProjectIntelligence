@@ -489,5 +489,12 @@ def rollback(store: SnapshotStore, transaction_id: str = "") -> dict[str, Any]:
     if not response.get("ok"):
         code = str((response.get("error") or {}).get("code") or next((item.get("code") for item in response.get("diagnostics") or [] if isinstance(item, dict)), "UEPI_EDIT_ROLLBACK_FAILED"))
         return _response(store, tool="uepi_edit_rollback", operation="rollback", error={"code": code, "message": "Rollback failed or did not verify.", "retryable": False, "candidates": []}, diagnostics=list(response.get("diagnostics") or []))
-    _audit(store, {"event": "rollback", "transaction_id": transaction_id, "result": response.get("result")})
-    return _response(store, tool="uepi_edit_rollback", operation="rollback", result=response.get("result") or {}, diagnostics=list(response.get("diagnostics") or []))
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    refresh_result = _wait_refresh(store, str(result.get("refresh_request_path") or "")) if result.get("refresh_request_path") else None
+    result["post_rollback"] = {
+        "files_restored": bool(result.get("files_restored")),
+        "refresh_request_path": result.get("refresh_request_path"),
+        "refresh": refresh_result,
+    }
+    _audit(store, {"event": "rollback", "transaction_id": transaction_id, "result": result})
+    return _response(store, tool="uepi_edit_rollback", operation="rollback", result=result, diagnostics=list(response.get("diagnostics") or []))

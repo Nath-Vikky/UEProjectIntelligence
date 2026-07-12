@@ -1956,6 +1956,12 @@ namespace UE::ProjectIntelligence
 		{
 			bFilesRestored = FUEPIBackupService::Restore(LastAppliedBackupFiles, LastAppliedAffectedAssets, RestoreError);
 		}
+		FString RefreshRequestPath;
+		FString RefreshError;
+		if (bUndone && bFilesRestored && LastAppliedAffectedAssets.Num() > 0)
+		{
+			WriteRefreshRequest(LastAppliedAffectedAssets, TEXT("live"), RefreshRequestPath, RefreshError);
+		}
 		FString JournalPath;
 		FString JournalError;
 		FUEPITransactionJournal::Write(TransactionId, (bUndone && bFilesRestored) ? TEXT("rolled_back") : TEXT("rollback_failed"), LastAppliedAffectedAssets, LastAppliedBackupFiles, false, RestoreError, JournalPath, JournalError);
@@ -1966,6 +1972,8 @@ namespace UE::ProjectIntelligence
 		Result->SetBoolField(TEXT("undone"), bUndone);
 		Result->SetBoolField(TEXT("files_restored"), bFilesRestored);
 		Result->SetStringField(TEXT("journal_path"), JournalPath);
+		Result->SetStringField(TEXT("refresh_request_path"), RefreshRequestPath);
+		Result->SetStringField(TEXT("refresh_error"), RefreshError);
 		if (bUndone && bFilesRestored)
 		{
 			LastAppliedTransactionId.Reset();
