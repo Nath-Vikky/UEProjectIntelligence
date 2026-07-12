@@ -28,12 +28,13 @@
 - Python package/tool compilation passes.
 - Snapshot MCP v2 synthetic regression is the required automated gate.
 - Offline GasDemo Doctor resolves the exact project binding, saved generation, MCP config, store access, and installed project plugins.
+- The `2.0.0-alpha.3` source and UE5.3.2 Win64 archives pass version/root/exclusion/hash inspection, and the extracted source archive passes an isolated UE5.3.2 Win64 `BuildPlugin` build.
 
 ## Beta Blockers
 
 - Run and record the LLMNPCDemo, Third Person, blank-project, and two-project real-machine matrix.
 - Exercise every migrated write domain through Discover -> Preview -> one approval -> Apply -> Validate -> Save -> restart -> Diff/Rollback.
 - Complete and record the Blueprint/AnimGraph same-plan node creation and pin-connection Golden scenario on UE 5.3.2.
-- Produce and install-test the source release zip. Produce a prebuilt UE5.3.2 Win64 zip only from clean matching-engine binaries.
+- Install the complete release zip in clean blank and Third Person projects, connect Codex, and record the resulting Doctor/Golden reports; the isolated source `BuildPlugin` gate already passes.
 
 The plugin remains honestly marked experimental alpha until these items pass. Do not create a `v2.x-beta` tag before that gate.
