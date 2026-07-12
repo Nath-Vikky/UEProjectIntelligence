@@ -17,7 +17,7 @@
 - Reflected typed property codec for scalar, enum/name/text, object/soft-object, struct, array, set, and map values.
 - Generic DataAsset creation/property writes; Blueprint variables/components/functions/events/generic nodes/pin defaults/connections/removal/layout/comments/compile; AnimGraph Slot and pose-link operations.
 - Guarded Actor, Material Instance, scoped Content, UMG, and Enhanced Input operations behind the same project/session/plan/preflight/save/rollback pipeline.
-- Actor, Material Instance/assignment/parameter, and Enhanced Input operations execute through concrete Registry handlers with domain-owned preflight; their legacy Bridge apply branches have been removed.
+- Actor, Content/DataAsset/property, Material Instance/assignment/parameter, and Enhanced Input operations execute through concrete Registry handlers with domain-owned preflight; their legacy Bridge apply branches have been removed.
 - Transaction-bound UEPI-owned PIE status/start/stop/input/parameterless invoke/read/wait/assert and cleanup.
 - Project-local Codex setup script, machine-readable Doctor, public schemas, v2 contract snapshot, release packaging, architecture/safety/edit/runtime guides, and real-machine report templates.
 
@@ -32,7 +32,7 @@
 
 - Run and record the LLMNPCDemo, Third Person, blank-project, and two-project real-machine matrix.
 - Exercise every migrated write domain through Discover -> Preview -> one approval -> Apply -> Validate -> Save -> restart -> Diff/Rollback.
-- Complete structural extraction of Blueprint, Animation, Content, and UMG executor branches into domain operation handlers; Actor, Material, and Enhanced Input are migrated, but the remaining apply implementation still contains a large domain dispatch body.
+- Complete structural extraction of Blueprint, Animation, and UMG executor branches into domain operation handlers; Actor, Content, Material, and Enhanced Input are migrated, but the remaining apply implementation still contains a large domain dispatch body.
 - Produce and install-test the source release zip. Produce a prebuilt UE5.3.2 Win64 zip only from clean matching-engine binaries.
 
 The plugin remains honestly marked experimental alpha until these items pass. Do not create a `v2.x-beta` tag before that gate.

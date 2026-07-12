@@ -1,7 +1,6 @@
 #include "Bridge/UEPIEditorCommandBridge.h"
 
 #include "Bridge/UEPIBridgeProtocol.h"
-#include "AssetImportTask.h"
 #include "AssetToolsModule.h"
 #include "Components/ActorComponent.h"
 #include "Components/Button.h"
@@ -28,7 +27,6 @@
 #include "GameFramework/PlayerInput.h"
 #include "EngineUtils.h"
 #include "Engine/Blueprint.h"
-#include "Factories/DataAssetFactory.h"
 #include "FileHelpers.h"
 #include "GameFramework/Actor.h"
 #include "HAL/FileManager.h"
@@ -63,7 +61,6 @@
 #include "AnimGraphNode_Slot.h"
 #include "Factories/AnimMontageFactory.h"
 #include "Engine/SkeletalMesh.h"
-#include "Engine/DataAsset.h"
 #include "Misc/App.h"
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
@@ -1250,23 +1247,6 @@ namespace UE::ProjectIntelligence
 				return false;
 			}
 			return true;
-		}
-
-		UObject* LoadContentObject(const TSharedPtr<FJsonObject>& Params, FString& OutAssetPath, FString& OutError)
-		{
-			OutAssetPath = JsonString(Params, TEXT("asset"), JsonString(Params, TEXT("source")));
-			if (OutAssetPath.IsEmpty())
-			{
-				OutError = TEXT("Content operation requires params.asset or params.source.");
-				return nullptr;
-			}
-			UObject* Object = LoadObject<UObject>(nullptr, *OutAssetPath);
-			if (!Object)
-			{
-				OutError = FString::Printf(TEXT("Failed to load asset: %s"), *OutAssetPath);
-				return nullptr;
-			}
-			return Object;
 		}
 
 		UWorld* EditorWorld()
@@ -2588,13 +2568,14 @@ namespace UE::ProjectIntelligence
 			}
 			TSharedPtr<FJsonObject> OpParams = JsonObjectField(Operation, TEXT("params"));
 			if (!OpParams.IsValid()) OpParams = Operation;
-			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")) || Type.StartsWith(TEXT("material.")))
+			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")) || Type.StartsWith(TEXT("material.")) || Type.StartsWith(TEXT("content.")) || Type == TEXT("asset.set_properties"))
 			{
 				FUEPIEditContext Context;
 				Context.TransactionId = TransactionId;
 				Context.ProjectId = UEPIProjectBindingId();
 				Context.AssetAllowList = AffectedAssets;
 				Context.ResolvedAssets = PlannedAssetPaths;
+				Context.ResolvedAssetClasses = PlannedAssetClasses;
 				Context.bDryRun = true;
 				const FUEPIEditResult Preflight = Registry.FindOperation(Type)->Preview(Context, *OpParams);
 				if (!Preflight.bOk)
@@ -2618,64 +2599,15 @@ namespace UE::ProjectIntelligence
 					const FString OpId = OperationId(Operation);
 					if (!OpId.IsEmpty() && !PlannedPath.IsEmpty()) PlannedAssetPaths.Add(OpId, PlannedPath);
 				}
+				else if ((Type == TEXT("content.create_asset") || Type == TEXT("content.duplicate_asset") || Type == TEXT("content.rename_asset")) && Preflight.Result.IsValid())
+				{
+					const FString PlannedPath = JsonString(Preflight.Result, TEXT("asset_path")); const FString OpId = OperationId(Operation);
+					if (!OpId.IsEmpty() && !PlannedPath.IsEmpty()) PlannedAssetPaths.Add(OpId, PlannedPath);
+					if (Type == TEXT("content.create_asset")) { UClass* PlannedClass = LoadObject<UClass>(nullptr, *JsonString(Preflight.Result, TEXT("asset_class"))); if (!OpId.IsEmpty() && PlannedClass) PlannedAssetClasses.Add(OpId, PlannedClass); }
+				}
 				continue;
 			}
-			if (Type == TEXT("asset.set_properties"))
-			{
-				const FString AssetPath = ResolveOperationAsset(OpParams, TEXT("asset"), PlannedAssetPaths);
-				UObject* Object = AssetPath.IsEmpty() ? nullptr : StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
-				UObject* Probe = Object ? DuplicateObject(Object, GetTransientPackage()) : nullptr;
-				if (!Probe)
-				{
-					const TSharedPtr<FJsonObject> Reference = JsonObjectField(OpParams, TEXT("asset"));
-					FString Ref = JsonString(Reference, TEXT("$ref"));
-					int32 Fragment = INDEX_NONE;
-					if (Ref.FindChar(TEXT('#'), Fragment)) Ref = Ref.Left(Fragment);
-					if (UClass* const* PlannedClass = PlannedAssetClasses.Find(Ref))
-					{
-						Probe = NewObject<UObject>(GetTransientPackage(), *PlannedClass);
-					}
-				}
-				FString WriteError;
-				const TSharedPtr<FJsonObject> Properties = PropertyWritesObject(OpParams, WriteError);
-				if (!Probe || !Properties.IsValid())
-				{
-					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_PROPERTY_PREFLIGHT_FAILED"), WriteError.IsEmpty() ? TEXT("asset.set_properties requires a valid asset/reference and property writes.") : WriteError);
-				}
-				for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
-				{
-					TSharedPtr<FJsonValue> Before;
-					TSharedPtr<FJsonValue> After;
-					FString Error;
-					if (!FUEPIPropertyCodec::SetPropertyPath(Probe, Pair.Key, PropertyWriteValue(Pair.Value), Before, After, Error, PropertyWriteMode(Pair.Value)))
-					{
-						return ErrorResponse(RequestId, TEXT("UEPI_EDIT_PROPERTY_TYPE_MISMATCH"), FString::Printf(TEXT("Property preflight failed for %s: %s"), *Pair.Key, *Error));
-					}
-				}
-			}
-			else if (Type == TEXT("content.create_asset"))
-			{
-				const FString ClassPath = JsonString(OpParams, TEXT("asset_class"), JsonString(OpParams, TEXT("class_path")));
-				UClass* AssetClass = LoadObject<UClass>(nullptr, *ClassPath);
-				if (!AssetClass || !AssetClass->IsChildOf(UDataAsset::StaticClass()) || AssetClass->HasAnyClassFlags(CLASS_Abstract))
-				{
-					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_ASSET_CLASS_UNSUPPORTED"), FString::Printf(TEXT("P0 content.create_asset requires a UDataAsset/UPrimaryDataAsset class: %s"), *ClassPath));
-				}
-				FString PackagePath;
-				FString AssetName;
-				FString DestinationError;
-				if (!SplitDestinationPath(OpParams, TEXT("DA_UEPIAsset"), PackagePath, AssetName, DestinationError))
-				{
-					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_DESTINATION_INVALID"), DestinationError);
-				}
-				const FString OpId = OperationId(Operation);
-				if (!OpId.IsEmpty())
-				{
-					PlannedAssetClasses.Add(OpId, AssetClass);
-					PlannedAssetPaths.Add(OpId, FString::Printf(TEXT("%s/%s.%s"), *PackagePath, *AssetName, *AssetName));
-				}
-			}
-			else if (Type == TEXT("animation.register_slot") || Type == TEXT("animation.create_slot_group"))
+			if (Type == TEXT("animation.register_slot") || Type == TEXT("animation.create_slot_group"))
 			{
 				USkeleton* Skeleton = LoadObject<USkeleton>(nullptr, *JsonString(OpParams, TEXT("skeleton")));
 				const FName SlotName(*JsonString(OpParams, TEXT("slot_name"), TEXT("DefaultSlot")));
@@ -2808,13 +2740,14 @@ namespace UE::ProjectIntelligence
 			{
 				OpParams = Operation;
 			}
-			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")) || Type.StartsWith(TEXT("material.")))
+			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")) || Type.StartsWith(TEXT("material.")) || Type.StartsWith(TEXT("content.")) || Type == TEXT("asset.set_properties"))
 			{
 				FUEPIEditContext Context;
 				Context.TransactionId = TransactionId;
 				Context.ProjectId = UEPIProjectBindingId();
 				Context.AssetAllowList = AffectedAssets;
 				Context.ResolvedAssets = OperationAssets;
+				Context.ResolvedAssetClasses = PlannedAssetClasses;
 				Context.bDryRun = false;
 				Context.bAllowSave = JsonBool(Params, TEXT("save"), false);
 				const FUEPIEditResult OperationResult = Registry.FindOperation(Type)->Apply(Context, *OpParams);
@@ -2851,7 +2784,27 @@ namespace UE::ProjectIntelligence
 				{
 					const FString MaterialPath = JsonString(OperationResult.Result, TEXT("asset")); if (!MaterialPath.IsEmpty()) AffectedAssets.AddUnique(MaterialPath);
 				}
-				bMutated = true;
+				else if (Type == TEXT("content.create_asset") || Type == TEXT("content.duplicate_asset"))
+				{
+					const TSharedPtr<FJsonObject> Asset = JsonObjectField(OperationResult.Result, TEXT("asset")); const FString AssetPath = JsonString(Asset, TEXT("path")); if (!AssetPath.IsEmpty()) { AffectedAssets.AddUnique(AssetPath); const FString OpId = OperationId(Operation); if (!OpId.IsEmpty()) OperationAssets.Add(OpId, AssetPath); }
+				}
+				else if (Type == TEXT("content.rename_asset"))
+				{
+					const FString AssetPath = JsonString(OperationResult.Result, TEXT("new_asset")); if (!AssetPath.IsEmpty()) { AffectedAssets.AddUnique(AssetPath); const FString OpId = OperationId(Operation); if (!OpId.IsEmpty()) OperationAssets.Add(OpId, AssetPath); }
+				}
+				else if (Type == TEXT("content.import"))
+				{
+					if (const TArray<TSharedPtr<FJsonValue>>* Assets = JsonArray(OperationResult.Result, TEXT("assets"))) for (const TSharedPtr<FJsonValue>& Value : *Assets) { const FString AssetPath = JsonString(Value.IsValid() ? Value->AsObject() : nullptr, TEXT("path")); if (!AssetPath.IsEmpty()) AffectedAssets.AddUnique(AssetPath); }
+				}
+				else if (Type == TEXT("content.save_assets"))
+				{
+					for (const FString& AssetPath : JsonStringArray(OperationResult.Result, TEXT("assets"))) AffectedAssets.AddUnique(AssetPath);
+				}
+				else if (Type == TEXT("asset.set_properties"))
+				{
+					const FString AssetPath = JsonString(OperationResult.Result, TEXT("asset")); if (!AssetPath.IsEmpty()) AffectedAssets.AddUnique(AssetPath);
+				}
+				if (Type != TEXT("content.save_assets")) bMutated = true;
 				continue;
 			}
 			if (Type == TEXT("blueprint.add_node"))
@@ -2903,71 +2856,6 @@ namespace UE::ProjectIntelligence
 			FString AssetPath;
 			FString Error;
 			UBlueprint* Blueprint = nullptr;
-			if (Type == TEXT("content.create_asset"))
-			{
-				if (!Settings->bAllowContentEdits)
-				{
-					bAllOk = false; FailureMessage = TEXT("Content edits are disabled."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
-				}
-				FString PackagePath;
-				FString AssetName;
-				if (!SplitDestinationPath(OpParams, TEXT("DA_UEPIAsset"), PackagePath, AssetName, Error))
-				{
-					bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break;
-				}
-				UClass* AssetClass = LoadObject<UClass>(nullptr, *JsonString(OpParams, TEXT("asset_class"), JsonString(OpParams, TEXT("class_path"))));
-				UDataAssetFactory* Factory = NewObject<UDataAssetFactory>();
-				Factory->DataAssetClass = AssetClass;
-				UObject* NewAsset = FAssetToolsModule::GetModule().Get().CreateAsset(AssetName, PackagePath, AssetClass, Factory, TEXT("UEPI"));
-				if (!NewAsset)
-				{
-					bAllOk = false; FailureMessage = TEXT("DataAsset creation failed."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
-				}
-				NewAsset->MarkPackageDirty();
-				AffectedAssets.AddUnique(NewAsset->GetPathName());
-				if (const FString OpId = OperationId(Operation); !OpId.IsEmpty()) OperationAssets.Add(OpId, NewAsset->GetPathName());
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetObjectField(TEXT("asset"), ObjectToJson(NewAsset));
-				Detail->SetStringField(TEXT("asset_path"), NewAsset->GetPathName());
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("DataAsset created."), Detail);
-				bMutated = true;
-				continue;
-			}
-			if (Type == TEXT("content.save_assets"))
-			{
-				for (const FString& ExplicitAsset : JsonStringArray(OpParams, TEXT("assets"))) AffectedAssets.AddUnique(ExplicitAsset);
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("Touched assets are scheduled for save after validation."));
-				continue;
-			}
-			if (Type == TEXT("asset.set_properties"))
-			{
-				if (!Settings->bAllowContentEdits)
-				{
-					bAllOk = false; FailureMessage = TEXT("Content edits are disabled."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
-				}
-				AssetPath = ResolveOperationAsset(OpParams, TEXT("asset"), OperationAssets);
-				UObject* Object = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
-				const TSharedPtr<FJsonObject> Properties = PropertyWritesObject(OpParams, Error);
-				if (!Object || !Properties.IsValid())
-				{
-					bAllOk = false; FailureMessage = TEXT("Asset or properties object is invalid."); AddOperationResult(OperationResults, Index, Type, false, FailureMessage); break;
-				}
-				Object->Modify();
-				TArray<TSharedPtr<FJsonValue>> PropertyDiffs;
-				for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
-				{
-					TSharedPtr<FJsonValue> Before;
-					TSharedPtr<FJsonValue> After;
-					if (!FUEPIPropertyCodec::SetPropertyPath(Object, Pair.Key, PropertyWriteValue(Pair.Value), Before, After, Error, PropertyWriteMode(Pair.Value)))
-					{
-						bAllOk = false; FailureMessage = Error; AddOperationResult(OperationResults, Index, Type, false, Error); break;
-					}
-					TSharedRef<FJsonObject> Diff = MakeShared<FJsonObject>(); Diff->SetStringField(TEXT("property_path"), Pair.Key); Diff->SetField(TEXT("before"), Before); Diff->SetField(TEXT("after"), After); PropertyDiffs.Add(MakeShared<FJsonValueObject>(Diff));
-				}
-				if (!bAllOk) break;
-				Object->PostEditChange(); Object->MarkPackageDirty(); AffectedAssets.AddUnique(Object->GetPathName());
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetStringField(TEXT("asset"), Object->GetPathName()); Detail->SetArrayField(TEXT("property_diff"), PropertyDiffs);
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("Typed properties updated."), Detail); bMutated = true; continue;
-			}
 			if (Type == TEXT("animation.create_slot_group"))
 			{
 				USkeleton* Skeleton = LoadObject<USkeleton>(nullptr, *JsonString(OpParams, TEXT("skeleton")));
@@ -3723,188 +3611,6 @@ namespace UE::ProjectIntelligence
 					FailureMessage = TEXT("Blueprint compile returned errors.");
 					break;
 				}
-			}
-			else if (Type == TEXT("content.create_folder"))
-			{
-				if (!Settings->bAllowContentEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Content write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				const FString FolderPath = NormalizedContentPath(JsonString(OpParams, TEXT("path"), JsonString(OpParams, TEXT("folder"))));
-				if (!ValidateGameContentPath(FolderPath, Error))
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				const FString Directory = FPackageName::LongPackageNameToFilename(FolderPath);
-				const bool bCreated = IFileManager::Get().MakeDirectory(*Directory, true);
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetStringField(TEXT("folder"), FolderPath);
-				Detail->SetStringField(TEXT("directory"), Directory);
-				AddOperationResult(OperationResults, Index, Type, bCreated, bCreated ? TEXT("Content folder created.") : TEXT("Failed to create content folder."), Detail);
-				bAllOk &= bCreated;
-				if (!bCreated)
-				{
-					FailureMessage = TEXT("Failed to create content folder.");
-					break;
-				}
-				bMutated = true;
-			}
-			else if (Type == TEXT("content.duplicate_asset"))
-			{
-				if (!Settings->bAllowContentEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Content write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				UObject* SourceObject = LoadContentObject(OpParams, AssetPath, Error);
-				if (!SourceObject)
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				FString PackagePath;
-				FString AssetName;
-				if (!SplitDestinationPath(OpParams, SourceObject->GetName() + TEXT("_Copy"), PackagePath, AssetName, Error))
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				UObject* NewObject = FAssetToolsModule::GetModule().Get().DuplicateAsset(AssetName, PackagePath, SourceObject);
-				if (!NewObject)
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Failed to duplicate asset to %s/%s."), *PackagePath, *AssetName);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				AffectedAssets.AddUnique(NewObject->GetPathName());
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetObjectField(TEXT("source"), ObjectToJson(SourceObject));
-				Detail->SetObjectField(TEXT("asset"), ObjectToJson(NewObject));
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("Asset duplicated."), Detail);
-				bMutated = true;
-			}
-			else if (Type == TEXT("content.rename_asset"))
-			{
-				if (!Settings->bAllowContentEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Content write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				UObject* SourceObject = LoadContentObject(OpParams, AssetPath, Error);
-				if (!SourceObject)
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				FString PackagePath;
-				FString AssetName;
-				if (!SplitDestinationPath(OpParams, SourceObject->GetName(), PackagePath, AssetName, Error))
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				TArray<FAssetRenameData> RenameData;
-				RenameData.Add(FAssetRenameData(SourceObject, PackagePath, AssetName));
-				const bool bRenamed = FAssetToolsModule::GetModule().Get().RenameAssets(RenameData);
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetStringField(TEXT("old_asset"), AssetPath);
-				Detail->SetStringField(TEXT("new_asset"), PackagePath / AssetName + TEXT(".") + AssetName);
-				AddOperationResult(OperationResults, Index, Type, bRenamed, bRenamed ? TEXT("Asset renamed.") : TEXT("Asset rename failed."), Detail);
-				bAllOk &= bRenamed;
-				if (!bRenamed)
-				{
-					FailureMessage = TEXT("Asset rename failed.");
-					break;
-				}
-				AffectedAssets.AddUnique(PackagePath / AssetName + TEXT(".") + AssetName);
-				bMutated = true;
-			}
-			else if (Type == TEXT("content.import"))
-			{
-				if (!Settings->bAllowContentEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Content write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				const FString Filename = JsonString(OpParams, TEXT("file"), JsonString(OpParams, TEXT("filename")));
-				if (Filename.IsEmpty() || !FPaths::FileExists(Filename))
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Import file does not exist: %s"), *Filename);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				const FString Extension = FPaths::GetExtension(Filename).ToLower();
-				if (!(Extension == TEXT("fbx") || Extension == TEXT("obj") || Extension == TEXT("png") || Extension == TEXT("jpg") || Extension == TEXT("jpeg") || Extension == TEXT("wav") || Extension == TEXT("uasset")))
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Import extension is not allowlisted for write alpha: %s"), *Extension);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				FString DestinationPath = NormalizedContentPath(JsonString(OpParams, TEXT("destination_path"), JsonString(OpParams, TEXT("folder"))));
-				if (!ValidateGameContentPath(DestinationPath, Error))
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				UAssetImportTask* Task = NewObject<UAssetImportTask>();
-				Task->Filename = Filename;
-				Task->DestinationPath = DestinationPath;
-				Task->DestinationName = JsonString(OpParams, TEXT("name"), JsonString(OpParams, TEXT("asset_name")));
-				Task->bAutomated = true;
-				Task->bAsync = false;
-				Task->bSave = false;
-				Task->bReplaceExisting = JsonBool(OpParams, TEXT("replace_existing"), false);
-				TArray<UAssetImportTask*> Tasks;
-				Tasks.Add(Task);
-				FAssetToolsModule::GetModule().Get().ImportAssetTasks(Tasks);
-				const TArray<UObject*>& ImportedObjects = Task->GetObjects();
-				TArray<TSharedPtr<FJsonValue>> Imported;
-				for (UObject* ImportedObject : ImportedObjects)
-				{
-					if (ImportedObject)
-					{
-						Imported.Add(MakeShared<FJsonValueObject>(ObjectToJson(ImportedObject)));
-						AffectedAssets.AddUnique(ImportedObject->GetPathName());
-					}
-				}
-				const bool bImported = ImportedObjects.Num() > 0;
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetStringField(TEXT("file"), Filename);
-				Detail->SetStringField(TEXT("destination_path"), DestinationPath);
-				Detail->SetArrayField(TEXT("assets"), Imported);
-				AddOperationResult(OperationResults, Index, Type, bImported, bImported ? TEXT("Asset imported.") : TEXT("Import produced no assets."), Detail);
-				bAllOk &= bImported;
-				if (!bImported)
-				{
-					FailureMessage = TEXT("Import produced no assets.");
-					break;
-				}
-				bMutated = true;
 			}
 			else if (Type == TEXT("widget.create"))
 			{
