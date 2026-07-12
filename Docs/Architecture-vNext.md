@@ -28,7 +28,7 @@ Apply repeats all guards before mutation, creates a journal and file backups, us
 
 Backup/restore, touched-package save, transaction journal, and validation are independent Editor services. The Validator Registry currently selects Blueprint/AnimBlueprint compile, Animation/Montage skeleton/slot/segment checks, Material Instance parent checks, DataAsset checks, or a generic UObject validity fallback.
 
-Domain handlers own operation-specific preflight and mutation. Actor operations are the first fully migrated domain: Registry entries execute their own exact editor-world target resolution, typed property probe, and apply logic. The Bridge supplies transaction context and records the handler result; remaining legacy domains are being moved through the same boundary before Beta.
+Domain handlers own operation-specific preflight and mutation. Actor and Enhanced Input operations are fully migrated: Registry entries execute exact target/type/path checks, typed probes where applicable, and apply logic. The Bridge supplies transaction context, captures created-asset references, and records the handler result; remaining legacy domains are being moved through the same boundary before Beta.
 
 ## Runtime Path
 

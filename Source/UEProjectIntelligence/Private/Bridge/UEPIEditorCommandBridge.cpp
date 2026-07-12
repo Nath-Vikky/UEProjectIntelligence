@@ -38,6 +38,7 @@
 #include "Interfaces/IPv4/IPv4Address.h"
 #include "Interfaces/IPv4/IPv4Endpoint.h"
 #include "ImageUtils.h"
+#include "InputCoreTypes.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_ComponentBoundEvent.h"
 #include "K2Node_CustomEvent.h"
@@ -98,14 +99,6 @@
 #include "Blueprint/WidgetTree.h"
 #include "UObject/UnrealType.h"
 #include "UObject/UObjectIterator.h"
-
-#if UEPI_WITH_ENHANCED_INPUT
-#include "InputAction.h"
-#include "InputActionValue.h"
-#include "InputCoreTypes.h"
-#include "InputEditorModule.h"
-#include "InputMappingContext.h"
-#endif
 
 namespace UE::ProjectIntelligence
 {
@@ -1626,79 +1619,6 @@ namespace UE::ProjectIntelligence
 			return nullptr;
 		}
 
-#if UEPI_WITH_ENHANCED_INPUT
-		bool ParseInputActionValueType(const FString& RawType, EInputActionValueType& OutValueType, FString& OutError)
-		{
-			const FString Type = RawType.TrimStartAndEnd().ToLower();
-			if (Type.IsEmpty() || Type == TEXT("bool") || Type == TEXT("boolean") || Type == TEXT("digital"))
-			{
-				OutValueType = EInputActionValueType::Boolean;
-				return true;
-			}
-			if (Type == TEXT("axis1d") || Type == TEXT("float") || Type == TEXT("1d"))
-			{
-				OutValueType = EInputActionValueType::Axis1D;
-				return true;
-			}
-			if (Type == TEXT("axis2d") || Type == TEXT("vector2d") || Type == TEXT("2d"))
-			{
-				OutValueType = EInputActionValueType::Axis2D;
-				return true;
-			}
-			if (Type == TEXT("axis3d") || Type == TEXT("vector") || Type == TEXT("vector3d") || Type == TEXT("3d"))
-			{
-				OutValueType = EInputActionValueType::Axis3D;
-				return true;
-			}
-			OutError = FString::Printf(TEXT("Unsupported Enhanced Input action value type: %s"), *RawType);
-			return false;
-		}
-
-		UInputAction* LoadInputActionForEdit(const TSharedPtr<FJsonObject>& Params, FString& OutAssetPath, FString& OutError)
-		{
-			OutAssetPath = JsonString(Params, TEXT("action"), JsonString(Params, TEXT("input_action")));
-			if (OutAssetPath.IsEmpty())
-			{
-				OutError = TEXT("Enhanced Input operation requires params.action or params.input_action.");
-				return nullptr;
-			}
-			UInputAction* Action = LoadObject<UInputAction>(nullptr, *OutAssetPath);
-			if (!Action)
-			{
-				OutError = FString::Printf(TEXT("Failed to load InputAction: %s"), *OutAssetPath);
-				return nullptr;
-			}
-			return Action;
-		}
-
-		UInputMappingContext* LoadInputMappingContextForEdit(const TSharedPtr<FJsonObject>& Params, FString& OutAssetPath, FString& OutError)
-		{
-			OutAssetPath = JsonString(Params, TEXT("context"), JsonString(Params, TEXT("mapping_context"), JsonString(Params, TEXT("asset"))));
-			if (OutAssetPath.IsEmpty())
-			{
-				OutError = TEXT("Enhanced Input operation requires params.context, params.mapping_context, or params.asset.");
-				return nullptr;
-			}
-			UInputMappingContext* Context = LoadObject<UInputMappingContext>(nullptr, *OutAssetPath);
-			if (!Context)
-			{
-				OutError = FString::Printf(TEXT("Failed to load InputMappingContext: %s"), *OutAssetPath);
-				return nullptr;
-			}
-			return Context;
-		}
-
-		TSharedRef<FJsonObject> InputMappingToJson(const FEnhancedActionKeyMapping& Mapping)
-		{
-			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
-			Result->SetStringField(TEXT("action"), Mapping.Action ? Mapping.Action->GetPathName() : FString());
-			Result->SetStringField(TEXT("key"), Mapping.Key.ToString());
-			Result->SetNumberField(TEXT("trigger_count"), Mapping.Triggers.Num());
-			Result->SetNumberField(TEXT("modifier_count"), Mapping.Modifiers.Num());
-			return Result;
-		}
-#endif
-
 		void AddOperationResult(TArray<TSharedPtr<FJsonValue>>& OperationResults, int32 Index, const FString& Type, bool bOk, const FString& Message, const TSharedPtr<FJsonObject>& Detail = nullptr)
 		{
 			TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
@@ -2774,7 +2694,7 @@ namespace UE::ProjectIntelligence
 			}
 			TSharedPtr<FJsonObject> OpParams = JsonObjectField(Operation, TEXT("params"));
 			if (!OpParams.IsValid()) OpParams = Operation;
-			if (Type.StartsWith(TEXT("actor.")))
+			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")))
 			{
 				FUEPIEditContext Context;
 				Context.TransactionId = TransactionId;
@@ -2976,7 +2896,7 @@ namespace UE::ProjectIntelligence
 			{
 				OpParams = Operation;
 			}
-			if (Type.StartsWith(TEXT("actor.")))
+			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")))
 			{
 				FUEPIEditContext Context;
 				Context.TransactionId = TransactionId;
@@ -2991,6 +2911,17 @@ namespace UE::ProjectIntelligence
 					bAllOk = false;
 					FailureMessage = OperationResult.Message;
 					break;
+				}
+				if (Type == TEXT("input.create_action") || Type == TEXT("input.create_mapping_context"))
+				{
+					const TSharedPtr<FJsonObject> Asset = OperationResult.Result.IsValid() ? JsonObjectField(OperationResult.Result, TEXT("asset")) : nullptr;
+					const FString AssetPath = JsonString(Asset, TEXT("path"));
+					if (!AssetPath.IsEmpty())
+					{
+						AffectedAssets.AddUnique(AssetPath);
+						const FString OpId = OperationId(Operation);
+						if (!OpId.IsEmpty()) OperationAssets.Add(OpId, AssetPath);
+					}
 				}
 				bMutated = true;
 				continue;
@@ -4578,189 +4509,6 @@ namespace UE::ProjectIntelligence
 				AddOperationResult(OperationResults, Index, Type, true, bAlreadyBound ? TEXT("Button delegate was already bound.") : TEXT("Button delegate bound to a ComponentBoundEvent node."), Detail);
 				bMutated = true;
 			}
-#if UEPI_WITH_ENHANCED_INPUT
-			else if (Type == TEXT("input.create_action"))
-			{
-				if (!Settings->bAllowInputEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Enhanced Input write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				FString PackagePath;
-				FString AssetName;
-				if (!SplitDestinationPath(OpParams, TEXT("IA_UEPIAction"), PackagePath, AssetName, Error))
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				UInputAction_Factory* Factory = NewObject<UInputAction_Factory>();
-				Factory->InputActionClass = UInputAction::StaticClass();
-				UObject* NewAsset = FAssetToolsModule::GetModule().Get().CreateAsset(AssetName, PackagePath, UInputAction::StaticClass(), Factory, TEXT("UEPI"));
-				UInputAction* Action = Cast<UInputAction>(NewAsset);
-				if (!Action)
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Failed to create InputAction %s/%s."), *PackagePath, *AssetName);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				EInputActionValueType ValueType = EInputActionValueType::Boolean;
-				if (!ParseInputActionValueType(JsonString(OpParams, TEXT("value_type"), TEXT("bool")), ValueType, Error))
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				Action->Modify();
-				Action->ValueType = ValueType;
-				const FString Description = JsonString(OpParams, TEXT("description"));
-				if (!Description.IsEmpty())
-				{
-					Action->ActionDescription = FText::FromString(Description);
-				}
-				Action->PostEditChange();
-				Action->MarkPackageDirty();
-				AffectedAssets.AddUnique(Action->GetPathName());
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetObjectField(TEXT("asset"), ObjectToJson(Action));
-				Detail->SetStringField(TEXT("value_type"), StaticEnum<EInputActionValueType>()->GetNameStringByValue(static_cast<int64>(Action->ValueType)));
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("InputAction created."), Detail);
-				bMutated = true;
-			}
-			else if (Type == TEXT("input.create_mapping_context"))
-			{
-				if (!Settings->bAllowInputEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Enhanced Input write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				FString PackagePath;
-				FString AssetName;
-				if (!SplitDestinationPath(OpParams, TEXT("IMC_UEPIContext"), PackagePath, AssetName, Error))
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				UInputMappingContext_Factory* Factory = NewObject<UInputMappingContext_Factory>();
-				Factory->InputMappingContextClass = UInputMappingContext::StaticClass();
-				UObject* NewAsset = FAssetToolsModule::GetModule().Get().CreateAsset(AssetName, PackagePath, UInputMappingContext::StaticClass(), Factory, TEXT("UEPI"));
-				UInputMappingContext* Context = Cast<UInputMappingContext>(NewAsset);
-				if (!Context)
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Failed to create InputMappingContext %s/%s."), *PackagePath, *AssetName);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				Context->Modify();
-				const FString Description = JsonString(OpParams, TEXT("description"));
-				if (!Description.IsEmpty())
-				{
-					Context->ContextDescription = FText::FromString(Description);
-				}
-				Context->PostEditChange();
-				Context->MarkPackageDirty();
-				AffectedAssets.AddUnique(Context->GetPathName());
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetObjectField(TEXT("asset"), ObjectToJson(Context));
-				Detail->SetNumberField(TEXT("mapping_count"), Context->GetMappings().Num());
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("InputMappingContext created."), Detail);
-				bMutated = true;
-			}
-			else if (Type == TEXT("input.add_key_mapping") || Type == TEXT("input.remove_key_mapping"))
-			{
-				if (!Settings->bAllowInputEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Enhanced Input write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				FString ContextPath;
-				UInputMappingContext* Context = LoadInputMappingContextForEdit(OpParams, ContextPath, Error);
-				if (!Context)
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				FString ActionPath;
-				UInputAction* Action = LoadInputActionForEdit(OpParams, ActionPath, Error);
-				if (!Action)
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				const FString KeyName = JsonString(OpParams, TEXT("key"));
-				FKey Key(FName(*KeyName));
-				if (KeyName.IsEmpty() || !Key.IsValid())
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Enhanced Input key is invalid: %s"), *KeyName);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				const int32 BeforeCount = Context->GetMappings().Num();
-				Context->Modify();
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetStringField(TEXT("context"), Context->GetPathName());
-				Detail->SetStringField(TEXT("action"), Action->GetPathName());
-				Detail->SetStringField(TEXT("key"), Key.ToString());
-				Detail->SetNumberField(TEXT("mapping_count_before"), BeforeCount);
-				if (Type == TEXT("input.add_key_mapping"))
-				{
-					FEnhancedActionKeyMapping& Mapping = Context->MapKey(Action, Key);
-					Detail->SetObjectField(TEXT("mapping"), InputMappingToJson(Mapping));
-					Context->PostEditChange();
-					Context->MarkPackageDirty();
-					Detail->SetNumberField(TEXT("mapping_count_after"), Context->GetMappings().Num());
-					AddOperationResult(OperationResults, Index, Type, true, TEXT("Enhanced Input key mapping added."), Detail);
-					AffectedAssets.AddUnique(ContextPath);
-					bMutated = true;
-				}
-				else
-				{
-					Context->UnmapKey(Action, Key);
-					const int32 AfterCount = Context->GetMappings().Num();
-					const bool bRemoved = AfterCount < BeforeCount;
-					if (bRemoved)
-					{
-						Context->PostEditChange();
-						Context->MarkPackageDirty();
-						AffectedAssets.AddUnique(ContextPath);
-						bMutated = true;
-					}
-					Detail->SetNumberField(TEXT("mapping_count_after"), AfterCount);
-					AddOperationResult(OperationResults, Index, Type, bRemoved, bRemoved ? TEXT("Enhanced Input key mapping removed.") : TEXT("No matching Enhanced Input key mapping was removed."), Detail);
-					if (!bRemoved)
-					{
-						bAllOk = false;
-						FailureMessage = TEXT("No matching Enhanced Input key mapping was removed.");
-						break;
-					}
-				}
-			}
-#else
-			else if (Type.StartsWith(TEXT("input.")))
-			{
-				bAllOk = false;
-				FailureMessage = TEXT("Enhanced Input is not enabled for this project build.");
-				AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-				break;
-			}
-#endif
 			else
 			{
 				bAllOk = false;

@@ -2,6 +2,7 @@
 
 #include "HAL/PlatformMisc.h"
 #include "Operations/UEPIActorOperations.h"
+#include "Operations/UEPIInputOperations.h"
 
 namespace UE::ProjectIntelligence
 {
@@ -204,7 +205,9 @@ namespace UE::ProjectIntelligence
 		};
 		for (const FUEPIEditOperationDescriptor& Item : Builtins)
 		{
-			RegisterOperation(Item.Domain == TEXT("actor") ? MakeUEPIActorOperation(Item) : MakeShared<FUEPIRegisteredBridgeOperation>(Item));
+			if (Item.Domain == TEXT("actor")) RegisterOperation(MakeUEPIActorOperation(Item));
+			else if (Item.Domain == TEXT("input")) RegisterOperation(MakeUEPIInputOperation(Item));
+			else RegisterOperation(MakeShared<FUEPIRegisteredBridgeOperation>(Item));
 		}
 	}
 

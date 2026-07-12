@@ -13,7 +13,7 @@
 
 namespace UE::ProjectIntelligence
 {
-	namespace
+	namespace ActorOperationsPrivate
 	{
 		FString JsonString(const FJsonObject& Object, const TCHAR* Field, const FString& DefaultValue = FString())
 		{
@@ -308,6 +308,6 @@ namespace UE::ProjectIntelligence
 
 	TSharedRef<IUEPIEditOperation> MakeUEPIActorOperation(const FUEPIEditOperationDescriptor& Descriptor)
 	{
-		return MakeShared<FUEPIActorOperation>(Descriptor);
+		return MakeShared<ActorOperationsPrivate::FUEPIActorOperation>(Descriptor);
 	}
 }

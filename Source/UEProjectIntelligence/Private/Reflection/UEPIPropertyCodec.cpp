@@ -205,7 +205,7 @@ namespace UE::ProjectIntelligence
 			if (const FEnumProperty* Enum = CastField<FEnumProperty>(Property))
 			{
 				const int64 Raw = Enum->GetUnderlyingProperty()->GetSignedIntPropertyValue(ValuePtr);
-				return Enum->GetEnum() ? Enum->GetEnum()->GetNameStringByValue(Raw) : LexToString(Raw);
+				return Enum->GetEnum() ? Enum->GetEnum()->GetNameStringByValue(Raw) : ::LexToString(Raw);
 			}
 			FString Exported;
 			Property->ExportTextItem_Direct(Exported, ValuePtr, nullptr, nullptr, PPF_None);
