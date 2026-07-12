@@ -33,6 +33,7 @@
 - Online GasDemo Doctor passes 17/17 checks with all 64 Registry operations discoverable and write/save/PIE gates enabled.
 - The Third Person Golden transaction duplicated `BP_ThirdPersonGameMode`, added a variable, custom event, Print String, and real-pin connection, compiled and saved the touched asset, refreshed its Snapshot, produced a semantic diff, and completed UEPI-owned PIE start/stop after one approval.
 - Editor restart preserved the Golden package hash and the Saved Snapshot could read back the event, screen message, nodes, pins, and links; the old runtime ticket was rejected in the new Editor session.
+- The `2.0.0-alpha.4` Source and UE5.3.2 Win64 archives pass version/root/exclusion/hash inspection, and the extracted Source archive passes an isolated UE5.3.2 Win64 `BuildPlugin` build.
 
 ## Beta Blockers
 
