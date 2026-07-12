@@ -40,9 +40,13 @@
 - The LLMNPCDemo Golden exact-read the existing `DefaultGroup.DefaultSlot`, reflected writable MotionTemplate and runtime function schemas, created and persisted `MT_Wave_Asset_Manny_v1` after one approval, and returned a complete property diff.
 - Controlled PIE invoked `SubmitPublishedTemplate` with typed arguments, observed Waving enter `Playing` and finish `Completed`, captured a non-empty viewport, found no new runtime error log lines, and stopped cleanly. Editor restart preserved every configured property and 40 exact-session status samples had zero failures.
 - Golden hardening corrected `BlueprintReadOnly` reflection semantics, added parameterized allowlisted invoke and typed return values, made Bridge session JSON replacement atomic, and deferred new PrimaryDataAsset registration until same-plan identity properties are final.
+- The `2.0.0-beta.1` Source archive passes an isolated UE5.3.2 Win64 `BuildPlugin`; the Win64 archive contains that isolated DLL and passes root, version, exclusion, manifest, and checksum inspection.
+- A clean UEPIBlank reinstall from the Beta.1 Win64 archive starts beside LLMNPCDemo, binds its own Editor session, and passes online Doctor 17/17 with exact-project Bridge routing and all 64 operations.
 
-## Release Packaging Remaining
+## Beta.1 Release Gate
 
-- Produce and reinstall the next complete release zip containing the post-alpha.4 multi-project and rollback fixes; alpha.4 archive installation and isolated source `BuildPlugin` already pass.
+- All P0 Golden, routing, restart, rollback, isolated build, archive, and clean-install requirements in `DOCX/UEPINEXT.md` are complete.
+- Release artifacts and their checksums are recorded in `Docs/Releases/2.0.0-beta.1.md`.
+- Broader per-operation real-machine coverage continues after Beta and does not block this release.
 
-Do not create the `v2.0.0-beta.1` tag until Source/Win64 packaging, isolated `BuildPlugin`, archive inspection, and clean-project reinstall pass. Broader per-operation real-machine coverage continues after Beta and does not replace the P0 Golden matrix.
+The `v2.0.0-beta.1` tag may be created after this verification record is committed.
