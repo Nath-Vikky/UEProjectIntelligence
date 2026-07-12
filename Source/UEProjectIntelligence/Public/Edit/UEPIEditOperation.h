@@ -22,6 +22,8 @@ namespace UE::ProjectIntelligence
 		TArray<FString> AssetAllowList;
 		TMap<FString, FString> ResolvedAssets;
 		TMap<FString, UClass*> ResolvedAssetClasses;
+		TMap<FString, TSet<FName>> PlannedSkeletonSlots;
+		TMap<FString, FString> PlannedAssetSkeletons;
 		bool bDryRun = true;
 		bool bAllowSave = false;
 		bool bAllowDelete = false;

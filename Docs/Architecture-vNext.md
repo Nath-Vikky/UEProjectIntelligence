@@ -28,7 +28,7 @@ Apply repeats all guards before mutation, creates a journal and file backups, us
 
 Backup/restore, touched-package save, transaction journal, and validation are independent Editor services. The Validator Registry currently selects Blueprint/AnimBlueprint compile, Animation/Montage skeleton/slot/segment checks, Material Instance parent checks, DataAsset checks, or a generic UObject validity fallback.
 
-Domain handlers own operation-specific preflight and mutation. Actor, Content/Asset, Material, UMG, and Enhanced Input operations are fully migrated: Registry entries execute exact target/type/path checks, typed probes where applicable, and apply logic. The Bridge supplies transaction context, including planned asset classes, captures created-asset references, marks Blueprint validation targets, and records the handler result; Blueprint/Animation are the remaining legacy domains before Beta.
+Domain handlers own operation-specific preflight and mutation. Actor, Content/Asset, Material, UMG, Enhanced Input, and Animation Asset operations are fully migrated: Registry entries execute exact target/type/path checks, typed probes where applicable, and apply logic. The Bridge supplies transaction context, including planned asset classes, planned skeleton/slot state, captures created-asset references, marks validation targets, and records the handler result; Blueprint and AnimGraph are the remaining legacy graph domains before Beta.
 
 ## Runtime Path
 
