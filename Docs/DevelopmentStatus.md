@@ -1,6 +1,6 @@
 # UE Project Intelligence Development Status
 
-`main` is the experimental `2.0.0-alpha.3` vNext line for UE 5.3.2 and Codex.
+`main` is the experimental `2.0.0-alpha.4` vNext line for UE 5.3.2 and Codex.
 
 ## Implemented
 
@@ -19,6 +19,8 @@
 - Guarded Actor, Material Instance, scoped Content, UMG, and Enhanced Input operations behind the same project/session/plan/preflight/save/rollback pipeline.
 - Actor, Content/DataAsset/property, Material Instance/assignment/parameter, UMG WidgetTree/layout/delegate, Enhanced Input, Animation/Montage, Blueprint, and AnimGraph operations execute through concrete Registry handlers with domain-owned preflight; all legacy Bridge apply branches and fallback handlers have been removed.
 - Blueprint/AnimGraph preflight tracks same-plan variables, functions, components, graph nodes, and node references before the first mutation; Apply resolves the corresponding live objects for node creation, pin maintenance, typed properties, compile, validation, and touched-only save.
+- Operation descriptors separate write targets from read-only dependencies. Both participate in stale-plan fingerprints, while only write targets consume mutation budgets and enter backup, validation, save, refresh, and rollback sets.
+- Exact Blueprint reads traverse only structural containment relations, and Blueprint node schemas return stable/reflected real pin names without constructing unsafe transient graph nodes.
 - Transaction-bound UEPI-owned PIE status/start/stop/input/parameterless invoke/read/wait/assert and cleanup.
 - Project-local Codex setup script, machine-readable Doctor, public schemas, v2 contract snapshot, release packaging, architecture/safety/edit/runtime guides, and real-machine report templates.
 
@@ -28,13 +30,15 @@
 - Python package/tool compilation passes.
 - Snapshot MCP v2 synthetic regression is the required automated gate.
 - Offline GasDemo Doctor resolves the exact project binding, saved generation, MCP config, store access, and installed project plugins.
-- The `2.0.0-alpha.3` source and UE5.3.2 Win64 archives pass version/root/exclusion/hash inspection, and the extracted source archive passes an isolated UE5.3.2 Win64 `BuildPlugin` build.
+- Online GasDemo Doctor passes 17/17 checks with all 64 Registry operations discoverable and write/save/PIE gates enabled.
+- The Third Person Golden transaction duplicated `BP_ThirdPersonGameMode`, added a variable, custom event, Print String, and real-pin connection, compiled and saved the touched asset, refreshed its Snapshot, produced a semantic diff, and completed UEPI-owned PIE start/stop after one approval.
+- Editor restart preserved the Golden package hash and the Saved Snapshot could read back the event, screen message, nodes, pins, and links; the old runtime ticket was rejected in the new Editor session.
 
 ## Beta Blockers
 
-- Run and record the LLMNPCDemo, Third Person, blank-project, and two-project real-machine matrix.
+- Run and record the remaining LLMNPCDemo, blank-project, and two-project real-machine matrix. The Third Person Golden is recorded as passing.
 - Exercise every migrated write domain through Discover -> Preview -> one approval -> Apply -> Validate -> Save -> restart -> Diff/Rollback.
-- Complete and record the Blueprint/AnimGraph same-plan node creation and pin-connection Golden scenario on UE 5.3.2.
+- Complete and record the AnimGraph same-plan Slot/pose-link Golden scenario on UE 5.3.2.
 - Install the complete release zip in clean blank and Third Person projects, connect Codex, and record the resulting Doctor/Golden reports; the isolated source `BuildPlugin` gate already passes.
 
 The plugin remains honestly marked experimental alpha until these items pass. Do not create a `v2.x-beta` tag before that gate.

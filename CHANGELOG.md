@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.0-alpha.4
+
+- Fixed UE5.3.2 Editor startup crashes in global session-path hashing and hardened exact project/session routing before edit dispatch.
+- Added stable Blueprint node pin schemas without constructing transient graph nodes, and verified custom-event-to-PrintString connections with reflected real pins.
+- Restricted exact Blueprint traversal to structural containment relations so hard references cannot leak nodes from another Blueprint into the result.
+- Split operation write targets from read-only dependencies; fingerprints still protect source assets while backup, validation, save, refresh, and write budgets cover touched assets only.
+- Corrected transaction diffs to report duplicated and fingerprint-created assets and to avoid treating read-only dependencies as removed assets.
+- Verified one-approval Duplicate -> Blueprint edits -> compile -> save -> targeted refresh -> semantic diff -> UEPI-owned PIE start/stop on GasDemo, followed by Editor restart and offline readback.
+- Kept the release marked experimental alpha until the remaining LLMNPCDemo, blank-project, and two-project real-machine matrix passes.
+
 ## 2.0.0-alpha.3
 
 - Migrated Actor write operations from the Bridge apply branch into concrete Registry handlers with authoritative preflight and typed property diffs.
