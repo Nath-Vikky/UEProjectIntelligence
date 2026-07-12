@@ -363,7 +363,9 @@ bool UUEPIEditorSubsystem::RunTargetedSnapshotScan(const TArray<FString>& Target
 	CommitOptions.SessionId = LiveSessionId;
 	CommitOptions.SourceScanPath = Options.OutputPath;
 	CommitOptions.TargetObjectPaths = CleanTargets;
-	CommitOptions.bMergeWithExisting = bSavedMode;
+	// Targeted scans update one slice of the current view. Replacing live.json
+	// here evicts assets refreshed earlier in the same Editor session.
+	CommitOptions.bMergeWithExisting = true;
 
 	UE::ProjectIntelligence::FSnapshotCommitResult CommitResult;
 	if (!UE::ProjectIntelligence::FSnapshotStore::CommitProjectScan(Result, CommitOptions, CommitResult, ErrorText))
