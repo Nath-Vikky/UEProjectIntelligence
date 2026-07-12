@@ -2568,7 +2568,7 @@ namespace UE::ProjectIntelligence
 			}
 			TSharedPtr<FJsonObject> OpParams = JsonObjectField(Operation, TEXT("params"));
 			if (!OpParams.IsValid()) OpParams = Operation;
-			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")) || Type.StartsWith(TEXT("material.")) || Type.StartsWith(TEXT("content.")) || Type == TEXT("asset.set_properties"))
+			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")) || Type.StartsWith(TEXT("material.")) || Type.StartsWith(TEXT("content.")) || Type.StartsWith(TEXT("widget.")) || Type == TEXT("asset.set_properties"))
 			{
 				FUEPIEditContext Context;
 				Context.TransactionId = TransactionId;
@@ -2604,6 +2604,10 @@ namespace UE::ProjectIntelligence
 					const FString PlannedPath = JsonString(Preflight.Result, TEXT("asset_path")); const FString OpId = OperationId(Operation);
 					if (!OpId.IsEmpty() && !PlannedPath.IsEmpty()) PlannedAssetPaths.Add(OpId, PlannedPath);
 					if (Type == TEXT("content.create_asset")) { UClass* PlannedClass = LoadObject<UClass>(nullptr, *JsonString(Preflight.Result, TEXT("asset_class"))); if (!OpId.IsEmpty() && PlannedClass) PlannedAssetClasses.Add(OpId, PlannedClass); }
+				}
+				else if (Type == TEXT("widget.create") && Preflight.Result.IsValid())
+				{
+					const FString PlannedPath = JsonString(Preflight.Result, TEXT("asset_path")); const FString OpId = OperationId(Operation); if (!OpId.IsEmpty() && !PlannedPath.IsEmpty()) { PlannedAssetPaths.Add(OpId, PlannedPath); PlannedAssetClasses.Add(OpId, UWidgetBlueprint::StaticClass()); }
 				}
 				continue;
 			}
@@ -2740,7 +2744,7 @@ namespace UE::ProjectIntelligence
 			{
 				OpParams = Operation;
 			}
-			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")) || Type.StartsWith(TEXT("material.")) || Type.StartsWith(TEXT("content.")) || Type == TEXT("asset.set_properties"))
+			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")) || Type.StartsWith(TEXT("material.")) || Type.StartsWith(TEXT("content.")) || Type.StartsWith(TEXT("widget.")) || Type == TEXT("asset.set_properties"))
 			{
 				FUEPIEditContext Context;
 				Context.TransactionId = TransactionId;
@@ -2804,6 +2808,11 @@ namespace UE::ProjectIntelligence
 				{
 					const FString AssetPath = JsonString(OperationResult.Result, TEXT("asset")); if (!AssetPath.IsEmpty()) AffectedAssets.AddUnique(AssetPath);
 				}
+				else if (Type.StartsWith(TEXT("widget.")))
+				{
+					const TSharedPtr<FJsonObject> CreatedAsset = JsonObjectField(OperationResult.Result, TEXT("asset")); FString AssetPath = JsonString(CreatedAsset, TEXT("path")); if (AssetPath.IsEmpty()) AssetPath = JsonString(OperationResult.Result, TEXT("asset"));
+					if (!AssetPath.IsEmpty()) { AffectedAssets.AddUnique(AssetPath); if (UWidgetBlueprint* Touched = LoadObject<UWidgetBlueprint>(nullptr, *AssetPath)) TouchedBlueprints.Add(Touched); if (Type == TEXT("widget.create")) { const FString OpId = OperationId(Operation); if (!OpId.IsEmpty()) OperationAssets.Add(OpId, AssetPath); } }
+				}
 				if (Type != TEXT("content.save_assets")) bMutated = true;
 				continue;
 			}
@@ -2838,13 +2847,6 @@ namespace UE::ProjectIntelligence
 			else if (Type == TEXT("animgraph.disconnect_pose_pins")) Type = TEXT("blueprint.disconnect_pins");
 			else if (Type == TEXT("animgraph.remove_node")) Type = TEXT("blueprint.remove_node");
 			else if (Type == TEXT("animgraph.compile")) Type = TEXT("blueprint.compile");
-			else if (Type == TEXT("widget.add_widget"))
-			{
-				const FString WidgetClass = JsonString(OpParams, TEXT("widget_class"), JsonString(OpParams, TEXT("kind")));
-				if (WidgetClass.Contains(TEXT("TextBlock"), ESearchCase::IgnoreCase) || WidgetClass.Equals(TEXT("text"), ESearchCase::IgnoreCase)) Type = TEXT("widget.add_text");
-				else if (WidgetClass.Contains(TEXT("Button"), ESearchCase::IgnoreCase) || WidgetClass.Equals(TEXT("button"), ESearchCase::IgnoreCase)) Type = TEXT("widget.add_button");
-			}
-
 			if (!Operation.IsValid() || Type.IsEmpty())
 			{
 				bAllOk = false;
@@ -3611,308 +3613,6 @@ namespace UE::ProjectIntelligence
 					FailureMessage = TEXT("Blueprint compile returned errors.");
 					break;
 				}
-			}
-			else if (Type == TEXT("widget.create"))
-			{
-				if (!Settings->bAllowUMGEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("UMG write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				FString PackagePath;
-				FString AssetName;
-				if (!SplitDestinationPath(OpParams, TEXT("WBP_UEPIWidget"), PackagePath, AssetName, Error))
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				UWidgetBlueprintFactory* Factory = NewObject<UWidgetBlueprintFactory>();
-				Factory->BlueprintType = BPTYPE_Normal;
-				Factory->ParentClass = UUserWidget::StaticClass();
-				UObject* NewAsset = FAssetToolsModule::GetModule().Get().CreateAsset(AssetName, PackagePath, UWidgetBlueprint::StaticClass(), Factory, TEXT("UEPI"));
-				UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(NewAsset);
-				if (!WidgetBlueprint)
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Failed to create Widget Blueprint %s/%s."), *PackagePath, *AssetName);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				UCanvasPanel* RootCanvas = EnsureCanvasRoot(WidgetBlueprint);
-				if (!RootCanvas)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Widget Blueprint was created but a CanvasPanel root could not be initialized.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
-				AffectedAssets.AddUnique(WidgetBlueprint->GetPathName());
-				TouchedBlueprints.Add(WidgetBlueprint);
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetObjectField(TEXT("asset"), ObjectToJson(WidgetBlueprint));
-				Detail->SetObjectField(TEXT("root_widget"), WidgetToJson(RootCanvas));
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("Widget Blueprint created with a CanvasPanel root."), Detail);
-				bMutated = true;
-			}
-			else if (Type == TEXT("widget.add_text") || Type == TEXT("widget.add_button"))
-			{
-				if (!Settings->bAllowUMGEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("UMG write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				UWidgetBlueprint* WidgetBlueprint = LoadWidgetBlueprintForEdit(OpParams, AssetPath, Error);
-				if (!WidgetBlueprint)
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				if (!WidgetBlueprint->WidgetTree || !WidgetBlueprint->WidgetTree->RootWidget)
-				{
-					if (!EnsureCanvasRoot(WidgetBlueprint))
-					{
-						bAllOk = false;
-						FailureMessage = TEXT("Widget Blueprint has no root widget and a CanvasPanel root could not be initialized.");
-						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-						break;
-					}
-				}
-				UPanelWidget* Parent = ResolveWidgetParent(WidgetBlueprint, OpParams, Error);
-				if (!Parent)
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				const FString WidgetName = JsonString(OpParams, TEXT("name"), Type == TEXT("widget.add_text") ? TEXT("UEPIText") : TEXT("UEPIButton"));
-				if (WidgetBlueprint->WidgetTree->FindWidget(FName(*WidgetName)))
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Widget already exists in WidgetTree: %s"), *WidgetName);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-
-				WidgetBlueprint->Modify();
-				WidgetBlueprint->WidgetTree->Modify();
-				Parent->Modify();
-				if (Type == TEXT("widget.add_text"))
-				{
-					UTextBlock* TextBlock = WidgetBlueprint->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), FName(*WidgetName));
-					if (!TextBlock)
-					{
-						bAllOk = false;
-						FailureMessage = TEXT("Failed to construct UTextBlock.");
-						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-						break;
-					}
-					TextBlock->SetText(FText::FromString(JsonString(OpParams, TEXT("text"), TEXT("Text"))));
-					UPanelSlot* Slot = AddWidgetToParent(Parent, TextBlock);
-					if (!Slot)
-					{
-						bAllOk = false;
-						FailureMessage = TEXT("Failed to add TextBlock to parent panel.");
-						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-						break;
-					}
-					ApplyCanvasSlotParams(TextBlock, OpParams);
-					FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
-					AffectedAssets.AddUnique(AssetPath);
-					TouchedBlueprints.Add(WidgetBlueprint);
-					TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-					Detail->SetStringField(TEXT("asset"), WidgetBlueprint->GetPathName());
-					Detail->SetObjectField(TEXT("widget"), WidgetToJson(TextBlock));
-					AddOperationResult(OperationResults, Index, Type, true, TEXT("TextBlock widget added."), Detail);
-				}
-				else
-				{
-					UButton* Button = WidgetBlueprint->WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), FName(*WidgetName));
-					if (!Button)
-					{
-						bAllOk = false;
-						FailureMessage = TEXT("Failed to construct UButton.");
-						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-						break;
-					}
-					UPanelSlot* Slot = AddWidgetToParent(Parent, Button);
-					if (!Slot)
-					{
-						bAllOk = false;
-						FailureMessage = TEXT("Failed to add Button to parent panel.");
-						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-						break;
-					}
-					UTextBlock* LabelBlock = nullptr;
-					const FString LabelText = JsonString(OpParams, TEXT("text"), JsonString(OpParams, TEXT("label")));
-					if (!LabelText.IsEmpty())
-					{
-						const FString LabelName = WidgetName + TEXT("_Label");
-						LabelBlock = WidgetBlueprint->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), FName(*LabelName));
-						if (LabelBlock)
-						{
-							LabelBlock->SetText(FText::FromString(LabelText));
-							Button->SetContent(LabelBlock);
-						}
-					}
-					ApplyCanvasSlotParams(Button, OpParams);
-					FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
-					AffectedAssets.AddUnique(AssetPath);
-					TouchedBlueprints.Add(WidgetBlueprint);
-					TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-					Detail->SetStringField(TEXT("asset"), WidgetBlueprint->GetPathName());
-					Detail->SetObjectField(TEXT("widget"), WidgetToJson(Button));
-					if (LabelBlock)
-					{
-						Detail->SetObjectField(TEXT("label_widget"), WidgetToJson(LabelBlock));
-					}
-					AddOperationResult(OperationResults, Index, Type, true, TEXT("Button widget added."), Detail);
-				}
-				bMutated = true;
-			}
-			else if (Type == TEXT("widget.set_slot"))
-			{
-				if (!Settings->bAllowUMGEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("UMG write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				UWidgetBlueprint* WidgetBlueprint = LoadWidgetBlueprintForEdit(OpParams, AssetPath, Error);
-				if (!WidgetBlueprint || !WidgetBlueprint->WidgetTree)
-				{
-					bAllOk = false;
-					FailureMessage = WidgetBlueprint ? TEXT("Widget Blueprint has no WidgetTree.") : Error;
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				const FString WidgetName = JsonString(OpParams, TEXT("widget_name"), JsonString(OpParams, TEXT("name")));
-				UWidget* Widget = WidgetName.IsEmpty() ? nullptr : WidgetBlueprint->WidgetTree->FindWidget(FName(*WidgetName));
-				if (!Widget)
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Widget was not found in WidgetTree: %s"), *WidgetName);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				if (!Cast<UCanvasPanelSlot>(Widget->Slot))
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("widget.set_slot currently supports CanvasPanelSlot only: %s"), *WidgetName);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				WidgetBlueprint->Modify();
-				Widget->Modify();
-				Widget->Slot->Modify();
-				ApplyCanvasSlotParams(Widget, OpParams);
-				FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
-				AffectedAssets.AddUnique(AssetPath);
-				TouchedBlueprints.Add(WidgetBlueprint);
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetStringField(TEXT("asset"), WidgetBlueprint->GetPathName());
-				Detail->SetObjectField(TEXT("widget"), WidgetToJson(Widget));
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("Widget CanvasPanelSlot updated."), Detail);
-				bMutated = true;
-			}
-			else if (Type == TEXT("widget.bind_button_to_custom_event"))
-			{
-				if (!Settings->bAllowUMGEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("UMG write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				UWidgetBlueprint* WidgetBlueprint = LoadWidgetBlueprintForEdit(OpParams, AssetPath, Error);
-				if (!WidgetBlueprint || !WidgetBlueprint->WidgetTree)
-				{
-					bAllOk = false;
-					FailureMessage = WidgetBlueprint ? TEXT("Widget Blueprint has no WidgetTree.") : Error;
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				const FString ButtonName = JsonString(OpParams, TEXT("button"), JsonString(OpParams, TEXT("button_name"), JsonString(OpParams, TEXT("widget_name"), JsonString(OpParams, TEXT("name")))));
-				UButton* Button = ButtonName.IsEmpty() ? nullptr : WidgetBlueprint->WidgetTree->FindWidget<UButton>(FName(*ButtonName));
-				if (!Button)
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Button widget was not found in WidgetTree: %s"), *ButtonName);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				const FName DelegateName(*JsonString(OpParams, TEXT("delegate"), JsonString(OpParams, TEXT("event"), TEXT("OnClicked"))));
-				if (DelegateName.IsNone() || !FindFProperty<FMulticastDelegateProperty>(Button->GetClass(), DelegateName))
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Button delegate was not found: %s"), *DelegateName.ToString());
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-
-				WidgetBlueprint->Modify();
-				Button->Modify();
-				Button->bIsVariable = true;
-				FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
-
-				FObjectProperty* ComponentProperty = FindWidgetObjectProperty(WidgetBlueprint, Button);
-				if (!ComponentProperty)
-				{
-					TSharedRef<FJsonObject> CompileResult = CompileBlueprintToJson(WidgetBlueprint);
-					CompileResults.Add(MakeShared<FJsonValueObject>(CompileResult));
-					if (!CompileResult->GetBoolField(TEXT("ok")))
-					{
-						bAllOk = false;
-						FailureMessage = FString::Printf(TEXT("Widget Blueprint compile failed before binding %s.%s."), *ButtonName, *DelegateName.ToString());
-						AddOperationResult(OperationResults, Index, Type, false, FailureMessage, CompileResult);
-						break;
-					}
-					ComponentProperty = FindWidgetObjectProperty(WidgetBlueprint, Button);
-				}
-				if (!ComponentProperty)
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Generated widget variable property was not found for button: %s"), *ButtonName);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-
-				const UK2Node_ComponentBoundEvent* ExistingNode = FKismetEditorUtilities::FindBoundEventForComponent(WidgetBlueprint, DelegateName, ComponentProperty->GetFName());
-				const bool bAlreadyBound = ExistingNode != nullptr;
-				if (!ExistingNode)
-				{
-					FKismetEditorUtilities::CreateNewBoundEventForClass(Button->GetClass(), DelegateName, WidgetBlueprint, ComponentProperty);
-					ExistingNode = FKismetEditorUtilities::FindBoundEventForComponent(WidgetBlueprint, DelegateName, ComponentProperty->GetFName());
-				}
-				if (!ExistingNode)
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Failed to create bound event node for %s.%s."), *ButtonName, *DelegateName.ToString());
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-
-				FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
-				AffectedAssets.AddUnique(AssetPath);
-				TouchedBlueprints.Add(WidgetBlueprint);
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetStringField(TEXT("asset"), WidgetBlueprint->GetPathName());
-				Detail->SetStringField(TEXT("button"), ButtonName);
-				Detail->SetStringField(TEXT("delegate"), DelegateName.ToString());
-				Detail->SetBoolField(TEXT("already_bound"), bAlreadyBound);
-				Detail->SetObjectField(TEXT("node"), NodeToJson(ExistingNode, ExistingNode->GetGraph()));
-				AddOperationResult(OperationResults, Index, Type, true, bAlreadyBound ? TEXT("Button delegate was already bound.") : TEXT("Button delegate bound to a ComponentBoundEvent node."), Detail);
-				bMutated = true;
 			}
 			else
 			{

@@ -5,6 +5,7 @@
 #include "Operations/UEPIContentOperations.h"
 #include "Operations/UEPIInputOperations.h"
 #include "Operations/UEPIMaterialOperations.h"
+#include "Operations/UEPIWidgetOperations.h"
 
 namespace UE::ProjectIntelligence
 {
@@ -211,6 +212,7 @@ namespace UE::ProjectIntelligence
 			else if (Item.Domain == TEXT("input")) RegisterOperation(MakeUEPIInputOperation(Item));
 			else if (Item.Domain == TEXT("material")) RegisterOperation(MakeUEPIMaterialOperation(Item));
 			else if (Item.Domain == TEXT("content") || Item.Name == TEXT("asset.set_properties")) RegisterOperation(MakeUEPIContentOperation(Item));
+			else if (Item.Domain == TEXT("umg")) RegisterOperation(MakeUEPIWidgetOperation(Item));
 			else RegisterOperation(MakeShared<FUEPIRegisteredBridgeOperation>(Item));
 		}
 	}
