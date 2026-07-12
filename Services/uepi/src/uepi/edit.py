@@ -226,9 +226,14 @@ def _runtime_ticket(store: SnapshotStore, plan: dict[str, Any]) -> dict[str, Any
     return ticket
 
 
-def discover(store: SnapshotStore) -> dict[str, Any]:
+def discover(store: SnapshotStore, expected_editor_session_id: str | None = None) -> dict[str, Any]:
     identity = _identity(store)
-    catalog, diagnostics, bridge_error = load_catalog(store, identity, refresh=True)
+    catalog, diagnostics, bridge_error = load_catalog(
+        store,
+        identity,
+        refresh=True,
+        expected_editor_session_id=expected_editor_session_id,
+    )
     operations = list((catalog or {}).get("operations") or [])
     return _response(
         store,
@@ -247,9 +252,21 @@ def discover(store: SnapshotStore) -> dict[str, Any]:
     )
 
 
-def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None = None, evidence: list[Any] | None = None, verification_plan: dict[str, Any] | None = None) -> dict[str, Any]:
+def preview(
+    store: SnapshotStore,
+    intent: str = "",
+    operations: list[Any] | None = None,
+    evidence: list[Any] | None = None,
+    verification_plan: dict[str, Any] | None = None,
+    expected_editor_session_id: str | None = None,
+) -> dict[str, Any]:
     identity = _identity(store)
-    catalog, diagnostics, bridge_error = load_catalog(store, identity, refresh=True)
+    catalog, diagnostics, bridge_error = load_catalog(
+        store,
+        identity,
+        refresh=True,
+        expected_editor_session_id=expected_editor_session_id,
+    )
     descriptors = operation_map(catalog)
     if not catalog:
         blocking = {"severity": "error", "blocking": True, "code": "UEPI_EDIT_CATALOG_UNAVAILABLE", "message": "Preview requires the exact-project Editor Operation Registry.", "phase": "preview", "retryable": True, "recoverable": True}
@@ -307,7 +324,13 @@ def preview(store: SnapshotStore, intent: str = "", operations: list[Any] | None
             elif action in {"read", "wait", "assert"} and (not step.get("object_path") or not step.get("property")):
                 diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_READ_NOT_APPROVED", "message": f"Read/assert step {step_index} requires object_path and property.", "phase": "preview", "retryable": False, "recoverable": True})
     affected = sorted(set(affected))
-    status = resolve_status(store, _state(store), identity, probe_bridge=True)
+    status = resolve_status(
+        store,
+        _state(store),
+        identity,
+        probe_bridge=True,
+        expected_editor_session_id=expected_editor_session_id,
+    )
     session_id = str(status["editor"].get("session_id") or "")
     if not session_id:
         diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_EDITOR_SESSION_REQUIRED", "message": "Preview for a writable plan requires an exact live Editor session.", "phase": "preview", "retryable": True, "recoverable": True})

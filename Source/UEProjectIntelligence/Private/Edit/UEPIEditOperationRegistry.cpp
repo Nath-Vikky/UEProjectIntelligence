@@ -1,6 +1,6 @@
 #include "Edit/UEPIEditOperationRegistry.h"
 
-#include "HAL/PlatformMisc.h"
+#include "Common/UEPIHash.h"
 #include "Operations/UEPIActorOperations.h"
 #include "Operations/UEPIAnimationOperations.h"
 #include "Operations/UEPIBlueprintOperations.h"
@@ -102,12 +102,8 @@ namespace UE::ProjectIntelligence
 			Canonical += FString::Printf(TEXT("validation=%s|idempotency=%s\n"), *Item.ValidationMode, *Item.IdempotencyBehavior);
 		}
 		FTCHARToUTF8 Utf8(*Canonical);
-		FSHA256Signature Signature;
-		if (!FPlatformMisc::GetSHA256Signature(Utf8.Get(), static_cast<uint32>(Utf8.Length()), Signature))
-		{
-			return FString();
-		}
-		return FString::Printf(TEXT("sha256:%s"), *Signature.ToString().ToLower());
+		const FString Digest = Sha256Hex(Utf8.Get(), static_cast<uint64>(Utf8.Length()));
+		return Digest.IsEmpty() ? FString() : TEXT("sha256:") + Digest;
 	}
 
 	void FUEPIEditOperationRegistry::EnsureBuiltinsRegistered()

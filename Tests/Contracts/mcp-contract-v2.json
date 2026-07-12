@@ -1,6 +1,6 @@
 {
   "schema_version": "uepi.mcp-contract-snapshot.v2",
-  "captured_at_utc": "2026-07-11T13:44:26.393934Z",
+  "captured_at_utc": "2026-07-12T01:30:16.400995Z",
   "uepi_version": "2.0.0.dev0",
   "profiles": {
     "readonly": [
@@ -1569,7 +1569,14 @@
       "description": "Discover the experimental UEPI edit operation catalog without modifying Unreal assets.",
       "inputSchema": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          }
+        }
       }
     },
     {
@@ -1578,6 +1585,12 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
           "intent": {
             "type": "string"
           },
@@ -1592,6 +1605,9 @@
             "items": {
               "type": "object"
             }
+          },
+          "verification_plan": {
+            "type": "object"
           }
         }
       }
@@ -1602,6 +1618,12 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
           "transaction_id": {
             "type": "string"
           },
@@ -1629,6 +1651,12 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
           "transaction_id": {
             "type": "string"
           }
@@ -1641,6 +1669,12 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "expected_project_file": {
+            "type": "string"
+          },
+          "expected_editor_session_id": {
+            "type": "string"
+          },
           "transaction_id": {
             "type": "string"
           }

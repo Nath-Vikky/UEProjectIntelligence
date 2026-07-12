@@ -81,6 +81,23 @@ namespace UE::ProjectIntelligence
 			return NormalizeObjectPath(Path);
 		}
 
+		UBlueprint* ResolveBlueprint(const FUEPIEditContext& Context, const FJsonObject& Params)
+		{
+			if (UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *ResolveAsset(Context, Params)))
+			{
+				return Blueprint;
+			}
+			const FString Ref = ReferenceId(Params, TEXT("asset"));
+			if (!Ref.IsEmpty() && Context.ExecutionState)
+			{
+				if (UObject* const* Probe = Context.ExecutionState->ObjectRefs.Find(Ref))
+				{
+					return Cast<UBlueprint>(*Probe);
+				}
+			}
+			return nullptr;
+		}
+
 		FString EffectiveType(const FString& RegisteredType, const FJsonObject& Params)
 		{
 			if (RegisteredType == TEXT("blueprint.add_node"))
@@ -289,7 +306,7 @@ namespace UE::ProjectIntelligence
 			virtual FUEPIEditResult Preview(const FUEPIEditContext& Context, const FJsonObject& Params) override
 			{
 				if (!Context.bAllowBlueprintEdits) return Failure(TEXT("UEPI_EDIT_CAPABILITY_DISABLED"), TEXT("Blueprint edits are disabled in UEPI Project Settings."));
-				const FString AssetPath = ResolveAsset(Context, Params); UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *AssetPath); if (!Blueprint) return Failure(TEXT("UEPI_EDIT_ASSET_NOT_FOUND"), FString::Printf(TEXT("Failed to load Blueprint asset: %s"), *AssetPath));
+				const FString AssetPath = ResolveAsset(Context, Params); UBlueprint* Blueprint = ResolveBlueprint(Context, Params); if (!Blueprint) return Failure(TEXT("UEPI_EDIT_ASSET_NOT_FOUND"), FString::Printf(TEXT("Failed to load Blueprint asset or same-plan Blueprint probe: %s"), *AssetPath));
 				const FString Type = EffectiveType(Descriptor.Name, Params); if (Descriptor.Name == TEXT("blueprint.add_node")) { const FString Kind = JsonString(Params, TEXT("kind")).ToLower(); if (!(Kind == TEXT("custom_event") || Kind == TEXT("function_call") || Kind == TEXT("variable_get") || Kind == TEXT("variable_set") || Kind == TEXT("branch") || Kind == TEXT("print_string") || Kind == TEXT("make_struct") || Kind == TEXT("input_key"))) return Failure(TEXT("UEPI_EDIT_OPERATION_UNSUPPORTED"), FString::Printf(TEXT("Unsupported blueprint.add_node kind: %s"), *Kind)); }
 				FString Error; UEdGraph* Graph = NeedsGraph(Type) ? ResolveGraph(Blueprint, Params, Error) : nullptr; if (NeedsGraph(Type) && !Graph) return Failure(TEXT("UEPI_EDIT_GRAPH_NOT_FOUND"), Error);
 

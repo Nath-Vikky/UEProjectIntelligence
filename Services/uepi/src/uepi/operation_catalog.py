@@ -20,11 +20,24 @@ def _load(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def load_catalog(store: SnapshotStore, identity: dict[str, Any], *, refresh: bool = True) -> tuple[dict[str, Any] | None, list[dict[str, Any]], dict[str, Any] | None]:
+def load_catalog(
+    store: SnapshotStore,
+    identity: dict[str, Any],
+    *,
+    refresh: bool = True,
+    expected_editor_session_id: str | None = None,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], dict[str, Any] | None]:
     diagnostics: list[dict[str, Any]] = []
     bridge_error: dict[str, Any] | None = None
     if refresh:
-        response = call_bridge(store, "edit.discover", {}, timeout=2.0, expected_identity=identity)
+        response = call_bridge(
+            store,
+            "edit.discover",
+            {},
+            timeout=2.0,
+            expected_identity=identity,
+            expected_editor_session_id=expected_editor_session_id,
+        )
         if response.get("ok") and isinstance(response.get("result"), dict):
             catalog = dict(response["result"])
             catalog["project_binding_id"] = identity.get("project_binding_id")

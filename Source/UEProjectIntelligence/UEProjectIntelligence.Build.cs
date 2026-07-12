@@ -52,6 +52,8 @@ public class UEProjectIntelligence : ModuleRules
 			}
 			);
 
+		AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenSSL");
+
 		AddOptionalReader(Target, "EnhancedInput", "UEPI_WITH_ENHANCED_INPUT", "EnhancedInput", "InputEditor");
 		AddOptionalReader(Target, "CommonUI", "UEPI_WITH_COMMON_UI", "CommonInput", "CommonUI", "EnhancedInput");
 		AddOptionalReader(Target, "GameplayAbilities", "UEPI_WITH_GAMEPLAY_ABILITIES", "GameplayAbilities", "GameplayTags", "GameplayTasks");
@@ -90,9 +92,48 @@ public class UEProjectIntelligence : ModuleRules
 
 		foreach (string DescriptorPath in ProjectDescriptorPaths(Target))
 		{
-			if (DescriptorEnablesPlugin(DescriptorPath, PluginName))
+			bool? DescriptorState = DescriptorPluginState(DescriptorPath, PluginName);
+			if (DescriptorState.HasValue)
 			{
-				return true;
+				return DescriptorState.Value;
+			}
+		}
+
+		return ProjectReferencesPlugin(Target, PluginName);
+	}
+
+	private bool ProjectReferencesPlugin(ReadOnlyTargetRules Target, string PluginName)
+	{
+		if (Target.ProjectFile == null)
+		{
+			return false;
+		}
+
+		string ProjectDirectory = Target.ProjectFile.Directory.FullName;
+		foreach (string RelativeRoot in new string[] { "Config", "Source" })
+		{
+			string SearchRoot = Path.Combine(ProjectDirectory, RelativeRoot);
+			if (!Directory.Exists(SearchRoot))
+			{
+				continue;
+			}
+
+			foreach (string FilePath in Directory.EnumerateFiles(SearchRoot, "*", SearchOption.AllDirectories))
+			{
+				string Extension = Path.GetExtension(FilePath);
+				if (!Extension.Equals(".ini", StringComparison.OrdinalIgnoreCase) &&
+					!Extension.Equals(".cs", StringComparison.OrdinalIgnoreCase) &&
+					!Extension.Equals(".h", StringComparison.OrdinalIgnoreCase) &&
+					!Extension.Equals(".hpp", StringComparison.OrdinalIgnoreCase) &&
+					!Extension.Equals(".cpp", StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				if (File.ReadAllText(FilePath).IndexOf(PluginName, StringComparison.OrdinalIgnoreCase) >= 0)
+				{
+					return true;
+				}
 			}
 		}
 
@@ -107,18 +148,19 @@ public class UEProjectIntelligence : ModuleRules
 		}
 	}
 
-	private bool DescriptorEnablesPlugin(string DescriptorPath, string PluginName)
+	private bool? DescriptorPluginState(string DescriptorPath, string PluginName)
 	{
 		string Text = File.ReadAllText(DescriptorPath);
 		string PluginObjectPattern = "\\{[^{}]*\"Name\"\\s*:\\s*\"" + Regex.Escape(PluginName) + "\"[^{}]*\\}";
 		foreach (Match Match in Regex.Matches(Text, PluginObjectPattern, RegexOptions.IgnoreCase | RegexOptions.Singleline))
 		{
-			if (Regex.IsMatch(Match.Value, "\"Enabled\"\\s*:\\s*true", RegexOptions.IgnoreCase))
+			Match EnabledMatch = Regex.Match(Match.Value, "\"Enabled\"\\s*:\\s*(true|false)", RegexOptions.IgnoreCase);
+			if (EnabledMatch.Success)
 			{
-				return true;
+				return EnabledMatch.Groups[1].Value.Equals("true", StringComparison.OrdinalIgnoreCase);
 			}
 		}
 
-		return false;
+		return null;
 	}
 }

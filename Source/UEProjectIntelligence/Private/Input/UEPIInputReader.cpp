@@ -209,6 +209,8 @@ TSharedRef<FJsonObject> MappingContextSnapshot(
 	Object->SetArrayField(TEXT("mappings"), MappingValues);
 	return Object;
 }
+}
+
 bool FInputReader::AppendInputAsset(
 	UObject& Asset,
 	const FString& ProjectId,

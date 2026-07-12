@@ -56,6 +56,17 @@ def read_schema(properties: dict[str, Any], required: list[str] | None = None) -
     return object_schema({**COMMON_READ_PROPERTIES, **properties}, required)
 
 
+def guarded_edit_schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
+    return object_schema(
+        {
+            "expected_project_file": {"type": "string"},
+            "expected_editor_session_id": {"type": "string"},
+            **properties,
+        },
+        required,
+    )
+
+
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_status",
@@ -270,12 +281,12 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_edit_discover",
         "description": "Discover the experimental UEPI edit operation catalog without modifying Unreal assets.",
-        "inputSchema": object_schema({}),
+        "inputSchema": guarded_edit_schema({}),
     },
     {
         "name": "uepi_edit_preview",
         "description": "Create a dry-run UEPI edit operation plan without modifying Unreal assets.",
-        "inputSchema": object_schema(
+        "inputSchema": guarded_edit_schema(
             {
                 "intent": {"type": "string"},
                 "operations": {"type": "array", "items": {"type": "object"}},
@@ -287,7 +298,7 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_edit_apply",
         "description": "Apply an approved UEPI edit plan through the live editor bridge when preview and approval gates pass.",
-        "inputSchema": object_schema(
+        "inputSchema": guarded_edit_schema(
             {
                 "transaction_id": {"type": "string"},
                 "plan_hash": {"type": "string"},
@@ -300,12 +311,12 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_edit_validate",
         "description": "Validate an applied UEPI edit transaction through the optional live editor bridge.",
-        "inputSchema": object_schema({"transaction_id": {"type": "string"}}),
+        "inputSchema": guarded_edit_schema({"transaction_id": {"type": "string"}}),
     },
     {
         "name": "uepi_edit_rollback",
         "description": "Rollback the last applied UEPI edit transaction through the optional live editor bridge.",
-        "inputSchema": object_schema({"transaction_id": {"type": "string"}}),
+        "inputSchema": guarded_edit_schema({"transaction_id": {"type": "string"}}),
     },
 ]
 
@@ -388,6 +399,32 @@ class UEPIMCPServer:
                     value["result"] = None
         return tool_response(apply_response_options(value, arguments))
 
+    def _edit_guard(self, engine: Any, name: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
+        diagnostics = project_guard_diagnostics(
+            engine.identity,
+            expected_project_file=arguments.get("expected_project_file"),
+        )
+        expected_session = str(arguments.get("expected_editor_session_id") or "") or None
+        resolved = resolve_status(
+            engine.store,
+            engine.state,
+            engine.identity,
+            probe_bridge=False,
+            expected_editor_session_id=expected_session,
+        )
+        diagnostics.extend(resolved["diagnostics"])
+        blocking = next((item for item in diagnostics if item.get("blocking")), None)
+        if not blocking:
+            return None
+        response = engine._error(
+            str(blocking.get("code") or "UEPI_EDIT_GUARD_FAILED"),
+            str(blocking.get("message") or "The edit request failed its project/session guard."),
+            diagnostics=diagnostics,
+            tool=name,
+            operation="guard",
+        )
+        return tool_response(apply_response_options(response, arguments))
+
     def initialize(self) -> dict[str, Any]:
         capabilities: dict[str, Any] = {"tools": {"listChanged": False}}
         if self.args.tool_profile == "full":
@@ -415,6 +452,10 @@ class UEPIMCPServer:
         try:
             engine = self._engine()
             self._current_engine = engine
+            if name.startswith("uepi_edit_"):
+                guarded = self._edit_guard(engine, name, arguments)
+                if guarded is not None:
+                    return guarded
             if name == "uepi_status":
                 return self._read_result(engine.status(expected_project_file=arguments.get("expected_project_file"), expected_editor_session_id=arguments.get("expected_editor_session_id")), arguments)
             if name == "uepi_overview":
@@ -508,33 +549,42 @@ class UEPIMCPServer:
                 return self._read_result(runtime.execute(engine, arguments), arguments)
             if profile_includes_edit_tools(self.args.tool_profile):
                 if name == "uepi_edit_discover":
-                    return tool_response(edit.discover(engine.store))
+                    return self._read_result(
+                        edit.discover(
+                            engine.store,
+                            expected_editor_session_id=str(arguments.get("expected_editor_session_id") or "") or None,
+                        ),
+                        arguments,
+                    )
                 if name == "uepi_edit_preview":
                     operations = arguments.get("operations")
                     evidence = arguments.get("evidence")
-                    return tool_response(
+                    return self._read_result(
                         edit.preview(
                             engine.store,
                             intent=str(arguments.get("intent") or ""),
                             operations=operations if isinstance(operations, list) else [],
                             evidence=evidence if isinstance(evidence, list) else [],
                             verification_plan=arguments.get("verification_plan") if isinstance(arguments.get("verification_plan"), dict) else None,
-                        )
+                            expected_editor_session_id=str(arguments.get("expected_editor_session_id") or "") or None,
+                        ),
+                        arguments,
                     )
                 if name == "uepi_edit_apply":
-                    return tool_response(
+                    return self._read_result(
                         edit.apply(
                             engine.store,
                             transaction_id=str(arguments.get("transaction_id") or ""),
                             approved=bool(arguments.get("approved", False)),
                             plan_hash=str(arguments.get("plan_hash") or ""),
                             approval_nonce=str(arguments.get("approval_nonce") or ""),
-                        )
+                        ),
+                        arguments,
                     )
                 if name == "uepi_edit_validate":
-                    return tool_response(edit.validate(engine.store, transaction_id=str(arguments.get("transaction_id") or "")))
+                    return self._read_result(edit.validate(engine.store, transaction_id=str(arguments.get("transaction_id") or "")), arguments)
                 if name == "uepi_edit_rollback":
-                    return tool_response(edit.rollback(engine.store, transaction_id=str(arguments.get("transaction_id") or "")))
+                    return self._read_result(edit.rollback(engine.store, transaction_id=str(arguments.get("transaction_id") or "")), arguments)
             return tool_response(engine._error("UEPI_UNKNOWN_TOOL", f"Unknown UEPI tool: {name}", candidates=[tool["name"] for tool in self.tools()], tool=name, operation="call"))
         except Exception as exc:  # Keep tool failures structured for LLM clients.
             diagnostic = traceback.format_exc(limit=5)

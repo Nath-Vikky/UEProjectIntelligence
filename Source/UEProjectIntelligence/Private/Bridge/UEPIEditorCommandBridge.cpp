@@ -1,6 +1,7 @@
 #include "Bridge/UEPIEditorCommandBridge.h"
 
 #include "Bridge/UEPIBridgeProtocol.h"
+#include "Common/UEPIHash.h"
 #include "Components/ActorComponent.h"
 #include "Common/TcpListener.h"
 #include "Dom/JsonObject.h"
@@ -76,12 +77,8 @@ namespace UE::ProjectIntelligence
 		{
 			const FString CanonicalProjectFile = UEPICanonicalProjectFile();
 			FTCHARToUTF8 Utf8(*CanonicalProjectFile);
-			FSHA256Signature Signature;
-			if (!FPlatformMisc::GetSHA256Signature(Utf8.Get(), static_cast<uint32>(Utf8.Length()), Signature))
-			{
-				return FString();
-			}
-			return FString::Printf(TEXT("sha256:%s"), *Signature.ToString().ToLower());
+			const FString Digest = Sha256Hex(Utf8.Get(), static_cast<uint64>(Utf8.Length()));
+			return Digest.IsEmpty() ? FString() : TEXT("sha256:") + Digest;
 		}
 
 		FString UEPIFileSha256(const FString& Filename)
@@ -91,12 +88,8 @@ namespace UE::ProjectIntelligence
 			{
 				return FString();
 			}
-			FSHA256Signature Signature;
-			if (!FPlatformMisc::GetSHA256Signature(Bytes.GetData(), static_cast<uint32>(Bytes.Num()), Signature))
-			{
-				return FString();
-			}
-			return FString::Printf(TEXT("sha256:%s"), *Signature.ToString().ToLower());
+			const FString Digest = Sha256Hex(Bytes.GetData(), static_cast<uint64>(Bytes.Num()));
+			return Digest.IsEmpty() ? FString() : TEXT("sha256:") + Digest;
 		}
 
 		FString UEPISessionsDirectory()
@@ -955,9 +948,9 @@ namespace UE::ProjectIntelligence
 		const FString OutputLogPath = AbsoluteLogFilename();
 		const int32 LineLimit = FMath::Clamp(JsonInt(Params, TEXT("line_limit"), 100), 1, 2000);
 		TArray<uint8> Bytes;
-		if (!FFileHelper::LoadFileToArray(Bytes, *OutputLogPath))
+		if (!FFileHelper::LoadFileToArray(Bytes, *OutputLogPath, FILEREAD_AllowWrite))
 		{
-			return ErrorResponse(RequestId, TEXT("UEPI_EDITOR_LOG_READ_FAILED"), TEXT("The active output log file could not be read."));
+			return ErrorResponse(RequestId, TEXT("UEPI_EDITOR_LOG_READ_FAILED"), FString::Printf(TEXT("The active output log file could not be read: %s"), *OutputLogPath));
 		}
 		int64 ByteOffset = FMath::Max<int64>(0, Bytes.Num() - 1024 * 1024);
 		if (const TSharedPtr<FJsonObject> Cursor = JsonObjectField(Params, TEXT("cursor")))
@@ -1533,6 +1526,16 @@ namespace UE::ProjectIntelligence
 					const FString PlannedPath = JsonString(Preflight.Result, TEXT("asset_path")); const FString OpId = OperationId(Operation);
 					if (!OpId.IsEmpty() && !PlannedPath.IsEmpty()) PlannedAssetPaths.Add(OpId, PlannedPath);
 					if (Type == TEXT("content.create_asset")) { UClass* PlannedClass = LoadObject<UClass>(nullptr, *JsonString(Preflight.Result, TEXT("asset_class"))); if (!OpId.IsEmpty() && PlannedClass) PlannedAssetClasses.Add(OpId, PlannedClass); }
+					else if (!OpId.IsEmpty())
+					{
+						const FString SourcePath = NormalizeBlueprintObjectPath(JsonString(OpParams, TEXT("source"), JsonString(OpParams, TEXT("asset"))));
+						if (UObject* SourceAsset = LoadObject<UObject>(nullptr, *SourcePath))
+						{
+							PlannedAssetClasses.Add(OpId, SourceAsset->GetClass());
+							UObject* Probe = Type == TEXT("content.duplicate_asset") ? DuplicateObject(SourceAsset, GetTransientPackage()) : SourceAsset;
+							if (Probe) PreflightExecutionState.ObjectRefs.Add(OpId, Probe);
+						}
+					}
 				}
 				else if (Type == TEXT("widget.create") && Preflight.Result.IsValid())
 				{

@@ -24,7 +24,7 @@
 	"Plugins": [
 		{
 			"Name": "EnhancedInput",
-			"Enabled": false,
+			"Enabled": true,
 			"Optional": true
 		},
 		{

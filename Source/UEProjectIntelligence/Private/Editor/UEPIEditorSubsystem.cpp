@@ -20,6 +20,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonWriter.h"
 #include "Bridge/UEPIEditorCommandBridge.h"
+#include "Common/UEPIHash.h"
 #include "UObject/UObjectIterator.h"
 #include "UEPIAssetRegistryScanner.h"
 #include "UEPISettings.h"
@@ -75,12 +76,8 @@ namespace
 #endif
 		ProjectFile.RemoveFromEnd(TEXT("/"));
 		FTCHARToUTF8 Utf8(*ProjectFile);
-		FSHA256Signature Signature;
-		if (!FPlatformMisc::GetSHA256Signature(Utf8.Get(), static_cast<uint32>(Utf8.Length()), Signature))
-		{
-			return FString();
-		}
-		return FString::Printf(TEXT("sha256:%s"), *Signature.ToString().ToLower());
+		const FString Digest = UE::ProjectIntelligence::Sha256Hex(Utf8.Get(), static_cast<uint64>(Utf8.Length()));
+		return Digest.IsEmpty() ? FString() : TEXT("sha256:") + Digest;
 	}
 
 	FString UEPIEditorSessionPath()

@@ -14,10 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "Services" / "uepi" / "src" / "uepi" / "mcp_server.py"
 PYTHONPATH = ROOT / "Services" / "uepi" / "src"
 sys.path.insert(0, str(PYTHONPATH))
+sys.path.insert(0, str(ROOT / "Tools"))
 
 from uepi.bridge_client import _read_token  # noqa: E402
 from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
 from uepi.store import resolve_store_root  # noqa: E402
+from uepi_doctor import _capability_settings, _pid_alive  # noqa: E402
 
 READ_TOOLS = {
     "uepi_status",
@@ -46,6 +48,16 @@ EDIT_TOOLS = {
 }
 
 EXPECTED_TOOLS = READ_TOOLS | EDIT_TOOLS
+
+
+def assert_doctor_contract() -> None:
+    assert _pid_alive(os.getpid())
+    legacy = _capability_settings({"write_enabled": True, "allow_save": True})
+    assert legacy["write_enabled"] is True
+    advertised = _capability_settings({"capabilities": ["edit.apply"], "allow_save": True})
+    assert advertised["write_enabled"] is True
+    disabled = _capability_settings({"capabilities": ["edit.discover"], "allow_save": True})
+    assert disabled["write_enabled"] is False
 
 
 def assert_envelope(value: dict[str, Any]) -> None:
@@ -969,6 +981,7 @@ def assert_bridge_token_and_registry_resolution(root: Path) -> None:
 
 
 def main() -> int:
+    assert_doctor_contract()
     assert_plan_v2_contract()
     with tempfile.TemporaryDirectory(prefix="uepi_snapshot_mcp_") as temp_dir:
         root = Path(temp_dir)
@@ -1228,6 +1241,32 @@ def main() -> int:
             assert discover["result"]["default_enabled"] is True
             assert discover["result"]["apply_enabled"] is False
             assert any(item.get("code") == "UEPI_EDIT_CATALOG_UNAVAILABLE" for item in discover["diagnostics"])
+            wrong_session_discover = request(
+                process,
+                66,
+                "tools/call",
+                {
+                    "name": "uepi_edit_discover",
+                    "arguments": {"expected_editor_session_id": "00000000-0000-0000-0000-000000000000"},
+                },
+            )["structuredContent"]
+            assert_envelope(wrong_session_discover)
+            assert wrong_session_discover["ok"] is False
+            assert wrong_session_discover["error"]["code"] == "UEPI_EDITOR_SESSION_MISMATCH"
+            assert wrong_session_discover["result"] is None
+            wrong_project_discover = request(
+                process,
+                67,
+                "tools/call",
+                {
+                    "name": "uepi_edit_discover",
+                    "arguments": {"expected_project_file": str(root / "WrongProject.uproject")},
+                },
+            )["structuredContent"]
+            assert_envelope(wrong_project_discover)
+            assert wrong_project_discover["ok"] is False
+            assert wrong_project_discover["error"]["code"] == "UEPI_PROJECT_MISMATCH"
+            assert wrong_project_discover["result"] is None
             preview = request(
                 process,
                 63,
