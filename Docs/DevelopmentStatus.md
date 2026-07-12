@@ -1,6 +1,6 @@
 # UE Project Intelligence Development Status
 
-`main` is the experimental `2.0.0-alpha.4` vNext line for UE 5.3.2 and Codex.
+`main` is the experimental post-`2.0.0-alpha.4` vNext line for UE 5.3.2 and Codex.
 
 ## Implemented
 
@@ -34,12 +34,15 @@
 - The Third Person Golden transaction duplicated `BP_ThirdPersonGameMode`, added a variable, custom event, Print String, and real-pin connection, compiled and saved the touched asset, refreshed its Snapshot, produced a semantic diff, and completed UEPI-owned PIE start/stop after one approval.
 - Editor restart preserved the Golden package hash and the Saved Snapshot could read back the event, screen message, nodes, pins, and links; the old runtime ticket was rejected in the new Editor session.
 - The `2.0.0-alpha.4` Source and UE5.3.2 Win64 archives pass version/root/exclusion/hash inspection, and the extracted Source archive passes an isolated UE5.3.2 Win64 `BuildPlugin` build.
+- A clean blank Blueprint project starts from the alpha.4 Win64 archive, generates saved generation 1 through `UEPIIndex`, passes offline Doctor with no failures, and answers offline Status/Overview queries.
+- Two simultaneous Editor projects bind distinct localhost bridge ports, each exact-project Doctor reaches its own 64-operation catalog, and a request naming the other project is rejected with `UEPI_PROJECT_MISMATCH`.
+- The blank-project DataAsset transaction creates, types, validates, saves, reads, diffs, and rolls back a new `PrimaryAssetLabel`; the package is removed, the journal is `rolled_back`, and exact current-view reads return `UEPI_ASSET_TOMBSTONED` without diagnostics.
 
 ## Beta Blockers
 
-- Run and record the remaining LLMNPCDemo, blank-project, and two-project real-machine matrix. The Third Person Golden is recorded as passing.
+- Run and record the remaining LLMNPCDemo real-machine matrix. Third Person, blank-project, and two-project routing records now pass.
 - Exercise every migrated write domain through Discover -> Preview -> one approval -> Apply -> Validate -> Save -> restart -> Diff/Rollback.
 - Complete and record the AnimGraph same-plan Slot/pose-link Golden scenario on UE 5.3.2.
-- Install the complete release zip in clean blank and Third Person projects, connect Codex, and record the resulting Doctor/Golden reports; the isolated source `BuildPlugin` gate already passes.
+- Produce and reinstall the next complete release zip containing the post-alpha.4 multi-project and rollback fixes; alpha.4 archive installation and isolated source `BuildPlugin` already pass.
 
 The plugin remains honestly marked experimental alpha until these items pass. Do not create a `v2.x-beta` tag before that gate.
