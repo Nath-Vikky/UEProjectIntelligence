@@ -159,20 +159,21 @@ SQLite cache files are derived data and can be deleted. UEPI can rebuild them fr
 
 ## Limitations
 
-- Current primary target is UE5.3.2.
-- Current version is Codex-first experimental alpha pending the UE5.3.2 real-machine matrix.
-- Animation data is static summary and sampled context, not a full per-frame dump.
-- Animation Blueprint final runtime pose is not available.
+- Release-qualified engine target is UE5.3.2.
+- Current version is a Codex-first UE5.3.2 Beta. Guarded writes remain approval-bound and intentionally narrower than the read surface.
+- Animation reads provide static summaries, driver curves, reconstruction profiles, and optional full-pose sample artifacts; they do not evaluate the final runtime pose after every AnimGraph, Control Rig, IK, physics, or retargeting layer.
 - Editor or commandlet collection is required to refresh Snapshots.
 - Editor-closed mode uses the latest saved Snapshot only.
 - The live editor bridge and guarded edit apply are enabled by default; `uepi_edit_apply` still requires preview, explicit approval, validation, touched-only save, and rollback/diff reporting.
+
+See [`Docs/Known-Limitations.md`](Docs/Known-Limitations.md) for the complete Beta boundary.
 
 ## Validation Status
 
 - Real-machine Codex MCP read loop validated on UE5.3.2 project `GasDemo`.
 - Snapshot/live/cache/tombstone smoke tests pass through `Tools/test_snapshot_mcp_v2.py`.
 - The `codex` profile now exposes read and guarded edit tools together for one-step Agent setup.
-- vNext C++ source compiles against UE5.3.2; Beta promotion remains blocked on the full real-machine write/runtime matrix.
+- The UE5.3.2 Beta gate passes LLMNPCDemo, Third Person, blank-project, two-project routing, save/restart, rollback, and owned-PIE real-machine scenarios.
 
 ## Troubleshooting
 

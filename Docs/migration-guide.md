@@ -2,7 +2,7 @@
 
 ## Snapshot Store
 
-UEPI 2.0 alpha uses MCP envelope v2, Editor bridge protocol v2, Edit Plan v2, and the Editor-exported operation catalog. Before replacing the plugin, close the editor and back up:
+UEPI 2.0 Beta uses MCP envelope v2, Editor bridge protocol v2, Edit Plan v2, and the Editor-exported operation catalog. Before replacing the plugin, close the editor and back up:
 
 ```text
 Saved/UEProjectIntelligence/store/
@@ -28,6 +28,15 @@ python -B -m uepi sync --project "__PROJECT_ROOT__\__PROJECT_NAME__.uproject"
 Then run `uepi_status` from the MCP client and confirm the Snapshot generation and cache generation match.
 
 Open the Editor once after upgrading so it publishes a v2 exact-project session and operation catalog. Plans created before the upgrade are intentionally invalid because their session/catalog hashes no longer match.
+
+## Alpha.4 To Beta.1
+
+- Replace the entire plugin directory; do not mix Alpha.4 binaries with Beta.1 source.
+- Regenerate the Codex block with `Tools/setup_codex.py` if it still uses a daemon, `codex_write_alpha`, or a legacy database argument. The alias remains readable, but `codex` is the release profile.
+- Runtime allowlists now use exact `ClassPath:FunctionName` entries. Parameterized calls are accepted only when the function Schema, project allowlist, approved target, typed arguments, and Runtime Ticket all agree.
+- `BlueprintReadOnly` no longer blocks guarded Editor writes when the property is also `EditAnywhere`; this changes incorrect Alpha.4 reflection output.
+- New PrimaryDataAssets are registered only after same-plan property writes finish, preventing temporary PrimaryAssetId registration.
+- Old plans and runtime tickets must not be reused after upgrade or Editor restart.
 
 ## Scan Artifacts
 

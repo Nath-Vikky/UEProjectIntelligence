@@ -1,6 +1,6 @@
 # Support Matrix
 
-## Supported In 2.0-dev
+## Supported In 2.0 Beta
 
 - UE 5.3.2 editor and commandlet collection.
 - Saved Snapshot querying while the editor is closed.
@@ -19,20 +19,22 @@
 - Optional domain readers are compile-gated by the project descriptor and do not link unrelated UE plugin modules by default.
 - `UEPI_OPTIONAL_READERS=all` or a comma-separated plugin list can force optional reader compilation for projects that intentionally use those domains.
 
-## Experimental Write Alpha
+## Guarded Write Beta
 
-- Blueprint write alpha can add variables, set variable defaults, add simple components, set simple component properties, and compile through the live bridge after preview and user approval.
-- Blueprint graph write alpha can create function graphs, add custom events, add function-call, variable get/set, branch, and PrintString nodes, and connect pins by node GUID or same-transaction `node_ref` plus pin name/id.
-- Actor write alpha can spawn actors, set transforms, and set simple reflected actor properties after preview and user approval.
-- Material write alpha can create `UMaterialInstanceConstant` assets, set scalar/vector/texture parameters, and apply materials to actor or Blueprint component targets after preview and user approval.
-- Content write alpha can create `/Game` folders, duplicate assets, rename assets, and run automated allowlisted imports after preview and user approval.
-- UMG write alpha can create Widget Blueprints, add TextBlock/Button widgets, update CanvasPanel slot properties, and bind Button delegates to ComponentBoundEvent nodes after preview and user approval.
-- Enhanced Input write alpha can create Input Action and Input Mapping Context assets and add/remove key mappings when the project has EnhancedInput enabled.
+- Every write requires exact project/session routing, an immutable Preview, one explicit user approval, repeated preflight, typed validation, touched-only save, targeted refresh, and transaction diff.
+- Reflected DataAsset creation and nested scalar/enum/name/text/object/soft-object/struct/array/set/map property writes are supported.
+- Blueprint graph operations cover variables, components, functions, registered node kinds, real-pin defaults/connections/disconnections, node removal/layout/comments, compile, save, and rollback.
+- AnimGraph operations cover Slot registration, Slot node creation, pose links, compile, save, and rollback on UE5.3.2.
+- Controlled runtime verification supports UEPI-owned PIE, exact target selectors, project-allowlisted Blueprint-callable functions, typed arguments/outputs, reads, waits, assertions, screenshots, logs, and cleanup.
+- Actor, Material Instance, scoped `/Game` Content, basic UMG, Enhanced Input, and Animation/Montage operations use the same guarded transaction pipeline.
 
-## Not Supported In 2.0-dev
+## Not Supported In 2.0 Beta
 
-- General asset saves, deletes, and broad arbitrary Blueprint graph rewriting.
+- Save-all, unrestricted delete, arbitrary Blueprint node classes, and broad graph rewriting outside the registered operation catalog.
 - Runtime pose evaluation.
+- Arbitrary Python, shell, console commands, C++ expressions, or unrestricted UObject function calls.
+- Automatic source-control checkout, resolve, changelist, submit, or lock management.
+- UE versions other than 5.3.2 and MCP clients other than Codex as release-qualified targets.
 - Daemon, HTTP, Web UI, worker queue, or remote service deployment.
 - Third-party extension SDK.
 - Optional reader coverage for disabled plugins is downgraded to generic Asset Registry and reflection metadata.

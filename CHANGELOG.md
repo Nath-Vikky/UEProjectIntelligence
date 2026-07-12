@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.0-beta.1
 
 - Completed the UE5.3.2 LLMNPCDemo Golden: exact DefaultSlot read, reflected MotionTemplate schema, one-approval DataAsset create/configure/validate/save/refresh/diff, typed runtime invoke, Waving start/completion assertions, viewport capture, log check, PIE cleanup, and restart persistence readback.
 - Added authoritative runtime function schemas, typed invocation arguments and outputs, approved target selectors, and exact target/function/argument bindings in runtime tickets.

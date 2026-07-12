@@ -1,6 +1,6 @@
 # UE Project Intelligence Development Status
 
-`main` is the experimental post-`2.0.0-alpha.4` vNext line for UE 5.3.2 and Codex.
+`main` is the `2.0.0-beta.1` release-candidate line for UE 5.3.2 and Codex.
 
 ## Implemented
 
@@ -41,11 +41,8 @@
 - Controlled PIE invoked `SubmitPublishedTemplate` with typed arguments, observed Waving enter `Playing` and finish `Completed`, captured a non-empty viewport, found no new runtime error log lines, and stopped cleanly. Editor restart preserved every configured property and 40 exact-session status samples had zero failures.
 - Golden hardening corrected `BlueprintReadOnly` reflection semantics, added parameterized allowlisted invoke and typed return values, made Bridge session JSON replacement atomic, and deferred new PrimaryDataAsset registration until same-plan identity properties are final.
 
-## Beta Blockers
+## Release Packaging Remaining
 
-- Package and reinstall the post-Golden build so the downloadable archive contains the LLMNPCDemo runtime/schema, atomic session, multi-project, and rollback fixes.
-- Exercise every migrated write domain through Discover -> Preview -> one approval -> Apply -> Validate -> Save -> restart -> Diff/Rollback.
-- Complete and record the AnimGraph same-plan Slot/pose-link Golden scenario on UE 5.3.2.
 - Produce and reinstall the next complete release zip containing the post-alpha.4 multi-project and rollback fixes; alpha.4 archive installation and isolated source `BuildPlugin` already pass.
 
-The plugin remains honestly marked experimental alpha until these items pass. Do not create a `v2.x-beta` tag before that gate.
+Do not create the `v2.0.0-beta.1` tag until Source/Win64 packaging, isolated `BuildPlugin`, archive inspection, and clean-project reinstall pass. Broader per-operation real-machine coverage continues after Beta and does not replace the P0 Golden matrix.

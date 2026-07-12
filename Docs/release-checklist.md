@@ -51,8 +51,8 @@
 ## Real Machine Beta Gate
 
 - [x] LLMNPCDemo Golden passes and is recorded.
-- [ ] Third Person Golden passes and is recorded.
-- [ ] Minimal blank Blueprint project passes and is recorded.
-- [ ] Two-project routing and mismatch rejection pass.
-- [ ] Editor restart confirms touched assets persisted.
-- [ ] Owned PIE cleanup and rollback failure paths pass.
+- [x] Third Person Golden passes and is recorded.
+- [x] Minimal blank Blueprint project passes and is recorded.
+- [x] Two-project routing and mismatch rejection pass.
+- [x] Editor restart confirms touched assets persisted.
+- [x] Owned PIE cleanup and rollback failure paths pass.
