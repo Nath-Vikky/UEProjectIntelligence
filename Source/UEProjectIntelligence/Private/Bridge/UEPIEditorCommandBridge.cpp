@@ -9,7 +9,6 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/ContentWidget.h"
 #include "Components/PanelWidget.h"
-#include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextBlock.h"
@@ -29,7 +28,6 @@
 #include "GameFramework/PlayerInput.h"
 #include "EngineUtils.h"
 #include "Engine/Blueprint.h"
-#include "Factories/MaterialInstanceConstantFactoryNew.h"
 #include "Factories/DataAssetFactory.h"
 #include "FileHelpers.h"
 #include "GameFramework/Actor.h"
@@ -58,7 +56,6 @@
 #include "Edit/UEPIPackageSaveService.h"
 #include "Edit/UEPITransactionJournal.h"
 #include "Logging/TokenizedMessage.h"
-#include "Materials/MaterialInstanceConstant.h"
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequence.h"
@@ -67,7 +64,6 @@
 #include "Factories/AnimMontageFactory.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/DataAsset.h"
-#include "MaterialTypes.h"
 #include "Misc/App.h"
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
@@ -1181,86 +1177,6 @@ namespace UE::ProjectIntelligence
 			return nullptr;
 		}
 
-		TArray<AActor*> ResolveActorTargets(const TSharedPtr<FJsonObject>& Params)
-		{
-			TArray<FString> Paths;
-			if (const TSharedPtr<FJsonObject> Targets = JsonObjectField(Params, TEXT("targets")))
-			{
-				if (const TArray<TSharedPtr<FJsonValue>>* Values = JsonArray(Targets, TEXT("paths")))
-				{
-					for (const TSharedPtr<FJsonValue>& Value : *Values)
-					{
-						FString Path;
-						if (Value.IsValid() && Value->TryGetString(Path) && !Path.IsEmpty())
-						{
-							Paths.Add(Path);
-						}
-					}
-				}
-			}
-			const FString DirectPath = JsonString(Params, TEXT("actor"), JsonString(Params, TEXT("path")));
-			if (!DirectPath.IsEmpty())
-			{
-				Paths.Add(DirectPath);
-			}
-
-			TArray<AActor*> Actors;
-			for (const FString& Path : Paths)
-			{
-				AActor* Actor = FindObject<AActor>(nullptr, *Path);
-				if (!Actor)
-				{
-					for (TObjectIterator<AActor> It; It; ++It)
-					{
-						if (It->GetPathName() == Path || It->GetName() == Path)
-						{
-							Actor = *It;
-							break;
-						}
-					}
-				}
-				if (Actor)
-				{
-					Actors.AddUnique(Actor);
-				}
-			}
-			return Actors;
-		}
-
-		UMaterialInstanceConstant* LoadMaterialInstanceForEdit(const TSharedPtr<FJsonObject>& Params, FString& OutAssetPath, FString& OutError)
-		{
-			OutAssetPath = JsonString(Params, TEXT("asset"), JsonString(Params, TEXT("material")));
-			if (OutAssetPath.IsEmpty())
-			{
-				OutError = TEXT("Material operation requires params.asset or params.material.");
-				return nullptr;
-			}
-			UMaterialInstanceConstant* Instance = LoadObject<UMaterialInstanceConstant>(nullptr, *OutAssetPath);
-			if (!Instance)
-			{
-				OutError = FString::Printf(TEXT("Failed to load MaterialInstanceConstant: %s"), *OutAssetPath);
-				return nullptr;
-			}
-			return Instance;
-		}
-
-		UMaterialInterface* LoadMaterialInterfaceForEdit(const TSharedPtr<FJsonObject>& Params, FString& OutAssetPath, FString& OutError)
-		{
-			OutAssetPath = JsonString(Params, TEXT("asset"), JsonString(Params, TEXT("material")));
-			if (OutAssetPath.IsEmpty())
-			{
-				OutError = TEXT("Material operation requires params.asset or params.material.");
-				return nullptr;
-			}
-			UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *OutAssetPath);
-			if (!Material)
-			{
-				OutError = FString::Printf(TEXT("Failed to load material interface: %s"), *OutAssetPath);
-				return nullptr;
-			}
-			return Material;
-		}
-
 		TSharedRef<FJsonObject> ObjectToJson(UObject* Object)
 		{
 			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -1356,28 +1272,6 @@ namespace UE::ProjectIntelligence
 		UWorld* EditorWorld()
 		{
 			return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
-		}
-
-		UPrimitiveComponent* FindPrimitiveComponentForMaterial(AActor* Actor, const FString& ComponentName)
-		{
-			if (!Actor)
-			{
-				return nullptr;
-			}
-			TArray<UPrimitiveComponent*> Components;
-			Actor->GetComponents<UPrimitiveComponent>(Components);
-			for (UPrimitiveComponent* Component : Components)
-			{
-				if (!Component)
-				{
-					continue;
-				}
-				if (ComponentName.IsEmpty() || Component->GetName().Equals(ComponentName, ESearchCase::IgnoreCase))
-				{
-					return Component;
-				}
-			}
-			return nullptr;
 		}
 
 		bool JsonVector2D(const TSharedPtr<FJsonObject>& Object, FVector2D& OutVector)
@@ -2694,7 +2588,7 @@ namespace UE::ProjectIntelligence
 			}
 			TSharedPtr<FJsonObject> OpParams = JsonObjectField(Operation, TEXT("params"));
 			if (!OpParams.IsValid()) OpParams = Operation;
-			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")))
+			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")) || Type.StartsWith(TEXT("material.")))
 			{
 				FUEPIEditContext Context;
 				Context.TransactionId = TransactionId;
@@ -2717,6 +2611,12 @@ namespace UE::ProjectIntelligence
 					}
 					const FString OpId = OperationId(Operation);
 					if (!OpId.IsEmpty()) PlannedAssetPaths.Add(OpId, FString::Printf(TEXT("%s/%s.%s"), *PackagePath, *AssetName, *AssetName));
+				}
+				else if (Type == TEXT("material.create_instance") && Preflight.Result.IsValid())
+				{
+					const FString PlannedPath = JsonString(Preflight.Result, TEXT("asset_path"));
+					const FString OpId = OperationId(Operation);
+					if (!OpId.IsEmpty() && !PlannedPath.IsEmpty()) PlannedAssetPaths.Add(OpId, PlannedPath);
 				}
 				continue;
 			}
@@ -2908,7 +2808,7 @@ namespace UE::ProjectIntelligence
 			{
 				OpParams = Operation;
 			}
-			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")))
+			if (Type.StartsWith(TEXT("actor.")) || Type.StartsWith(TEXT("input.")) || Type.StartsWith(TEXT("material.")))
 			{
 				FUEPIEditContext Context;
 				Context.TransactionId = TransactionId;
@@ -2935,6 +2835,21 @@ namespace UE::ProjectIntelligence
 						const FString OpId = OperationId(Operation);
 						if (!OpId.IsEmpty()) OperationAssets.Add(OpId, AssetPath);
 					}
+				}
+				else if (Type == TEXT("material.create_instance"))
+				{
+					const TSharedPtr<FJsonObject> Asset = OperationResult.Result.IsValid() ? JsonObjectField(OperationResult.Result, TEXT("asset")) : nullptr;
+					const FString AssetPath = JsonString(Asset, TEXT("path"));
+					if (!AssetPath.IsEmpty()) { AffectedAssets.AddUnique(AssetPath); const FString OpId = OperationId(Operation); if (!OpId.IsEmpty()) OperationAssets.Add(OpId, AssetPath); }
+				}
+				else if (Type == TEXT("material.apply_to_blueprint_component"))
+				{
+					const FString BlueprintPath = JsonString(OperationResult.Result, TEXT("blueprint"));
+					if (!BlueprintPath.IsEmpty()) { AffectedAssets.AddUnique(BlueprintPath); if (UBlueprint* Touched = LoadObject<UBlueprint>(nullptr, *BlueprintPath)) TouchedBlueprints.Add(Touched); }
+				}
+				else if (Type.StartsWith(TEXT("material.set_")))
+				{
+					const FString MaterialPath = JsonString(OperationResult.Result, TEXT("asset")); if (!MaterialPath.IsEmpty()) AffectedAssets.AddUnique(MaterialPath);
 				}
 				bMutated = true;
 				continue;
@@ -3808,235 +3723,6 @@ namespace UE::ProjectIntelligence
 					FailureMessage = TEXT("Blueprint compile returned errors.");
 					break;
 				}
-			}
-			else if (Type == TEXT("material.create_instance"))
-			{
-				if (!Settings->bAllowMaterialEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Material write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				const FString ParentPath = JsonString(OpParams, TEXT("parent"), JsonString(OpParams, TEXT("parent_material")));
-				UMaterialInterface* ParentMaterial = ParentPath.IsEmpty() ? nullptr : LoadObject<UMaterialInterface>(nullptr, *ParentPath);
-				if (!ParentMaterial)
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("material.create_instance requires a valid parent material: %s"), *ParentPath);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				FString PackagePath;
-				FString AssetName;
-				if (!SplitDestinationPath(OpParams, ParentMaterial->GetName() + TEXT("_Inst"), PackagePath, AssetName, Error))
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>();
-				Factory->InitialParent = ParentMaterial;
-				UObject* NewAsset = FAssetToolsModule::GetModule().Get().CreateAsset(AssetName, PackagePath, UMaterialInstanceConstant::StaticClass(), Factory, TEXT("UEPI"));
-				UMaterialInstanceConstant* NewInstance = Cast<UMaterialInstanceConstant>(NewAsset);
-				if (!NewInstance)
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Failed to create MaterialInstanceConstant %s/%s."), *PackagePath, *AssetName);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				AffectedAssets.AddUnique(NewInstance->GetPathName());
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetObjectField(TEXT("asset"), ObjectToJson(NewInstance));
-				Detail->SetStringField(TEXT("parent"), ParentMaterial->GetPathName());
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("Material instance created."), Detail);
-				bMutated = true;
-			}
-			else if (Type == TEXT("material.apply_to_actor"))
-			{
-				if (!Settings->bAllowMaterialEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Material write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				UMaterialInterface* Material = LoadMaterialInterfaceForEdit(OpParams, AssetPath, Error);
-				if (!Material)
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				TArray<AActor*> Actors = ResolveActorTargets(OpParams);
-				if (Actors.Num() == 0)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("material.apply_to_actor did not resolve any target actors.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				const FString ComponentName = JsonString(OpParams, TEXT("component"), JsonString(OpParams, TEXT("component_name")));
-				const int32 MaterialIndex = JsonInt(OpParams, TEXT("material_index"), 0);
-				TArray<TSharedPtr<FJsonValue>> Applied;
-				for (AActor* Actor : Actors)
-				{
-					UPrimitiveComponent* Component = FindPrimitiveComponentForMaterial(Actor, ComponentName);
-					if (!Component)
-					{
-						bAllOk = false;
-						FailureMessage = FString::Printf(TEXT("Primitive component not found on actor %s."), Actor ? *Actor->GetPathName() : TEXT("<null>"));
-						break;
-					}
-					Actor->Modify();
-					Component->Modify();
-					Component->SetMaterial(MaterialIndex, Material);
-					TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
-					Item->SetStringField(TEXT("actor"), Actor->GetPathName());
-					Item->SetStringField(TEXT("component"), Component->GetName());
-					Item->SetNumberField(TEXT("material_index"), MaterialIndex);
-					Applied.Add(MakeShared<FJsonValueObject>(Item));
-				}
-				if (!bAllOk)
-				{
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetStringField(TEXT("material"), Material->GetPathName());
-				Detail->SetArrayField(TEXT("applied"), Applied);
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("Material applied to actor component(s)."), Detail);
-				bMutated = true;
-			}
-			else if (Type == TEXT("material.apply_to_blueprint_component"))
-			{
-				if (!Settings->bAllowMaterialEdits || !Settings->bAllowBlueprintEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Material and Blueprint write alpha must both be enabled for material.apply_to_blueprint_component.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				UMaterialInterface* Material = LoadMaterialInterfaceForEdit(OpParams, AssetPath, Error);
-				if (!Material)
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				FString BlueprintAssetPath;
-				UBlueprint* TargetBlueprint = LoadBlueprintForEdit(OpParams, BlueprintAssetPath, Error);
-				if (!TargetBlueprint)
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				const FString ComponentName = JsonString(OpParams, TEXT("component"), JsonString(OpParams, TEXT("component_name")));
-				const int32 MaterialIndex = JsonInt(OpParams, TEXT("material_index"), 0);
-				USCS_Node* Node = TargetBlueprint->SimpleConstructionScript ? TargetBlueprint->SimpleConstructionScript->FindSCSNode(FName(*ComponentName)) : nullptr;
-				UPrimitiveComponent* Template = Node ? Cast<UPrimitiveComponent>(Node->ComponentTemplate) : nullptr;
-				if (!Template)
-				{
-					bAllOk = false;
-					FailureMessage = FString::Printf(TEXT("Primitive component template not found on Blueprint: %s"), *ComponentName);
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				Template->Modify();
-				Template->SetMaterial(MaterialIndex, Material);
-				FBlueprintEditorUtils::MarkBlueprintAsModified(TargetBlueprint);
-				AffectedAssets.AddUnique(BlueprintAssetPath);
-				TouchedBlueprints.Add(TargetBlueprint);
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetStringField(TEXT("blueprint"), TargetBlueprint->GetPathName());
-				Detail->SetStringField(TEXT("component"), ComponentName);
-				Detail->SetStringField(TEXT("material"), Material->GetPathName());
-				Detail->SetNumberField(TEXT("material_index"), MaterialIndex);
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("Material applied to Blueprint component template."), Detail);
-				bMutated = true;
-			}
-			else if (Type == TEXT("material.set_scalar_parameter") || Type == TEXT("material.set_vector_parameter") || Type == TEXT("material.set_texture_parameter"))
-			{
-				if (!Settings->bAllowMaterialEdits)
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Material write alpha is disabled in UEPI Project Settings.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				UMaterialInstanceConstant* Instance = LoadMaterialInstanceForEdit(OpParams, AssetPath, Error);
-				if (!Instance)
-				{
-					bAllOk = false;
-					FailureMessage = Error;
-					AddOperationResult(OperationResults, Index, Type, false, Error);
-					break;
-				}
-				const FString ParameterName = JsonString(OpParams, TEXT("parameter"), JsonString(OpParams, TEXT("name")));
-				if (ParameterName.IsEmpty())
-				{
-					bAllOk = false;
-					FailureMessage = TEXT("Material parameter operation requires parameter or name.");
-					AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-					break;
-				}
-				Instance->Modify();
-				if (Type == TEXT("material.set_scalar_parameter"))
-				{
-					double NumberValue = 0.0;
-					if (!OpParams->TryGetNumberField(TEXT("value"), NumberValue))
-					{
-						bAllOk = false;
-						FailureMessage = TEXT("material.set_scalar_parameter requires numeric value.");
-						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-						break;
-					}
-					Instance->SetScalarParameterValueEditorOnly(FMaterialParameterInfo(FName(*ParameterName)), static_cast<float>(NumberValue));
-				}
-				else if (Type == TEXT("material.set_vector_parameter"))
-				{
-					FLinearColor ColorValue;
-					TSharedPtr<FJsonObject> ColorObject = JsonObjectField(OpParams, TEXT("value"));
-					if (!ColorObject.IsValid())
-					{
-						ColorObject = OpParams;
-					}
-					if (!JsonColor(ColorObject, ColorValue))
-					{
-						bAllOk = false;
-						FailureMessage = TEXT("material.set_vector_parameter requires value {r,g,b,a?}.");
-						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-						break;
-					}
-					Instance->SetVectorParameterValueEditorOnly(FMaterialParameterInfo(FName(*ParameterName)), ColorValue);
-				}
-				else
-				{
-					const FString TexturePath = JsonString(OpParams, TEXT("texture"), JsonString(OpParams, TEXT("value")));
-					UTexture* Texture = TexturePath.IsEmpty() ? nullptr : LoadObject<UTexture>(nullptr, *TexturePath);
-					if (!Texture)
-					{
-						bAllOk = false;
-						FailureMessage = FString::Printf(TEXT("Failed to load texture parameter value: %s"), *TexturePath);
-						AddOperationResult(OperationResults, Index, Type, false, FailureMessage);
-						break;
-					}
-					Instance->SetTextureParameterValueEditorOnly(FMaterialParameterInfo(FName(*ParameterName)), Texture);
-				}
-				Instance->PostEditChange();
-				Instance->MarkPackageDirty();
-				AffectedAssets.AddUnique(AssetPath);
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
-				Detail->SetStringField(TEXT("asset"), Instance->GetPathName());
-				Detail->SetStringField(TEXT("parameter"), ParameterName);
-				AddOperationResult(OperationResults, Index, Type, true, TEXT("Material instance parameter updated."), Detail);
-				bMutated = true;
 			}
 			else if (Type == TEXT("content.create_folder"))
 			{

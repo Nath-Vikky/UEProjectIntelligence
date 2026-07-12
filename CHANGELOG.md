@@ -14,6 +14,7 @@
 - Completed nested Plan v2 base/risk/approval/verification structure, dependency-bound refs, Class/SoftClass typed values, richer transaction diff, runtime failure cleanup, and dual-artifact release packaging.
 - Migrated Actor write operations from the Bridge apply branch into concrete Registry handlers with authoritative preflight and typed property diffs.
 - Migrated Enhanced Input creation and key-mapping operations into concrete Registry handlers with optional-module blocking, destination checks, and same-plan created-asset capture.
+- Migrated Material Instance creation, typed parameter writes, and actor/Blueprint component assignment into concrete Registry handlers with full preflight and same-plan references.
 - Added project-plugin content/source indexing, project-local Codex setup, machine-readable Doctor, versioned public schemas, v2 contract export, and source/prebuilt release packaging.
 - Kept the release marked experimental alpha until the UE5.3.2 real-machine matrix is complete.
 

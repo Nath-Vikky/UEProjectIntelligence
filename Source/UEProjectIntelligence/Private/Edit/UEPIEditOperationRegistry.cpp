@@ -3,6 +3,7 @@
 #include "HAL/PlatformMisc.h"
 #include "Operations/UEPIActorOperations.h"
 #include "Operations/UEPIInputOperations.h"
+#include "Operations/UEPIMaterialOperations.h"
 
 namespace UE::ProjectIntelligence
 {
@@ -207,6 +208,7 @@ namespace UE::ProjectIntelligence
 		{
 			if (Item.Domain == TEXT("actor")) RegisterOperation(MakeUEPIActorOperation(Item));
 			else if (Item.Domain == TEXT("input")) RegisterOperation(MakeUEPIInputOperation(Item));
+			else if (Item.Domain == TEXT("material")) RegisterOperation(MakeUEPIMaterialOperation(Item));
 			else RegisterOperation(MakeShared<FUEPIRegisteredBridgeOperation>(Item));
 		}
 	}
