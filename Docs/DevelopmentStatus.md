@@ -17,7 +17,8 @@
 - Reflected typed property codec for scalar, enum/name/text, object/soft-object, struct, array, set, and map values.
 - Generic DataAsset creation/property writes; Blueprint variables/components/functions/events/generic nodes/pin defaults/connections/removal/layout/comments/compile; AnimGraph Slot and pose-link operations.
 - Guarded Actor, Material Instance, scoped Content, UMG, and Enhanced Input operations behind the same project/session/plan/preflight/save/rollback pipeline.
-- Actor, Content/DataAsset/property, Material Instance/assignment/parameter, UMG WidgetTree/layout/delegate, Enhanced Input, and Animation/Montage operations execute through concrete Registry handlers with domain-owned preflight; their legacy Bridge apply branches have been removed.
+- Actor, Content/DataAsset/property, Material Instance/assignment/parameter, UMG WidgetTree/layout/delegate, Enhanced Input, Animation/Montage, Blueprint, and AnimGraph operations execute through concrete Registry handlers with domain-owned preflight; all legacy Bridge apply branches and fallback handlers have been removed.
+- Blueprint/AnimGraph preflight tracks same-plan variables, functions, components, graph nodes, and node references before the first mutation; Apply resolves the corresponding live objects for node creation, pin maintenance, typed properties, compile, validation, and touched-only save.
 - Transaction-bound UEPI-owned PIE status/start/stop/input/parameterless invoke/read/wait/assert and cleanup.
 - Project-local Codex setup script, machine-readable Doctor, public schemas, v2 contract snapshot, release packaging, architecture/safety/edit/runtime guides, and real-machine report templates.
 
@@ -32,7 +33,7 @@
 
 - Run and record the LLMNPCDemo, Third Person, blank-project, and two-project real-machine matrix.
 - Exercise every migrated write domain through Discover -> Preview -> one approval -> Apply -> Validate -> Save -> restart -> Diff/Rollback.
-- Complete structural extraction of Blueprint and AnimGraph executor branches into domain operation handlers; Animation Asset writes are migrated, but the remaining graph apply implementation still contains a large dispatch body.
+- Complete and record the Blueprint/AnimGraph same-plan node creation and pin-connection Golden scenario on UE 5.3.2.
 - Produce and install-test the source release zip. Produce a prebuilt UE5.3.2 Win64 zip only from clean matching-engine binaries.
 
 The plugin remains honestly marked experimental alpha until these items pass. Do not create a `v2.x-beta` tag before that gate.

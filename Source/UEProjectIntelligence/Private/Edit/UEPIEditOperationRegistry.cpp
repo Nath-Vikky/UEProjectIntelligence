@@ -3,6 +3,7 @@
 #include "HAL/PlatformMisc.h"
 #include "Operations/UEPIActorOperations.h"
 #include "Operations/UEPIAnimationOperations.h"
+#include "Operations/UEPIBlueprintOperations.h"
 #include "Operations/UEPIContentOperations.h"
 #include "Operations/UEPIInputOperations.h"
 #include "Operations/UEPIMaterialOperations.h"
@@ -12,32 +13,6 @@ namespace UE::ProjectIntelligence
 {
 	namespace
 	{
-		class FUEPIRegisteredBridgeOperation final : public IUEPIEditOperation
-		{
-		public:
-			explicit FUEPIRegisteredBridgeOperation(FUEPIEditOperationDescriptor InDescriptor)
-				: Descriptor(MoveTemp(InDescriptor))
-			{
-			}
-
-			virtual FString GetOperationType() const override { return Descriptor.Name; }
-			virtual FUEPIEditOperationDescriptor GetDescriptor() const override { return Descriptor; }
-			virtual FUEPIEditResult Validate(const FUEPIEditContext&, const FJsonObject&) override { return Unsupported(); }
-			virtual FUEPIEditResult Preview(const FUEPIEditContext&, const FJsonObject&) override { return Unsupported(); }
-			virtual FUEPIEditResult Apply(const FUEPIEditContext&, const FJsonObject&) override { return Unsupported(); }
-
-		private:
-			FUEPIEditResult Unsupported() const
-			{
-				FUEPIEditResult Result;
-				Result.ErrorCode = TEXT("UEPI_EDIT_HANDLER_REQUIRES_BRIDGE_EXECUTOR");
-				Result.Message = TEXT("This registered operation is executed by the guarded Editor Bridge executor.");
-				return Result;
-			}
-
-			FUEPIEditOperationDescriptor Descriptor;
-		};
-
 		FUEPIEditOperationDescriptor Descriptor(const TCHAR* Name, const TCHAR* Domain, const TCHAR* Risk, std::initializer_list<const TCHAR*> TargetFields, const TCHAR* Validation = TEXT("generic_uobject"))
 		{
 			FUEPIEditOperationDescriptor Value;
@@ -211,11 +186,11 @@ namespace UE::ProjectIntelligence
 		{
 			if (Item.Domain == TEXT("actor")) RegisterOperation(MakeUEPIActorOperation(Item));
 			else if (Item.Domain == TEXT("animation")) RegisterOperation(MakeUEPIAnimationOperation(Item));
+			else if (Item.Domain == TEXT("blueprint") || Item.Domain == TEXT("animgraph")) RegisterOperation(MakeUEPIBlueprintOperation(Item));
 			else if (Item.Domain == TEXT("input")) RegisterOperation(MakeUEPIInputOperation(Item));
 			else if (Item.Domain == TEXT("material")) RegisterOperation(MakeUEPIMaterialOperation(Item));
 			else if (Item.Domain == TEXT("content") || Item.Name == TEXT("asset.set_properties")) RegisterOperation(MakeUEPIContentOperation(Item));
 			else if (Item.Domain == TEXT("umg")) RegisterOperation(MakeUEPIWidgetOperation(Item));
-			else RegisterOperation(MakeShared<FUEPIRegisteredBridgeOperation>(Item));
 		}
 	}
 

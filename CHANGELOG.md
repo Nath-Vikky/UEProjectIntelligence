@@ -18,6 +18,8 @@
 - Migrated DataAsset creation, typed UObject writes, explicit save targets, folder/copy/rename/import operations into concrete Registry handlers with planned-class preflight.
 - Migrated Widget Blueprint creation, Text/Button insertion, Canvas slot layout, and button event binding into concrete Registry handlers with planned-widget support.
 - Migrated Animation Slot registration, Montage creation/tracks/segments/sections/blend, and preview-mesh writes into concrete Registry handlers with same-plan skeleton and Montage state.
+- Migrated Blueprint and AnimGraph variable/component/function/node/pin/compile writes into concrete Registry handlers with full preflight and same-plan graph-object references.
+- Removed the final per-operation mutation branches, fallback Bridge handler, and migrated-domain helper code from the Editor Bridge; the Registry is now the single write capability and execution source.
 - Added project-plugin content/source indexing, project-local Codex setup, machine-readable Doctor, versioned public schemas, v2 contract export, and source/prebuilt release packaging.
 - Kept the release marked experimental alpha until the UE5.3.2 real-machine matrix is complete.
 

@@ -15,6 +15,16 @@ namespace UE::ProjectIntelligence
 		bool bRecoverable = false;
 	};
 
+	struct FUEPIEditExecutionState
+	{
+		TMap<FString, UObject*> ObjectRefs;
+		TSet<FString> PlannedObjectRefs;
+		TMap<FString, UClass*> PlannedObjectClasses;
+		TMap<FString, TSet<FName>> PlannedVariables;
+		TMap<FString, TSet<FName>> PlannedFunctions;
+		TMap<FString, TMap<FName, UClass*>> PlannedComponents;
+	};
+
 	struct FUEPIEditContext
 	{
 		FString TransactionId;
@@ -24,9 +34,13 @@ namespace UE::ProjectIntelligence
 		TMap<FString, UClass*> ResolvedAssetClasses;
 		TMap<FString, TSet<FName>> PlannedSkeletonSlots;
 		TMap<FString, FString> PlannedAssetSkeletons;
+		FUEPIEditExecutionState* ExecutionState = nullptr;
+		TArray<FString> OperationReferences;
+		int32 OperationIndex = 0;
 		bool bDryRun = true;
 		bool bAllowSave = false;
 		bool bAllowDelete = false;
+		bool bAllowBlueprintEdits = false;
 	};
 
 	struct FUEPIEditResult
