@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "Tools"))
 
 from uepi.bridge_client import _read_token  # noqa: E402
 from uepi.diff import build_transaction_diff  # noqa: E402
-from uepi.edit import _asset_values  # noqa: E402
+from uepi.edit import _apply_timeout_seconds, _asset_values, _budget_diagnostics, _refresh_timeout_seconds, _transaction_budgets  # noqa: E402
 from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
 from uepi.runtime import _approved_subset, _matches_approved, _value_at_path  # noqa: E402
 from uepi.store import resolve_store_root  # noqa: E402
@@ -57,10 +57,17 @@ def assert_doctor_contract() -> None:
     assert _pid_alive(os.getpid())
     legacy = _capability_settings({"write_enabled": True, "allow_save": True})
     assert legacy["write_enabled"] is True
+    assert legacy["max_assets_per_transaction"] == 0
     advertised = _capability_settings({"capabilities": ["edit.apply"], "allow_save": True})
     assert advertised["write_enabled"] is True
     disabled = _capability_settings({"capabilities": ["edit.discover"], "allow_save": True})
     assert disabled["write_enabled"] is False
+    configured = _capability_settings(
+        {"capabilities": ["edit.apply"], "allow_save": True},
+        {"max_operations_per_transaction": 96, "max_assets_per_transaction": 12},
+    )
+    assert configured["max_operations_per_transaction"] == 96
+    assert configured["max_assets_per_transaction"] == 12
 
 
 def assert_edit_asset_scope_contract() -> None:
@@ -91,6 +98,40 @@ def assert_edit_asset_scope_contract() -> None:
     diff = build_transaction_diff(plan, apply_result, [{"asset": destination, "exists": True}])
     assert diff["created_assets"] == [destination]
     assert diff["removed_assets"] == []
+
+
+def assert_edit_transaction_budget_contract() -> None:
+    defaults = _transaction_budgets(None)
+    assert defaults == {
+        "max_operations": 96,
+        "max_assets": 12,
+        "high_risk_operations": 64,
+        "high_risk_assets": 12,
+    }
+    configured = _transaction_budgets({
+        "settings": {
+            "max_operations_per_transaction": 160,
+            "max_assets_per_transaction": 32,
+            "high_risk_operation_threshold": 64,
+            "high_risk_asset_threshold": 12,
+        }
+    })
+    assert configured["max_operations"] == 160
+    assert configured["max_assets"] == 32
+    assert _budget_diagnostics(64, 12, configured) == []
+    large = _budget_diagnostics(65, 13, configured)
+    assert [item["code"] for item in large] == ["UEPI_EDIT_LARGE_ATOMIC_TRANSACTION"]
+    over_limit = _budget_diagnostics(161, 33, configured)
+    assert {item["code"] for item in over_limit} == {
+        "UEPI_EDIT_TOO_MANY_OPERATIONS",
+        "UEPI_EDIT_TOO_MANY_ASSETS",
+        "UEPI_EDIT_LARGE_ATOMIC_TRANSACTION",
+    }
+    small_plan = {"operations": [{}] * 8, "affected_assets": ["/Game/A.A"]}
+    large_plan = {"operations": [{}] * 96, "affected_assets": [f"/Game/A{index}.A{index}" for index in range(12)]}
+    assert _apply_timeout_seconds(small_plan) == 31.0
+    assert _apply_timeout_seconds(large_plan) > _apply_timeout_seconds(small_plan)
+    assert _refresh_timeout_seconds(large_plan) > _refresh_timeout_seconds(small_plan)
 
 
 def assert_envelope(value: dict[str, Any]) -> None:
@@ -1046,6 +1087,7 @@ def assert_bridge_token_and_registry_resolution(root: Path) -> None:
 def main() -> int:
     assert_doctor_contract()
     assert_edit_asset_scope_contract()
+    assert_edit_transaction_budget_contract()
     assert_plan_v2_contract()
     assert_runtime_ticket_contract()
     with tempfile.TemporaryDirectory(prefix="uepi_snapshot_mcp_") as temp_dir:

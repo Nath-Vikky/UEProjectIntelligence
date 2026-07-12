@@ -1610,6 +1610,8 @@ namespace UE::ProjectIntelligence
 		SettingsObject->SetBoolField(TEXT("saving_enabled"), Settings && Settings->bAllowSavingPackages);
 		SettingsObject->SetNumberField(TEXT("max_operations_per_transaction"), Settings ? Settings->MaxWriteOperationsPerTransaction : 0);
 		SettingsObject->SetNumberField(TEXT("max_assets_per_transaction"), Settings ? Settings->MaxWriteAssetsPerTransaction : 0);
+		SettingsObject->SetNumberField(TEXT("high_risk_operation_threshold"), 64);
+		SettingsObject->SetNumberField(TEXT("high_risk_asset_threshold"), 12);
 
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-discover.v2"));

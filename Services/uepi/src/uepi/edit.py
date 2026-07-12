@@ -19,6 +19,48 @@ from .diff import build_transaction_diff
 from .store import SnapshotStore
 
 
+def _positive_int(value: Any, fallback: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
+
+
+def _transaction_budgets(catalog: dict[str, Any] | None) -> dict[str, int]:
+    settings = catalog.get("settings") if isinstance(catalog, dict) and isinstance(catalog.get("settings"), dict) else {}
+    max_operations = _positive_int(settings.get("max_operations_per_transaction"), 96)
+    max_assets = _positive_int(settings.get("max_assets_per_transaction"), 12)
+    return {
+        "max_operations": max_operations,
+        "max_assets": max_assets,
+        "high_risk_operations": min(max_operations, _positive_int(settings.get("high_risk_operation_threshold"), 64)),
+        "high_risk_assets": min(max_assets, _positive_int(settings.get("high_risk_asset_threshold"), 12)),
+    }
+
+
+def _apply_timeout_seconds(plan: dict[str, Any]) -> float:
+    operation_count = len(plan.get("operations") or [])
+    asset_count = len(plan.get("affected_assets") or [])
+    return min(300.0, max(30.0, 20.0 + operation_count * 0.75 + asset_count * 5.0))
+
+
+def _refresh_timeout_seconds(plan: dict[str, Any]) -> float:
+    asset_count = len(plan.get("affected_assets") or [])
+    return min(180.0, max(30.0, 15.0 + asset_count * 4.0))
+
+
+def _budget_diagnostics(operation_count: int, asset_count: int, budgets: dict[str, int]) -> list[dict[str, Any]]:
+    diagnostics: list[dict[str, Any]] = []
+    if operation_count > budgets["max_operations"]:
+        diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_EDIT_TOO_MANY_OPERATIONS", "message": f"Operation count {operation_count} exceeds the active Editor transaction limit {budgets['max_operations']}; revise or split the plan before approval.", "phase": "preview", "retryable": False, "recoverable": True})
+    if asset_count > budgets["max_assets"]:
+        diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_EDIT_TOO_MANY_ASSETS", "message": f"Affected asset count {asset_count} exceeds the active Editor transaction limit {budgets['max_assets']}; revise or split the plan before approval.", "phase": "preview", "retryable": False, "recoverable": True})
+    if operation_count > budgets["high_risk_operations"] or asset_count > budgets["high_risk_assets"]:
+        diagnostics.append({"severity": "warning", "blocking": False, "code": "UEPI_EDIT_LARGE_ATOMIC_TRANSACTION", "message": "This is a large atomic transaction. UEPI will use extended Apply/Refresh timeouts and preserve all-target backup and rollback semantics.", "phase": "preview", "retryable": False, "recoverable": True})
+    return diagnostics
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -333,6 +375,8 @@ def preview(
                     diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_READ_NOT_APPROVED", "message": f"Read/assert step {step_index} requires an exact object selector and property or allowlisted function.", "phase": "preview", "retryable": False, "recoverable": True})
     affected = sorted(set(affected))
     dependencies = sorted(set(dependencies) - set(affected))
+    budgets = _transaction_budgets(catalog)
+    diagnostics.extend(_budget_diagnostics(len(normalized), len(affected), budgets))
     status = resolve_status(
         store,
         _state(store),
@@ -355,6 +399,8 @@ def preview(
     fingerprint_assets = sorted(set(affected + dependencies))
     risk_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
     risk_level = max((str(descriptors.get(str(item.get("type")), {}).get("risk") or "medium") for item in normalized), key=lambda value: risk_order.get(value, 1), default="low")
+    if len(normalized) > budgets["high_risk_operations"] or len(affected) > budgets["high_risk_assets"]:
+        risk_level = max(risk_level, "high", key=lambda value: risk_order.get(value, 1))
     plan = {
         "schema_version": PLAN_SCHEMA,
         "schema_aliases": ["uepi.edit-plan.v2"],
@@ -391,6 +437,7 @@ def preview(
         "save_policy": "after_validation",
         "validation_policy": "typed_registry",
         "validation_plan": [{"operation_id": item.get("operation_id"), "validator": descriptors.get(str(item.get("type")), {}).get("validation_behavior") or descriptors.get(str(item.get("type")), {}).get("validation_mode") or "generic_uobject"} for item in normalized],
+        "transaction_budget": {**budgets, "operation_count": len(normalized), "asset_count": len(affected)},
         "risk": {"level": risk_level, "requires_user_approval": True, "operation_count": len(normalized), "asset_count": len(affected)},
         "approval": {"required": True, "nonce": nonce},
         "evidence": evidence or [],
@@ -405,9 +452,9 @@ def preview(
         store,
         tool="uepi_edit_preview",
         operation="preview",
-        result={"plan": plan, "audit_path": audit_path, "approval_request": {"transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "approval_nonce": plan["approval_nonce"], "summary": intent, "affected_assets": affected, "dependency_assets": dependencies}},
+        result={"plan": plan, "audit_path": audit_path, "approval_request": {"transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "approval_nonce": plan["approval_nonce"], "summary": intent, "affected_assets": affected, "dependency_assets": dependencies, "continuation": "After explicit user approval, the Agent calls uepi_edit_apply immediately and completes post-apply validation, refresh, diff, and approved runtime verification without further confirmation."}},
         diagnostics=diagnostics,
-        next_actions=[{"reason": "Apply only after one explicit user approval of this immutable plan.", "tool": "uepi_edit_apply", "arguments": {"transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "approval_nonce": plan["approval_nonce"], "approved": True}}],
+        next_actions=[{"reason": "Wait for one explicit user approval, then the Agent must call Apply automatically with these immutable arguments; do not ask the user to invoke the tool manually or reconfirm unchanged phases.", "tool": "uepi_edit_apply", "arguments": {"transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "approval_nonce": plan["approval_nonce"], "approved": True}}],
     )
 
 
@@ -451,12 +498,12 @@ def apply(store: SnapshotStore, transaction_id: str = "", approved: bool = False
     catalog, diagnostics, bridge_error = load_catalog(store, identity, refresh=True)
     if not catalog or catalog.get("catalog_hash") != plan.get("catalog_hash"):
         return _response(store, tool="uepi_edit_apply", operation="apply", error={"code": "UEPI_EDIT_CATALOG_STALE", "message": "Operation catalog changed after Preview.", "retryable": False, "candidates": []}, diagnostics=diagnostics)
-    response = call_bridge(store, "edit.apply", {"transaction_id": transaction_id, "approved": True, "plan_hash": plan_hash, "approval_nonce": approval_nonce, "save": True, "plan": plan}, timeout=30.0, expected_identity=identity, expected_editor_session_id=str(plan.get("editor_session_id") or ""))
+    response = call_bridge(store, "edit.apply", {"transaction_id": transaction_id, "approved": True, "plan_hash": plan_hash, "approval_nonce": approval_nonce, "save": True, "plan": plan}, timeout=_apply_timeout_seconds(plan), expected_identity=identity, expected_editor_session_id=str(plan.get("editor_session_id") or ""))
     if not response.get("ok"):
         code = str((response.get("error") or {}).get("code") or next((item.get("code") for item in response.get("diagnostics") or [] if isinstance(item, dict)), "UEPI_EDIT_APPLY_FAILED"))
         return _response(store, tool="uepi_edit_apply", operation="apply", error={"code": code, "message": str((response.get("error") or {}).get("message") or "Editor Apply failed during preflight or execution."), "retryable": False, "candidates": []}, diagnostics=diagnostics + list(response.get("diagnostics") or []))
     result = response.get("result") if isinstance(response.get("result"), dict) else {}
-    refresh_result = _wait_refresh(store, str(result.get("refresh_request_path") or "")) if result.get("refresh_request_path") else None
+    refresh_result = _wait_refresh(store, str(result.get("refresh_request_path") or ""), timeout_seconds=_refresh_timeout_seconds(plan)) if result.get("refresh_request_path") else None
     after_fingerprints = [_fingerprint(store, asset) for asset in plan.get("affected_assets") or []]
     result["transaction_diff"] = build_transaction_diff(plan, result, after_fingerprints)
     runtime_ticket = _runtime_ticket(store, plan) if result.get("validation_ok") and result.get("saved") else None

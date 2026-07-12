@@ -42,6 +42,7 @@
 - Golden hardening corrected `BlueprintReadOnly` reflection semantics, added parameterized allowlisted invoke and typed return values, made Bridge session JSON replacement atomic, and deferred new PrimaryDataAsset registration until same-plan identity properties are final.
 - The `2.0.0-beta.1` Source archive passes an isolated UE5.3.2 Win64 `BuildPlugin`; the Win64 archive contains that isolated DLL and passes root, version, exclusion, manifest, and checksum inspection.
 - A clean UEPIBlank reinstall from the Beta.1 Win64 archive starts beside LLMNPCDemo, binds its own Editor session, and passes online Doctor 17/17 with exact-project Bridge routing and all 64 operations.
+- Post-Beta hardening raises the default atomic budget to 96 operations/12 assets, checks active Editor limits during Preview, reports large-transaction risk, scales Apply/Refresh timeouts, and makes the one-approval Agent continuation contract explicit. Online GasDemo Doctor reports the new limits and the 13-asset dry-run is blocked before approval.
 
 ## Beta.1 Release Gate
 

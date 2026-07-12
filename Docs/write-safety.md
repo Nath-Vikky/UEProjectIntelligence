@@ -30,6 +30,10 @@ bAllowSavingPackages = true
 
 Saving is touched-only. UEPI resolves and backs up every target package before mutation, validates it, saves only packages changed by the approved plan, records hashes, and can restore saved files plus reload their packages. Dirty targets and read-only package files block preflight.
 
+The Agent-ready default atomic budget is 96 operations and 12 affected assets. Projects may configure up to 256 operations and 64 assets, but UEPI does not treat a higher cap as weaker safety: Preview blocks over-budget plans before approval, larger accepted plans are marked high-risk, and every target still participates in preflight, backup, validation, touched-only save, refresh, diff, and rollback.
+
+Explicit approval is required exactly once for an immutable Preview. It is not approval to write generally. After that approval, the Agent should invoke Apply and finish every unchanged post-apply phase automatically; asking the user to press or call Apply manually is not part of the normal workflow.
+
 ## Rejected Commands
 
 These capabilities must not be exposed directly as MCP tools:

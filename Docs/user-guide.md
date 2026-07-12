@@ -109,7 +109,7 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 2. Use `uepi_search` or `uepi_context` to identify candidate assets.
 3. Call the narrow read tool needed by the question.
 4. If the user asks for a project change, call `uepi_edit_discover`, compare compact and expanded Blueprint designs when relevant, then create one complete `uepi_edit_preview` plan for the intended edit.
-5. Ask for explicit approval once; after approval, call `uepi_edit_apply`, `uepi_edit_validate`, refresh/read the changed asset, and use `uepi_diff` where applicable without more approval prompts unless the plan changes.
+5. Ask for explicit approval once. After the user approves the unchanged Preview, the Agent calls `uepi_edit_apply` itself and completes validation, touched-only save, refresh/read, `uepi_diff`, and approved Runtime verification without asking the user to invoke Apply or reconfirm phases.
 6. If diagnostics include `UEPI_REFRESH_REQUESTED`, wait briefly and retry the same tool.
 7. If diagnostics include `UEPI_SNAPSHOT_STALE`, open the editor/plugin for realtime refresh or run a commandlet scan.
 
@@ -137,6 +137,8 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 - `uepi_edit_rollback`: undo the last applied UEPI transaction in the editor session.
 
 Successful approved plans save only touched packages by default. UEPI never exposes save-all.
+
+Fresh installs allow up to 96 operations and 12 affected assets in one atomic transaction. Project Settings may raise the hard caps to 256 operations and 64 assets. Preview rejects over-budget plans before approval; plans above the normal 64-operation or 12-asset risk thresholds are marked as large atomic transactions and use extended execution timeouts.
 
 ## Verify
 

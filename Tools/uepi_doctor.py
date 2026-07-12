@@ -71,13 +71,16 @@ def _pid_alive(pid: Any) -> bool:
         return False
 
 
-def _capability_settings(session: dict[str, Any]) -> dict[str, bool]:
+def _capability_settings(session: dict[str, Any], catalog_settings: dict[str, Any] | None = None) -> dict[str, Any]:
     advertised = {str(value) for value in session.get("capabilities") or []}
+    settings = catalog_settings if isinstance(catalog_settings, dict) else {}
     return {
         "write_enabled": bool(session.get("write_enabled", "edit.apply" in advertised)),
         "allow_save": bool(session.get("allow_save")),
         "allow_pie": bool(session.get("allow_pie")),
         "allow_runtime_invoke": bool(session.get("allow_runtime_invoke")),
+        "max_operations_per_transaction": int(settings.get("max_operations_per_transaction") or 0),
+        "max_assets_per_transaction": int(settings.get("max_assets_per_transaction") or 0),
     }
 
 
@@ -192,9 +195,10 @@ def run_doctor(project: Path, *, require_editor: bool = False) -> dict[str, Any]
         catalog_result = catalog_response.get("result") if isinstance(catalog_response.get("result"), dict) else {}
         catalog_ok = bool(catalog_response.get("ok") and catalog_result.get("catalog_hash") and catalog_result.get("operations"))
         checks.append(_check("operation_catalog", catalog_ok, f"Operation catalog contains {len(catalog_result.get('operations') or [])} operations." if catalog_ok else "Operation catalog is unavailable.", required=require_editor))
-        capabilities = _capability_settings(session)
-        capabilities_ok = capabilities["write_enabled"] and capabilities["allow_save"]
-        checks.append(_check("capability_settings", capabilities_ok, "Guarded write and touched-only save are enabled." if capabilities_ok else "Guarded write or touched-only save is disabled.", required=require_editor, details=capabilities))
+        catalog_settings = catalog_result.get("settings") if isinstance(catalog_result.get("settings"), dict) else {}
+        capabilities = _capability_settings(session, catalog_settings)
+        capabilities_ok = capabilities["write_enabled"] and capabilities["allow_save"] and capabilities["max_operations_per_transaction"] > 0 and capabilities["max_assets_per_transaction"] > 0
+        checks.append(_check("capability_settings", capabilities_ok, f"Guarded write and touched-only save are enabled with limits of {capabilities['max_operations_per_transaction']} operations and {capabilities['max_assets_per_transaction']} assets." if capabilities_ok else "Guarded write, touched-only save, or transaction budgets are unavailable.", required=require_editor, details=capabilities))
     else:
         for name, message in (
             ("editor_session_binding", "No live Editor Bridge session is published."),

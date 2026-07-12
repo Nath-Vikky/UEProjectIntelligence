@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Raised the Agent-ready atomic transaction defaults from 32 operations/3 assets to 96 operations/12 assets, with configurable hard caps of 256 operations and 64 assets.
+- Moved operation and affected-asset budget enforcement into Preview so oversized plans are rejected before user approval and expose no Apply next action.
+- Added large-transaction risk diagnostics plus complexity-scaled Apply and targeted-refresh timeouts while preserving all-target backup and rollback semantics.
+- Clarified the one-approval continuation contract: after explicit approval of an unchanged Preview, the Agent calls Apply and completes validation, touched-only save, refresh, diff, and approved runtime verification without manual tool invocation or repeated confirmation.
+- Extended Doctor capability output with the active Editor operation and asset transaction limits.
+
 ## 2.0.0-beta.1
 
 - Completed the UE5.3.2 LLMNPCDemo Golden: exact DefaultSlot read, reflected MotionTemplate schema, one-approval DataAsset create/configure/validate/save/refresh/diff, typed runtime invoke, Waving start/completion assertions, viewport capture, log check, PIE cleanup, and restart persistence readback.

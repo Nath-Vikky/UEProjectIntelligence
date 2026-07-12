@@ -9,6 +9,7 @@ UEPI 2.0 Beta is release-qualified for Unreal Engine 5.3.2 and Codex on Windows.
 - Dirty target packages are blocked. UEPI does not merge user-unsaved asset changes.
 - Source-control checkout, locking, changelists, conflict resolution, and submit are not automated.
 - Rollback covers supported touched packages through transaction backup/restore and compensation. It is not a database-style global transaction across external tools or source control.
+- Atomic transactions default to 96 operations and 12 affected assets. Projects can opt into hard caps of 256 operations and 64 assets; workloads beyond the configured limit must be redesigned or split, and a split plan is not represented as one atomic transaction.
 - Generic Blueprint authoring supports registered node kinds and real reflected pins; arbitrary node classes, State Machine authoring, Control Rig, Behavior Tree, Niagara, PCG, MetaSound, Sequencer, Landscape, and Foliage writes are outside this Beta.
 - Animation reconstruction artifacts describe sampled source motion and can drive procedural recreation, but UEPI does not evaluate final runtime poses through every AnimGraph, Control Rig, IK, physics, or retargeting layer.
 - Optional plugin readers compile only when their project plugins are enabled. Otherwise UEPI returns generic Asset Registry/reflection evidence.

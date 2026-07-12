@@ -21,6 +21,7 @@
     "operation_order": {"type": "array", "items": {"type": "string"}},
     "predicted_touched_packages": {"type": "array", "items": {"type": "string"}},
     "validation_plan": {"type": "array", "items": {"type": "object"}},
+    "transaction_budget": {"type": "object", "required": ["max_operations", "max_assets", "operation_count", "asset_count"]},
     "save_policy": {"enum": ["never", "after_validation", "explicit_operation"]},
     "risk": {"type": "object"},
     "approval": {"type": "object", "required": ["required", "nonce", "plan_hash"]},
