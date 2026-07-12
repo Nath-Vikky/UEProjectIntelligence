@@ -62,6 +62,7 @@ namespace UE::ProjectIntelligence
 		FString RollbackMode = TEXT("editor_transaction");
 		FString ValidationMode = TEXT("generic_uobject");
 		TArray<FString> TargetFields;
+		TArray<FString> DependencyFields;
 		TArray<FString> RequiredCapabilities;
 		TArray<FString> SupportedEngineVersions = { TEXT("5.3.2") };
 		TArray<FString> SupportedAssetClasses;

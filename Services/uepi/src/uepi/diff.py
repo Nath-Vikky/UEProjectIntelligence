@@ -44,23 +44,44 @@ def build_transaction_diff(plan: dict[str, Any], apply_result: dict[str, Any], a
             nodes.append({"change": change, "node": detail["node"]})
         if isinstance(detail.get("source_node"), dict) and isinstance(detail.get("target_node"), dict):
             links.append({"change": "disconnected" if "disconnect" in op_type or "break_all" in op_type else "connected", "source_node": detail["source_node"].get("node_guid"), "target_node": detail["target_node"].get("node_guid")})
-        if op_type in {"content.create_asset", "material.create_instance", "widget.create", "input.create_action", "input.create_mapping_context", "animation.create_montage_from_sequence"}:
+        if op_type in {"content.create_asset", "content.duplicate_asset", "material.create_instance", "widget.create", "input.create_action", "input.create_mapping_context", "animation.create_montage_from_sequence"}:
             asset = detail.get("asset_path") or detail.get("asset")
             if isinstance(asset, dict):
                 asset = asset.get("path")
             if isinstance(asset, str):
                 created_assets.append(asset)
+    before_by_asset = {
+        str(item.get("asset")): item
+        for item in plan.get("before_fingerprints") or []
+        if isinstance(item, dict) and item.get("asset")
+    }
+    after_values = after_fingerprints or []
+    for item in after_values:
+        if not isinstance(item, dict) or not item.get("asset"):
+            continue
+        asset = str(item["asset"])
+        before = before_by_asset.get(asset, {})
+        if not bool(before.get("exists")) and bool(item.get("exists")):
+            created_assets.append(asset)
+    affected_assets = {str(asset) for asset in plan.get("affected_assets") or []}
+    removed_assets = sorted({
+        asset
+        for asset, before in before_by_asset.items()
+        if asset in affected_assets
+        and bool(before.get("exists"))
+        and not bool(next((item for item in after_values if isinstance(item, dict) and str(item.get("asset")) == asset), {}).get("exists"))
+    })
     return {
         "schema_version": "uepi.transaction-diff.v1",
         "transaction_id": plan.get("transaction_id"),
         "plan_hash": plan.get("plan_hash"),
         "created_assets": sorted(set(created_assets)),
-        "removed_assets": [],
+        "removed_assets": removed_assets,
         "property_changes": properties,
         "node_changes": nodes,
         "link_changes": links,
         "before_fingerprints": plan.get("before_fingerprints") or [],
-        "after_fingerprints": after_fingerprints or [],
+        "after_fingerprints": after_values,
         "saved": bool(apply_result.get("saved")),
         "saved_file_hashes": apply_result.get("saved_file_hashes") or [],
         "validation_ok": bool(apply_result.get("validation_ok")),

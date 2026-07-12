@@ -13,7 +13,13 @@ namespace UE::ProjectIntelligence
 {
 	namespace
 	{
-		FUEPIEditOperationDescriptor Descriptor(const TCHAR* Name, const TCHAR* Domain, const TCHAR* Risk, std::initializer_list<const TCHAR*> TargetFields, const TCHAR* Validation = TEXT("generic_uobject"))
+		FUEPIEditOperationDescriptor Descriptor(
+			const TCHAR* Name,
+			const TCHAR* Domain,
+			const TCHAR* Risk,
+			std::initializer_list<const TCHAR*> TargetFields,
+			const TCHAR* Validation = TEXT("generic_uobject"),
+			std::initializer_list<const TCHAR*> DependencyFields = {})
 		{
 			FUEPIEditOperationDescriptor Value;
 			Value.Name = Name;
@@ -28,6 +34,10 @@ namespace UE::ProjectIntelligence
 			for (const TCHAR* Field : TargetFields)
 			{
 				Value.TargetFields.Add(Field);
+			}
+			for (const TCHAR* Field : DependencyFields)
+			{
+				Value.DependencyFields.Add(Field);
 			}
 			return Value;
 		}
@@ -83,13 +93,14 @@ namespace UE::ProjectIntelligence
 		for (const FUEPIEditOperationDescriptor& Item : GetDescriptors())
 		{
 			Canonical += FString::Printf(
-				TEXT("%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%d|%d\n"),
+				TEXT("%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%d|%d\n"),
 				*Item.Name,
 				Item.Version,
 				*Item.Domain,
 				*Item.Summary,
 				*Item.Risk,
 				*FString::Join(Item.TargetFields, TEXT(",")),
+				*FString::Join(Item.DependencyFields, TEXT(",")),
 				*FString::Join(Item.RequiredCapabilities, TEXT(",")),
 				*FString::Join(Item.SupportedEngineVersions, TEXT(",")),
 				*FString::Join(Item.SupportedAssetClasses, TEXT(",")),
@@ -144,26 +155,26 @@ namespace UE::ProjectIntelligence
 			Descriptor(TEXT("animgraph.compile"), TEXT("animgraph"), TEXT("low"), { TEXT("asset") }, TEXT("anim_blueprint")),
 			Descriptor(TEXT("animation.register_slot"), TEXT("animation"), TEXT("medium"), { TEXT("skeleton") }, TEXT("animation")),
 			Descriptor(TEXT("animation.create_slot_group"), TEXT("animation"), TEXT("medium"), { TEXT("skeleton") }, TEXT("animation")),
-			Descriptor(TEXT("animation.create_montage_from_sequence"), TEXT("animation"), TEXT("medium"), { TEXT("sequence"), TEXT("destination_asset") }, TEXT("animation")),
+			Descriptor(TEXT("animation.create_montage_from_sequence"), TEXT("animation"), TEXT("medium"), { TEXT("destination_asset") }, TEXT("animation"), { TEXT("sequence") }),
 			Descriptor(TEXT("animation.add_montage_slot_track"), TEXT("animation"), TEXT("medium"), { TEXT("asset") }, TEXT("animation")),
-			Descriptor(TEXT("animation.add_montage_segment"), TEXT("animation"), TEXT("medium"), { TEXT("asset"), TEXT("sequence") }, TEXT("animation")),
+			Descriptor(TEXT("animation.add_montage_segment"), TEXT("animation"), TEXT("medium"), { TEXT("asset") }, TEXT("animation"), { TEXT("sequence") }),
 			Descriptor(TEXT("animation.add_montage_section"), TEXT("animation"), TEXT("medium"), { TEXT("asset") }, TEXT("animation")),
 			Descriptor(TEXT("animation.set_montage_blend"), TEXT("animation"), TEXT("low"), { TEXT("asset") }, TEXT("animation")),
-			Descriptor(TEXT("animation.set_preview_mesh"), TEXT("animation"), TEXT("low"), { TEXT("asset"), TEXT("preview_mesh") }, TEXT("animation")),
+			Descriptor(TEXT("animation.set_preview_mesh"), TEXT("animation"), TEXT("low"), { TEXT("asset") }, TEXT("animation"), { TEXT("preview_mesh") }),
 			Descriptor(TEXT("content.save_assets"), TEXT("content"), TEXT("low"), { TEXT("assets") }),
 			Descriptor(TEXT("actor.spawn"), TEXT("actor"), TEXT("medium"), { TEXT("level") }, TEXT("world")),
 			Descriptor(TEXT("actor.set_transform"), TEXT("actor"), TEXT("medium"), { TEXT("actor") }, TEXT("world")),
 			Descriptor(TEXT("actor.set_property"), TEXT("actor"), TEXT("medium"), { TEXT("actor") }, TEXT("world")),
 			Descriptor(TEXT("actor.set_properties"), TEXT("actor"), TEXT("medium"), { TEXT("actor") }, TEXT("world")),
-			Descriptor(TEXT("material.create_instance"), TEXT("material"), TEXT("medium"), { TEXT("destination_asset"), TEXT("parent") }, TEXT("material")),
+			Descriptor(TEXT("material.create_instance"), TEXT("material"), TEXT("medium"), { TEXT("destination_asset") }, TEXT("material"), { TEXT("parent") }),
 			Descriptor(TEXT("material.set_scalar_parameter"), TEXT("material"), TEXT("medium"), { TEXT("asset") }, TEXT("material")),
 			Descriptor(TEXT("material.set_vector_parameter"), TEXT("material"), TEXT("medium"), { TEXT("asset") }, TEXT("material")),
-			Descriptor(TEXT("material.set_texture_parameter"), TEXT("material"), TEXT("medium"), { TEXT("asset"), TEXT("texture") }, TEXT("material")),
-			Descriptor(TEXT("material.apply_to_actor"), TEXT("material"), TEXT("medium"), { TEXT("actor"), TEXT("material") }, TEXT("world")),
-			Descriptor(TEXT("material.apply_to_blueprint_component"), TEXT("material"), TEXT("medium"), { TEXT("asset"), TEXT("material") }, TEXT("blueprint")),
+			Descriptor(TEXT("material.set_texture_parameter"), TEXT("material"), TEXT("medium"), { TEXT("asset") }, TEXT("material"), { TEXT("texture") }),
+			Descriptor(TEXT("material.apply_to_actor"), TEXT("material"), TEXT("medium"), { TEXT("actor") }, TEXT("world"), { TEXT("material") }),
+			Descriptor(TEXT("material.apply_to_blueprint_component"), TEXT("material"), TEXT("medium"), { TEXT("asset") }, TEXT("blueprint"), { TEXT("material") }),
 			Descriptor(TEXT("content.import"), TEXT("content"), TEXT("medium"), { TEXT("destination_asset") }),
 			Descriptor(TEXT("content.create_folder"), TEXT("content"), TEXT("low"), { TEXT("folder") }),
-			Descriptor(TEXT("content.duplicate_asset"), TEXT("content"), TEXT("medium"), { TEXT("source"), TEXT("destination_asset") }),
+			Descriptor(TEXT("content.duplicate_asset"), TEXT("content"), TEXT("medium"), { TEXT("destination_asset") }, TEXT("generic_uobject"), { TEXT("source") }),
 			Descriptor(TEXT("content.rename_asset"), TEXT("content"), TEXT("high"), { TEXT("asset"), TEXT("destination_asset") }),
 			Descriptor(TEXT("content.create_asset"), TEXT("content"), TEXT("medium"), { TEXT("destination_asset") }, TEXT("data_asset")),
 			Descriptor(TEXT("asset.set_properties"), TEXT("asset"), TEXT("medium"), { TEXT("asset") }, TEXT("generic_uobject")),
@@ -175,8 +186,8 @@ namespace UE::ProjectIntelligence
 			Descriptor(TEXT("widget.bind_button_to_custom_event"), TEXT("umg"), TEXT("medium"), { TEXT("asset") }, TEXT("widget")),
 			Descriptor(TEXT("input.create_action"), TEXT("input"), TEXT("medium"), { TEXT("destination_asset") }, TEXT("input")),
 			Descriptor(TEXT("input.create_mapping_context"), TEXT("input"), TEXT("medium"), { TEXT("destination_asset") }, TEXT("input")),
-			Descriptor(TEXT("input.add_key_mapping"), TEXT("input"), TEXT("medium"), { TEXT("context"), TEXT("action") }, TEXT("input")),
-			Descriptor(TEXT("input.remove_key_mapping"), TEXT("input"), TEXT("medium"), { TEXT("context"), TEXT("action") }, TEXT("input"))
+			Descriptor(TEXT("input.add_key_mapping"), TEXT("input"), TEXT("medium"), { TEXT("context") }, TEXT("input"), { TEXT("action") }),
+			Descriptor(TEXT("input.remove_key_mapping"), TEXT("input"), TEXT("medium"), { TEXT("context") }, TEXT("input"), { TEXT("action") })
 		};
 		for (const FUEPIEditOperationDescriptor& Item : Builtins)
 		{

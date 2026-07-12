@@ -94,14 +94,18 @@ def _operation_parts(value: Any, index: int) -> tuple[str, str, dict[str, Any], 
     return op_id, op_type, params, depends_on
 
 
-def _target_values(params: dict[str, Any], descriptor: dict[str, Any]) -> list[str]:
+def _asset_values(params: dict[str, Any], fields: list[Any], operation_assets: dict[str, str]) -> list[str]:
     values: list[str] = []
-    for field in descriptor.get("target_fields") or []:
+    for field in fields:
         value = params.get(str(field))
         if isinstance(value, str) and value.startswith("/"):
             values.append(value)
         elif isinstance(value, list):
             values.extend(child for child in value if isinstance(child, str) and child.startswith("/"))
+        else:
+            referenced = _referenced_operation(value)
+            if referenced and referenced in operation_assets:
+                values.append(operation_assets[referenced])
     return values
 
 
@@ -274,6 +278,7 @@ def preview(
 
     normalized: list[dict[str, Any]] = []
     affected: list[str] = []
+    dependencies: list[str] = []
     operation_assets: dict[str, str] = {}
     seen_ids: set[str] = set()
     for index, raw in enumerate(operations or []):
@@ -297,15 +302,13 @@ def preview(
             "if_exists": str((raw or {}).get("if_exists") or "fail") if isinstance(raw, dict) else "fail",
             "expected_before": (raw or {}).get("expected_before") if isinstance((raw or {}).get("expected_before"), dict) else {},
         })
-        affected.extend(_target_values(params, descriptor))
         created_asset = _destination_asset(params) if op_type.startswith(("content.", "material.", "widget.", "input.")) or op_type == "animation.create_montage_from_sequence" else None
         if created_asset:
             operation_assets[op_id] = created_asset
+        affected.extend(_asset_values(params, list(descriptor.get("target_fields") or []), operation_assets))
+        dependencies.extend(_asset_values(params, list(descriptor.get("dependency_fields") or []), operation_assets))
+        if created_asset:
             affected.append(created_asset)
-        for candidate in (params.get("asset"), params.get("source"), params.get("context"), params.get("action")):
-            referenced = _referenced_operation(candidate)
-            if referenced and referenced in operation_assets:
-                affected.append(operation_assets[referenced])
 
     diagnostics.extend(_quality_diagnostics(normalized))
     if verification_plan:
@@ -324,6 +327,7 @@ def preview(
             elif action in {"read", "wait", "assert"} and (not step.get("object_path") or not step.get("property")):
                 diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_READ_NOT_APPROVED", "message": f"Read/assert step {step_index} requires object_path and property.", "phase": "preview", "retryable": False, "recoverable": True})
     affected = sorted(set(affected))
+    dependencies = sorted(set(dependencies) - set(affected))
     status = resolve_status(
         store,
         _state(store),
@@ -343,6 +347,7 @@ def preview(
     nonce = uuid4().hex
     operation_order = [str(item.get("operation_id")) for item in normalized]
     touched_packages = sorted({asset.split(".", 1)[0] for asset in affected})
+    fingerprint_assets = sorted(set(affected + dependencies))
     risk_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
     risk_level = max((str(descriptors.get(str(item.get("type")), {}).get("risk") or "medium") for item in normalized), key=lambda value: risk_order.get(value, 1), default="low")
     plan = {
@@ -372,9 +377,10 @@ def preview(
         "operations": normalized,
         "operation_order": operation_order,
         "affected_assets": affected,
+        "dependency_assets": dependencies,
         "predicted_touched_objects": affected,
         "predicted_touched_packages": touched_packages,
-        "before_fingerprints": [_fingerprint(store, asset) for asset in affected],
+        "before_fingerprints": [_fingerprint(store, asset) for asset in fingerprint_assets],
         "preconditions": ["exact_project", "exact_editor_session", "catalog_unchanged", "before_fingerprints_unchanged", "targets_clean_and_writable"],
         "dirty_policy": "fail",
         "save_policy": "after_validation",
@@ -389,12 +395,12 @@ def preview(
     plan["approval"]["plan_hash"] = plan["plan_hash"]
     path = _plan_path(store, transaction_id.replace(":", "-"))
     path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
-    audit_path = _audit(store, {"event": "preview", "transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "affected_assets": affected})
+    audit_path = _audit(store, {"event": "preview", "transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "affected_assets": affected, "dependency_assets": dependencies})
     return _response(
         store,
         tool="uepi_edit_preview",
         operation="preview",
-        result={"plan": plan, "audit_path": audit_path, "approval_request": {"transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "approval_nonce": plan["approval_nonce"], "summary": intent, "affected_assets": affected}},
+        result={"plan": plan, "audit_path": audit_path, "approval_request": {"transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "approval_nonce": plan["approval_nonce"], "summary": intent, "affected_assets": affected, "dependency_assets": dependencies}},
         diagnostics=diagnostics,
         next_actions=[{"reason": "Apply only after one explicit user approval of this immutable plan.", "tool": "uepi_edit_apply", "arguments": {"transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "approval_nonce": plan["approval_nonce"], "approved": True}}],
     )

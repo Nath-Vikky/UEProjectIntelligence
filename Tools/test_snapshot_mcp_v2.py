@@ -17,6 +17,8 @@ sys.path.insert(0, str(PYTHONPATH))
 sys.path.insert(0, str(ROOT / "Tools"))
 
 from uepi.bridge_client import _read_token  # noqa: E402
+from uepi.diff import build_transaction_diff  # noqa: E402
+from uepi.edit import _asset_values  # noqa: E402
 from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
 from uepi.store import resolve_store_root  # noqa: E402
 from uepi_doctor import _capability_settings, _pid_alive  # noqa: E402
@@ -58,6 +60,36 @@ def assert_doctor_contract() -> None:
     assert advertised["write_enabled"] is True
     disabled = _capability_settings({"capabilities": ["edit.discover"], "allow_save": True})
     assert disabled["write_enabled"] is False
+
+
+def assert_edit_asset_scope_contract() -> None:
+    source = "/Game/Source.Source"
+    destination = "/Game/Copy.Copy"
+    assert _asset_values({"asset": {"$ref": "copy#asset"}}, ["asset"], {"copy": destination}) == [destination]
+    plan = {
+        "transaction_id": "uepi-tx:scope-test",
+        "affected_assets": [destination],
+        "dependency_assets": [source],
+        "before_fingerprints": [
+            {"asset": source, "exists": True},
+            {"asset": destination, "exists": False},
+        ],
+        "operations": [{"operation_id": "copy", "type": "content.duplicate_asset"}],
+    }
+    apply_result = {
+        "operations": [
+            {
+                "operation_id": "copy",
+                "type": "content.duplicate_asset",
+                "detail": {"source": {"path": source}, "asset": {"path": destination}},
+            }
+        ],
+        "saved": True,
+        "validation_ok": True,
+    }
+    diff = build_transaction_diff(plan, apply_result, [{"asset": destination, "exists": True}])
+    assert diff["created_assets"] == [destination]
+    assert diff["removed_assets"] == []
 
 
 def assert_envelope(value: dict[str, Any]) -> None:
@@ -994,6 +1026,7 @@ def assert_bridge_token_and_registry_resolution(root: Path) -> None:
 
 def main() -> int:
     assert_doctor_contract()
+    assert_edit_asset_scope_contract()
     assert_plan_v2_contract()
     with tempfile.TemporaryDirectory(prefix="uepi_snapshot_mcp_") as temp_dir:
         root = Path(temp_dir)

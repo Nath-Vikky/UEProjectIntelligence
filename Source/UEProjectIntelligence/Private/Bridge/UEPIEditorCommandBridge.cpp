@@ -1382,6 +1382,7 @@ namespace UE::ProjectIntelligence
 			Operation->SetBoolField(TEXT("preview_supported"), true);
 			Operation->SetBoolField(TEXT("apply_supported"), bApplySupported);
 			Operation->SetArrayField(TEXT("target_fields"), StringArrayToJsonValues(Descriptor.TargetFields));
+			Operation->SetArrayField(TEXT("dependency_fields"), StringArrayToJsonValues(Descriptor.DependencyFields));
 			Operation->SetArrayField(TEXT("required_capabilities"), StringArrayToJsonValues(Descriptor.RequiredCapabilities));
 			Operation->SetArrayField(TEXT("supported_engine_versions"), StringArrayToJsonValues(Descriptor.SupportedEngineVersions));
 			Operation->SetArrayField(TEXT("supported_asset_classes"), StringArrayToJsonValues(Descriptor.SupportedAssetClasses));
@@ -1394,6 +1395,12 @@ namespace UE::ProjectIntelligence
 				TSharedRef<FJsonObject> TargetSchema = MakeShared<FJsonObject>();
 				TargetSchema->SetArrayField(TEXT("type"), { MakeShared<FJsonValueString>(TEXT("string")), MakeShared<FJsonValueString>(TEXT("object")), MakeShared<FJsonValueString>(TEXT("array")) });
 				InputProperties->SetObjectField(TargetField, TargetSchema);
+			}
+			for (const FString& DependencyField : Descriptor.DependencyFields)
+			{
+				TSharedRef<FJsonObject> DependencySchema = MakeShared<FJsonObject>();
+				DependencySchema->SetArrayField(TEXT("type"), { MakeShared<FJsonValueString>(TEXT("string")), MakeShared<FJsonValueString>(TEXT("object")), MakeShared<FJsonValueString>(TEXT("array")) });
+				InputProperties->SetObjectField(DependencyField, DependencySchema);
 			}
 			InputSchema->SetObjectField(TEXT("properties"), InputProperties);
 			InputSchema->SetBoolField(TEXT("additionalProperties"), true);
