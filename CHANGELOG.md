@@ -7,6 +7,7 @@
 - Added large-transaction risk diagnostics plus complexity-scaled Apply and targeted-refresh timeouts while preserving all-target backup and rollback semantics.
 - Clarified the one-approval continuation contract: after explicit approval of an unchanged Preview, the Agent calls Apply and completes validation, touched-only save, refresh, diff, and approved runtime verification without manual tool invocation or repeated confirmation.
 - Extended Doctor capability output with the active Editor operation and asset transaction limits.
+- Unified mid-execution, validation, and save failure compensation across every affected asset; failed Apply responses now report atomicity restoration evidence and cannot replace the last successful rollback target.
 
 ## 2.0.0-beta.1
 

@@ -1858,6 +1858,10 @@ namespace UE::ProjectIntelligence
 		FUEPIEditExecutionState HandlerExecutionState;
 		TMap<FString, FString> OperationAssets;
 		TArray<TWeakObjectPtr<UObject>> PendingAssetRegistryCreates;
+		int32 TestFailAfterOperation = 0;
+#if !UE_BUILD_SHIPPING
+		FParse::Value(FCommandLine::Get(), TEXT("UEPITestFailAfterOperation="), TestFailAfterOperation);
+#endif
 
 		const FText TransactionText = FText::FromString(TransactionId.IsEmpty() ? FString(TEXT("UEPI edit transaction")) : FString::Printf(TEXT("UEPI edit %s"), *TransactionId));
 		FScopedTransaction Transaction(TEXT("UEProjectIntelligence"), TransactionText, nullptr, true);
@@ -1886,6 +1890,7 @@ namespace UE::ProjectIntelligence
 				Context.bAllowBlueprintEdits = Settings->bAllowBlueprintEdits;
 				Context.bDryRun = false;
 				Context.bAllowSave = JsonBool(Params, TEXT("save"), false);
+				if (Type != TEXT("content.save_assets")) bMutated = true;
 				const FUEPIEditResult OperationResult = Registry.FindOperation(Type)->Apply(Context, *OpParams);
 				AddOperationResult(OperationResults, Index, Type, OperationResult.bOk, OperationResult.Message, OperationResult.Result);
 				if (!OperationResult.bOk)
@@ -1963,7 +1968,14 @@ namespace UE::ProjectIntelligence
 					if (!BlueprintPath.IsEmpty()) { AffectedAssets.AddUnique(BlueprintPath); if (UBlueprint* Touched = LoadObject<UBlueprint>(nullptr, *BlueprintPath)) TouchedBlueprints.Add(Touched); }
 					if (Type == TEXT("blueprint.compile") || Type == TEXT("animgraph.compile")) { if (OperationResult.Result.IsValid()) CompileResults.Add(MakeShared<FJsonValueObject>(OperationResult.Result.ToSharedRef())); bValidationOk &= OperationResult.bOk; }
 				}
-				if (Type != TEXT("content.save_assets") && Type != TEXT("blueprint.compile") && Type != TEXT("animgraph.compile")) bMutated = true;
+#if !UE_BUILD_SHIPPING
+				if (TestFailAfterOperation > 0 && Index + 1 >= TestFailAfterOperation)
+				{
+					bAllOk = false;
+					FailureMessage = FString::Printf(TEXT("UEPI test failure injected after operation %d."), Index + 1);
+					break;
+				}
+#endif
 				continue;
 			}
 		}
@@ -2007,8 +2019,6 @@ namespace UE::ProjectIntelligence
 				bAllOk = false;
 				FailureMessage = ServiceError;
 				Transaction.Cancel();
-				FString RestoreError;
-				FUEPIBackupService::Restore(TransactionBackupFiles, AffectedAssets, RestoreError);
 			}
 			else
 			{
@@ -2021,8 +2031,21 @@ namespace UE::ProjectIntelligence
 				}
 			}
 		}
+		bool bCompensationAttempted = false;
+		bool bCompensationOk = true;
+		FString CompensationError;
+		if (!bAllOk && bMutated)
+		{
+			bCompensationAttempted = true;
+			bCompensationOk = FUEPIBackupService::Restore(TransactionBackupFiles, AffectedAssets, CompensationError);
+			if (!bCompensationOk)
+			{
+				FailureMessage += FString::Printf(TEXT(" Atomic compensation failed: %s"), *CompensationError);
+			}
+		}
+		const FString JournalPhase = bAllOk ? TEXT("applied") : (bCompensationAttempted ? (bCompensationOk ? TEXT("failed_rolled_back") : TEXT("rollback_failed")) : TEXT("failed_pre_mutation"));
 		FString JournalError;
-		FUEPITransactionJournal::Write(TransactionId, bAllOk ? TEXT("applied") : TEXT("failed"), AffectedAssets, TransactionBackupFiles, bSaved, FailureMessage, JournalPath, JournalError);
+		FUEPITransactionJournal::Write(TransactionId, JournalPhase, AffectedAssets, TransactionBackupFiles, bSaved, FailureMessage, JournalPath, JournalError);
 
 		FString RefreshRequestPath;
 		FString RefreshError;
@@ -2031,7 +2054,7 @@ namespace UE::ProjectIntelligence
 			WriteRefreshRequest(AffectedAssets, TEXT("live"), RefreshRequestPath, RefreshError);
 		}
 
-		if (bMutated)
+		if (bMutated && bAllOk)
 		{
 			LastAppliedTransactionId = TransactionId;
 			LastAppliedSummary = FString::Printf(TEXT("%d operation(s), %d asset(s)"), Operations->Num(), AffectedAssets.Num());
@@ -2050,6 +2073,11 @@ namespace UE::ProjectIntelligence
 		Result->SetStringField(TEXT("backup_directory"), BackupDirectory);
 		Result->SetStringField(TEXT("journal_path"), JournalPath);
 		Result->SetStringField(TEXT("failure_message"), FailureMessage);
+		Result->SetBoolField(TEXT("compensation_attempted"), bCompensationAttempted);
+		Result->SetBoolField(TEXT("compensation_ok"), bCompensationOk);
+		Result->SetStringField(TEXT("compensation_error"), CompensationError);
+		Result->SetBoolField(TEXT("atomicity_restored"), !bAllOk && bMutated && bCompensationOk);
+		Result->SetStringField(TEXT("journal_phase"), JournalPhase);
 		Result->SetArrayField(TEXT("affected_assets"), StringArrayToJsonValues(AffectedAssets));
 		Result->SetArrayField(TEXT("operations"), OperationResults);
 		Result->SetArrayField(TEXT("compile"), CompileResults);

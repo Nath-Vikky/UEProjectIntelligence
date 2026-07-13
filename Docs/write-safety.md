@@ -32,6 +32,8 @@ Saving is touched-only. UEPI resolves and backs up every target package before m
 
 The Agent-ready default atomic budget is 96 operations and 12 affected assets. Projects may configure up to 256 operations and 64 assets, but UEPI does not treat a higher cap as weaker safety: Preview blocks over-budget plans before approval, larger accepted plans are marked high-risk, and every target still participates in preflight, backup, validation, touched-only save, refresh, diff, and rollback.
 
+If execution or validation fails after mutation begins, UEPI cancels the Editor transaction, restores every target from the transaction backup, unloads newly created packages, refreshes the affected paths, and returns explicit `compensation_attempted`, `compensation_ok`, and `atomicity_restored` evidence. A compensated failed transaction never replaces the last successful transaction available to explicit rollback.
+
 Explicit approval is required exactly once for an immutable Preview. It is not approval to write generally. After that approval, the Agent should invoke Apply and finish every unchanged post-apply phase automatically; asking the user to press or call Apply manually is not part of the normal workflow.
 
 ## Rejected Commands
