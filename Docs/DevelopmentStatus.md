@@ -1,6 +1,6 @@
 # UE Project Intelligence Development Status
 
-`main` is the `2.0.0-beta.1` release-candidate line for UE 5.3.2 and Codex.
+`main` is the `2.0.0-beta.2` release-candidate line for UE 5.3.2 and Codex.
 
 ## Implemented
 
@@ -43,11 +43,12 @@
 - The `2.0.0-beta.1` Source archive passes an isolated UE5.3.2 Win64 `BuildPlugin`; the Win64 archive contains that isolated DLL and passes root, version, exclusion, manifest, and checksum inspection.
 - A clean UEPIBlank reinstall from the Beta.1 Win64 archive starts beside LLMNPCDemo, binds its own Editor session, and passes online Doctor 17/17 with exact-project Bridge routing and all 64 operations.
 - Post-Beta hardening raises the default atomic budget to 96 operations/12 assets, checks active Editor limits during Preview, reports large-transaction risk, scales Apply/Refresh timeouts, and makes the one-approval Agent continuation contract explicit. Online GasDemo Doctor reports the new limits and the 13-asset dry-run is blocked before approval.
+- UEPIBlank passes an eight-operation/four-asset success transaction with exact reads, semantic diff, explicit rollback, and restart tombstones. A second transaction injects failure after operation four, restores atomicity across all four targets, writes `failed_rolled_back`, leaves no package files, and preserves its structured failure evidence through the MCP envelope.
 
-## Beta.1 Release Gate
+## Beta.2 Release Gate
 
-- All P0 Golden, routing, restart, rollback, isolated build, archive, and clean-install requirements in `DOCX/UEPINEXT.md` are complete.
-- Release artifacts and their checksums are recorded in `Docs/Releases/2.0.0-beta.1.md`.
-- Broader per-operation real-machine coverage continues after Beta and does not block this release.
+- All Beta.1 P0 Golden, routing, restart, rollback, isolated build, archive, and clean-install requirements remain satisfied.
+- The larger atomic budget, Preview budget gate, one-approval continuation, four-asset success path, and injected-failure compensation path pass on UE5.3.2.
+- Broader per-operation real-machine coverage continues after Beta and does not block this release candidate.
 
-The `v2.0.0-beta.1` tag may be created after this verification record is committed.
+The `v2.0.0-beta.2` tag may be created after isolated build, archive, and checksum verification are recorded.

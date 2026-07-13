@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.0.0-beta.2
+
 - Raised the Agent-ready atomic transaction defaults from 32 operations/3 assets to 96 operations/12 assets, with configurable hard caps of 256 operations and 64 assets.
 - Moved operation and affected-asset budget enforcement into Preview so oversized plans are rejected before user approval and expose no Apply next action.
 - Added large-transaction risk diagnostics plus complexity-scaled Apply and targeted-refresh timeouts while preserving all-target backup and rollback semantics.
