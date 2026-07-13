@@ -213,7 +213,7 @@ def envelope(
     }
     if normalized_error is not None:
         body["error"] = normalized_error
-        body["result"] = None
+        body["result"] = result if result is not None else None
     else:
         body["result"] = result or {}
         body["error"] = None

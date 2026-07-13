@@ -21,6 +21,7 @@ from uepi.diff import build_transaction_diff  # noqa: E402
 from uepi.edit import _apply_timeout_seconds, _asset_values, _budget_diagnostics, _refresh_timeout_seconds, _transaction_budgets  # noqa: E402
 from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
 from uepi.runtime import _approved_subset, _matches_approved, _value_at_path  # noqa: E402
+from uepi.result import envelope  # noqa: E402
 from uepi.store import resolve_store_root  # noqa: E402
 from uepi_doctor import _capability_settings, _pid_alive  # noqa: E402
 
@@ -51,6 +52,20 @@ EDIT_TOOLS = {
 }
 
 EXPECTED_TOOLS = READ_TOOLS | EDIT_TOOLS
+
+
+def assert_error_evidence_contract() -> None:
+    response = envelope(
+        tool="uepi_edit_apply",
+        operation="apply",
+        project={"project_id": "test", "project_name": "Test"},
+        state={"freshness": "current"},
+        result={"apply": {"atomicity_restored": True}, "atomicity_restored": True},
+        error={"code": "UEPI_EDIT_APPLY_FAILED", "message": "Injected failure.", "retryable": False, "candidates": []},
+    )
+    assert response["ok"] is False
+    assert response["result"]["atomicity_restored"] is True
+    assert response["error"]["code"] == "UEPI_EDIT_APPLY_FAILED"
 
 
 def assert_doctor_contract() -> None:
@@ -1085,6 +1100,7 @@ def assert_bridge_token_and_registry_resolution(root: Path) -> None:
 
 
 def main() -> int:
+    assert_error_evidence_contract()
     assert_doctor_contract()
     assert_edit_asset_scope_contract()
     assert_edit_transaction_budget_contract()
