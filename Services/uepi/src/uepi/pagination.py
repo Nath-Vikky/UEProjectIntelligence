@@ -16,7 +16,7 @@ class CursorError(ValueError):
 
 
 def query_hash(tool: str, operation: str, arguments: dict[str, Any]) -> str:
-    stable = {key: value for key, value in arguments.items() if key not in {"cursor", "max_payload_bytes"}}
+    stable = {key: value for key, value in arguments.items() if key not in {"cursor", "page_size", "max_payload_bytes"}}
     encoded = json.dumps({"tool": tool, "operation": operation, "arguments": stable}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 

@@ -459,22 +459,45 @@ class SnapshotStore:
         path = self.logs_dir / "incremental_events.jsonl"
         if not path.exists():
             return []
+        requested = max(1, int(limit))
         try:
-            lines = path.read_text(encoding="utf-8-sig").splitlines()
+            with path.open("rb") as handle:
+                handle.seek(0, 2)
+                end = handle.tell()
+                window = min(end, max(1024 * 1024, requested * 2048))
+                handle.seek(max(0, end - window))
+                text = handle.read(window).decode("utf-8-sig", errors="ignore")
         except OSError:
             return []
+
+        decoder = json.JSONDecoder()
         events: list[dict[str, Any]] = []
-        for line in lines[-max(1, int(limit)):]:
+        index = 0
+        while index < len(text):
+            while index < len(text) and text[index].isspace():
+                index += 1
+            if index >= len(text):
+                break
+            if text[index] != "{":
+                next_start = text.find("\n{", index)
+                if next_start < 0:
+                    break
+                index = next_start + 1
             try:
-                value = json.loads(line)
+                value, end_index = decoder.raw_decode(text, index)
             except json.JSONDecodeError:
+                next_start = text.find("\n{", index + 1)
+                if next_start < 0:
+                    break
+                index = next_start + 1
                 continue
             if isinstance(value, dict):
                 events.append(value)
-        return events
+            index = max(index + 1, end_index)
+        return events[-requested:]
 
     def latest_incremental_event(self, identifier: str | None = None) -> dict[str, Any] | None:
-        events = self.read_incremental_events()
+        events = self.read_incremental_events(1 if not identifier else 2048)
         if not identifier:
             return events[-1] if events else None
         for event in reversed(events):

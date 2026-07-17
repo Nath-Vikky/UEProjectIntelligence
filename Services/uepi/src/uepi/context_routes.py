@@ -63,17 +63,45 @@ def _normalized_asset_identity(value: Any) -> str:
     text = str(value or "").strip().replace("\\", "/")
     if not text.startswith("/"):
         return text.casefold()
-    suffix = ""
     if "::" in text:
-        text, suffix = text.split("::", 1)
+        text = text.split("::", 1)[0]
+    colon = text.find(":", text.rfind("/") + 1)
+    if colon >= 0:
+        text = text[:colon]
     if "." not in text.rsplit("/", 1)[-1]:
         asset_name = text.rsplit("/", 1)[-1]
         text = f"{text}.{asset_name}"
     package, object_name = text.rsplit(".", 1)
     if object_name.endswith("_C"):
         object_name = object_name[:-2]
-    normalized = f"{package}.{object_name}"
-    return (f"{normalized}::{suffix}" if suffix else normalized).casefold()
+    return f"{package}.{object_name}".casefold()
+
+
+def _root_asset_path(entity: dict[str, Any]) -> str:
+    attributes = _as_dict(entity.get("attributes"))
+    candidates = [
+        entity.get("canonical_key"),
+        attributes.get("object_path"),
+        attributes.get("asset_path"),
+        attributes.get("package_name"),
+    ]
+    for candidate in candidates:
+        text = str(candidate or "").strip().replace("\\", "/")
+        if not text.startswith("/"):
+            continue
+        if "::" in text:
+            text = text.split("::", 1)[0]
+        colon = text.find(":", text.rfind("/") + 1)
+        if colon >= 0:
+            text = text[:colon]
+        if "." not in text.rsplit("/", 1)[-1]:
+            name = text.rsplit("/", 1)[-1]
+            text = f"{text}.{name}"
+        package, object_name = text.rsplit(".", 1)
+        if object_name.endswith("_C"):
+            object_name = object_name[:-2]
+        return f"{package}.{object_name}"
+    return ""
 
 
 def _in_hard_scope(entity: dict[str, Any], hard_scope: list[str]) -> bool:
@@ -113,12 +141,45 @@ def _search(engine: Any, query: str, terms: list[str], limit: int, kinds: set[st
 
     if hard_scope:
         engine._ensure_loaded()
-        for entity in engine.entities:
-            if len(matches) >= limit:
+        scoped = [entity for entity in engine.entities if _in_hard_scope(entity, hard_scope)]
+        scope_identities = {_normalized_asset_identity(scope) for scope in hard_scope}
+        roots: dict[str, dict[str, Any]] = {}
+        for entity in scoped:
+            root_path = _root_asset_path(entity)
+            root_identity = _normalized_asset_identity(root_path)
+            if not root_identity or root_identity not in scope_identities:
+                continue
+            previous = roots.get(root_identity)
+            previous_score = 1 if previous and previous.get("kind") == "asset" else 0
+            score = 1 if entity.get("kind") == "asset" else 0
+            if previous is None or score > previous_score:
+                roots[root_identity] = entity
+
+        folded_query = query.casefold()
+        folded_terms = [str(term).casefold() for term in terms if str(term).strip()]
+
+        def rank(entity: dict[str, Any]) -> tuple[int, str]:
+            text = _entity_text(entity)
+            root_path = _root_asset_path(entity)
+            asset_name = root_path.rsplit(".", 1)[-1].casefold() if root_path else ""
+            score = 0
+            if entity.get("kind") == "asset":
+                score += 80
+            if asset_name and asset_name in folded_query:
+                score += 300
+            if folded_query and folded_query in text:
+                score += 120
+            score += sum(25 for term in folded_terms if term and term in text)
+            return score, str(entity.get("canonical_key") or entity.get("id") or "").casefold()
+
+        root_entities = sorted(roots.values(), key=lambda item: (-rank(item)[0], rank(item)[1]))
+        for entity in root_entities:
+            add(entity)
+        for entity in sorted(scoped, key=lambda item: (-rank(item)[0], rank(item)[1])):
+            if len(matches) >= max(limit, len(root_entities)):
                 break
-            if _in_hard_scope(entity, hard_scope):
-                add(entity)
-        return matches[:limit], "snapshot_fragments"
+            add(entity)
+        return matches[: max(limit, len(root_entities))], "snapshot_fragments"
 
     if engine.cache:
         for entity in engine.cache.search_entities(query, limit=limit, include_snapshot=False):
@@ -183,26 +244,35 @@ def _best_domain_asset(matches: list[dict[str, Any]], question: str, preferred_k
     question_folded = question.casefold()
     candidates: dict[str, tuple[int, str]] = {}
     for entity in matches:
-        canonical = str(entity.get("canonical_key") or "").split("::", 1)[0]
-        if not canonical:
+        root_asset = _root_asset_path(entity)
+        if not root_asset:
             continue
         kind = str(entity.get("kind") or "")
         display = str(entity.get("display_name") or "")
         attributes = _as_dict(entity.get("attributes"))
+        asset_name = root_asset.rsplit(".", 1)[-1]
         score = 0
         if kind in preferred_kinds:
-            score += 60
+            score += 80
         if kind == "asset":
-            score += 10
-        if display and display.casefold() in question_folded:
-            score += 100
+            score += 40
+        if asset_name and asset_name.casefold() in question_folded:
+            score += 500
+        elif display and display.casefold() in question_folded:
+            score += 300
         asset_class = " ".join(str(attributes.get(key) or "") for key in ("asset_class", "class", "class_path")).casefold()
-        if any(token in asset_class for token in ("animsequence", "animmontage", "blendspace", "animblueprint")):
-            score += 50
-        previous = candidates.get(canonical)
+        if any(token in asset_class for token in ("animsequence", "animmontage")) or kind in {"animation_sequence", "animation_montage"}:
+            score += 220
+        elif "blendspace" in asset_class or kind == "blend_space":
+            score += 160
+        elif "animblueprint" in asset_class or kind == "anim_blueprint":
+            score += 80
+        if kind in {"blueprint_graph", "anim_state", "anim_state_machine", "anim_asset_player"}:
+            score -= 40
+        previous = candidates.get(root_asset.casefold())
         if previous is None or score > previous[0]:
-            candidates[canonical] = (score, canonical)
-    return max(candidates.values(), default=(0, ""))[1] or None
+            candidates[root_asset.casefold()] = (score, root_asset)
+    return sorted(candidates.values(), key=lambda item: (-item[0], item[1].casefold()))[0][1] if candidates else None
 
 
 @dataclass

@@ -19,6 +19,7 @@
 #include "FileHelpers.h"
 #include "GameFramework/Actor.h"
 #include "HAL/FileManager.h"
+#include "Interfaces/IPluginManager.h"
 #include "Interfaces/IPv4/IPv4Address.h"
 #include "Interfaces/IPv4/IPv4Endpoint.h"
 #include "ImageUtils.h"
@@ -87,6 +88,17 @@ namespace UE::ProjectIntelligence
 			FTCHARToUTF8 Utf8(*CanonicalProjectFile);
 			const FString Digest = Sha256Hex(Utf8.Get(), static_cast<uint64>(Utf8.Length()));
 			return Digest.IsEmpty() ? FString() : TEXT("sha256:") + Digest;
+		}
+
+		FString UEPIPluginVersion()
+		{
+			const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("UEProjectIntelligence"));
+			return Plugin.IsValid() ? Plugin->GetDescriptor().VersionName : TEXT("unknown");
+		}
+
+		FString UEPIPluginBuildId()
+		{
+			return TEXT("uepi-") + UEPIPluginVersion();
 		}
 
 		FString UEPIFileSha256(const FString& Filename)
@@ -1102,6 +1114,8 @@ namespace UE::ProjectIntelligence
 		Result->SetBoolField(TEXT("pie_owned_by_uepi"), bOwnsPIESession);
 		Result->SetStringField(TEXT("runtime_session_id"), OwnedRuntimeSessionId);
 		Result->SetStringField(TEXT("catalog_hash"), Registry.GetCatalogHash());
+		Result->SetStringField(TEXT("plugin_version"), UEPIPluginVersion());
+		Result->SetStringField(TEXT("plugin_build_id"), UEPIPluginBuildId());
 		Result->SetStringField(TEXT("data_mode"), TEXT("live"));
 		Result->SetStringField(TEXT("observed_at"), FDateTime::UtcNow().ToIso8601());
 		TArray<FString> Capabilities = FUEPIBridgeProtocol::ReadCapabilities();
@@ -1841,7 +1855,8 @@ namespace UE::ProjectIntelligence
 		Result->SetStringField(TEXT("catalog_version"), TEXT("2.1.0"));
 		Result->SetStringField(TEXT("catalog_hash"), Registry.GetCatalogHash());
 		Result->SetStringField(TEXT("engine_version"), FEngineVersion::Current().ToString());
-		Result->SetStringField(TEXT("plugin_build_id"), TEXT("uepi-vnext"));
+		Result->SetStringField(TEXT("plugin_version"), UEPIPluginVersion());
+		Result->SetStringField(TEXT("plugin_build_id"), UEPIPluginBuildId());
 		Result->SetObjectField(TEXT("settings"), SettingsObject);
 		Result->SetArrayField(TEXT("operations"), Operations);
 		Result->SetArrayField(TEXT("capabilities"), StringArrayToJsonValues(FUEPIBridgeProtocol::WriteCapabilities()));
@@ -2461,6 +2476,11 @@ namespace UE::ProjectIntelligence
 		Root->SetBoolField(TEXT("allow_save"), Settings && Settings->bAllowSavingPackages);
 		Root->SetBoolField(TEXT("allow_pie"), Settings && Settings->bAllowPIEControl);
 		Root->SetBoolField(TEXT("allow_runtime_invoke"), Settings && Settings->bAllowRuntimeInvoke);
+		FUEPIEditOperationRegistry& Registry = FUEPIEditOperationRegistry::Get();
+		Registry.EnsureBuiltinsRegistered();
+		Root->SetStringField(TEXT("catalog_hash"), Registry.GetCatalogHash());
+		Root->SetStringField(TEXT("plugin_version"), UEPIPluginVersion());
+		Root->SetStringField(TEXT("plugin_build_id"), UEPIPluginBuildId());
 		TSharedRef<FJsonObject> Bridge = MakeShared<FJsonObject>();
 		Bridge->SetStringField(TEXT("host"), TEXT("127.0.0.1"));
 		Bridge->SetNumberField(TEXT("port"), Port);

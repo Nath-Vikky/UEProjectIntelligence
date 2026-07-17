@@ -124,6 +124,42 @@ def _delete_path(value: dict[str, Any], path: str) -> bool:
     return True
 
 
+def _exclude_field(value: Any, parts: list[str]) -> None:
+    if not parts:
+        return
+    if isinstance(value, list):
+        for item in value:
+            _exclude_field(item, parts)
+        return
+    if not isinstance(value, dict):
+        return
+    key = parts[0]
+    if len(parts) == 1:
+        value.pop(key, None)
+        return
+    if key in value:
+        _exclude_field(value[key], parts[1:])
+
+
+def _continuation_arguments(arguments: dict[str, Any], *, cursor: str | None, page_size: int) -> dict[str, Any]:
+    keys = (
+        "expected_project_file",
+        "expected_editor_session_id",
+        "compact",
+        "fields",
+        "include",
+        "exclude",
+        "evidence_level",
+        "typed_attribute_level",
+        "max_payload_bytes",
+    )
+    result = {key: arguments[key] for key in keys if key in arguments}
+    result["page_size"] = page_size
+    if cursor:
+        result["cursor"] = cursor
+    return result
+
+
 def _list_paths(value: Any, prefix: str = "") -> list[str]:
     paths: list[str] = []
     if isinstance(value, dict):
@@ -325,6 +361,10 @@ def apply_response_options(envelope: dict[str, Any], arguments: dict[str, Any]) 
     if fields:
         result = _project(result, _field_tree(fields))
         _ensure_artifact_manifests(original_result, result, fields)
+    for field in arguments.get("exclude") or []:
+        if isinstance(field, str):
+            parts = [part for part in field.removeprefix("result.").split(".") if part]
+            _exclude_field(result, parts)
 
     tool = str(envelope.get("tool") or "")
     page_path, items = _page_root(result, tool, fields)
@@ -343,6 +383,13 @@ def apply_response_options(envelope: dict[str, Any], arguments: dict[str, Any]) 
             envelope.setdefault("diagnostics", []).append(
                 {"severity": "error", "blocking": True, "code": exc.code, "message": str(exc), "phase": "pagination", "retryable": False, "recoverable": True}
             )
+            envelope["next_actions"] = [
+                {
+                    "reason": "Restart pagination from the first page because the cursor is no longer valid for this query and Snapshot generation.",
+                    "tool": tool,
+                    "arguments": _continuation_arguments(arguments, cursor=None, page_size=max(1, min(int(arguments.get("page_size") or arguments.get("limit") or 100), 500))),
+                }
+            ]
             _set_payload_size(envelope)
             return envelope
 
@@ -366,6 +413,16 @@ def apply_response_options(envelope: dict[str, Any], arguments: dict[str, Any]) 
         "has_more": has_more,
         "cursor": encode_cursor(query_hash_value=qhash, view_generation=view_generation, offset=offset + page_count, sort_key=page_path or "none") if has_more else None,
     }
+    if has_more and tool == "uepi_edit_discover":
+        next_cursor = str(envelope["continuation"]["cursor"])
+        envelope["next_actions"] = [
+            *(envelope.get("next_actions") or []),
+            {
+                "reason": "Continue enumerating the Editor operation catalog.",
+                "tool": tool,
+                "arguments": _continuation_arguments(arguments, cursor=next_cursor, page_size=page_size),
+            },
+        ]
     envelope["truncation"] = {
         "truncated": has_more,
         "reason": "item_limit" if has_more else None,

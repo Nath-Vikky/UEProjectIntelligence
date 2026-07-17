@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from datetime import datetime, timezone
 
@@ -19,14 +20,16 @@ sys.path.insert(0, str(PYTHONPATH))
 sys.path.insert(0, str(ROOT / "Tools"))
 
 from uepi.bridge_client import _read_token  # noqa: E402
+from uepi.cache import cache_status, sync_cache  # noqa: E402
 from uepi.context_routes import _best_domain_asset, _normalized_asset_identity  # noqa: E402
 from uepi.diff import build_transaction_diff  # noqa: E402
 from uepi.edit import _apply_timeout_seconds, _asset_values, _budget_diagnostics, _refresh_timeout_seconds, _transaction_budgets  # noqa: E402
 from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
 from uepi.projections import apply_response_options, enforce_response_budget  # noqa: E402
+from uepi.query import make_engine  # noqa: E402
 from uepi.runtime import _approved_subset, _matches_approved, _value_at_path  # noqa: E402
 from uepi.result import envelope, tool_response  # noqa: E402
-from uepi.store import resolve_store_root  # noqa: E402
+from uepi.store import SnapshotStore, resolve_store_root  # noqa: E402
 from uepi.timing import attach_timing, begin_request, end_request, record  # noqa: E402
 from uepi_doctor import _capability_settings, _pid_alive  # noqa: E402
 
@@ -278,6 +281,78 @@ def assert_response_budget_contract() -> None:
     assert bounded_animation["truncation"]["byte_limit_hit"] is True
     assert bounded_animation["payload_bytes"] <= 4096
 
+    discover_response = envelope(
+        tool="uepi_edit_discover",
+        operation="operation_catalog",
+        project={"project_id": "test", "project_name": "Test"},
+        state={"freshness": "current", "saved_generation": 7},
+        result={
+            "profile": "codex",
+            "operations": [
+                {"name": f"operation.{index}", "domain": "test", "description": "d" * 200}
+                for index in range(8)
+            ],
+        },
+    )
+    discover_page = apply_response_options(
+        discover_response,
+        {"page_size": 2, "max_payload_bytes": 8192, "exclude": ["operations.description"]},
+    )
+    assert discover_page["continuation"]["has_more"] is True
+    assert all("description" not in item for item in discover_page["result"]["operations"])
+    continuation = next(item for item in discover_page["next_actions"] if item.get("tool") == "uepi_edit_discover")
+    assert continuation["arguments"]["cursor"] == discover_page["continuation"]["cursor"]
+    assert continuation["arguments"]["page_size"] == 2
+
+    default_operations = [
+        {"name": f"operation.default.{index}", "description": "d" * 300}
+        for index in range(120)
+    ]
+    default_discover = apply_response_options(
+        envelope(
+            tool="uepi_edit_discover",
+            operation="operation_catalog",
+            project={"project_id": "test", "project_name": "Test"},
+            state={"freshness": "current", "saved_generation": 7},
+            result={"operations": default_operations},
+        ),
+        {"max_payload_bytes": 4096},
+    )
+    assert default_discover["continuation"]["has_more"] is True
+    default_next = next(item for item in default_discover["next_actions"] if item.get("tool") == "uepi_edit_discover")
+    continued_default = apply_response_options(
+        envelope(
+            tool="uepi_edit_discover",
+            operation="operation_catalog",
+            project={"project_id": "test", "project_name": "Test"},
+            state={"freshness": "current", "saved_generation": 7},
+            result={"operations": default_operations},
+        ),
+        default_next["arguments"],
+    )
+    assert continued_default["ok"] is True
+    assert continued_default["error"] is None
+
+    stale_response = envelope(
+        tool="uepi_edit_discover",
+        operation="operation_catalog",
+        project={"project_id": "test", "project_name": "Test"},
+        state={"freshness": "current", "saved_generation": 8},
+        result={"operations": [{"name": "operation.new"}]},
+    )
+    stale_page = apply_response_options(
+        stale_response,
+        {
+            "page_size": 2,
+            "exclude": ["operations.description"],
+            "cursor": discover_page["continuation"]["cursor"],
+        },
+    )
+    assert stale_page["ok"] is False
+    assert stale_page["error"]["code"] == "UEPI_CURSOR_STALE"
+    assert stale_page["next_actions"][0]["tool"] == "uepi_edit_discover"
+    assert "cursor" not in stale_page["next_actions"][0]["arguments"]
+
 
 def assert_operation_machine_contract() -> None:
     registry_source = (ROOT / "Source" / "UEProjectIntelligence" / "Private" / "Edit" / "UEPIEditOperationRegistry.cpp").read_text(encoding="utf-8")
@@ -450,7 +525,14 @@ def write_fixture(root: Path) -> None:
         "canonical_key": "/Game/BP_Hero.BP_Hero::EventGraph::BeginPlay",
         "display_name": "Event BeginPlay",
         "source_layer": "editor_source_graph",
-        "attributes": {"node_title": "Event BeginPlay"},
+        "attributes": {
+            "node_title": "Event BeginPlay",
+            "graph_name": "EventGraph",
+            "graph_role": "event_graph",
+            "node_guid": "BEGIN-GUID",
+            "node_class": "/Script/BlueprintGraph.K2Node_Event",
+            "semantic_kind": "event",
+        },
         "completeness": {"state": "partial", "covered": ["node"], "omitted": [], "warnings": []},
         "diagnostics": [],
         "evidence": [],
@@ -495,6 +577,7 @@ def write_fixture(root: Path) -> None:
     project_fragment_path.write_text(json.dumps(project_fragment, ensure_ascii=False), encoding="utf-8")
 
     fragment_node_id = "node-asset-fragment"
+    typed_slot_node_id = "node-typed-slot"
     asset_fragment = {
         "schema_version": "uepi.asset-fragment.v2",
         "project_id": "project-fixture",
@@ -516,7 +599,33 @@ def write_fixture(root: Path) -> None:
                 "completeness": {"state": "partial", "covered": ["node"], "omitted": [], "warnings": []},
                 "diagnostics": [],
                 "evidence": [],
-            }
+            },
+            {
+                "id": typed_slot_node_id,
+                "kind": "anim_slot",
+                "canonical_key": "/Game/BP_Hero.BP_Hero::AnimGraph::AnimGraphNode_Slot_0",
+                "display_name": "AnimGraph Slot",
+                "source_layer": "editor_source_graph",
+                "attributes": {
+                    "node_title": "Slot DefaultSlot",
+                    "graph_path": "/Game/BP_Hero.BP_Hero:WrongGraph",
+                    "graph_role": "wrong_role",
+                    "node_guid": "WRONG-GUID",
+                    "node_class": "/Script/BlueprintGraph.K2Node_CallFunction",
+                    "semantic_kind": "wrong_semantic",
+                    "slot_name": "DefaultSlot",
+                },
+                "typed_attributes": {
+                    "graph_path": {"schema_version": "uepi.attribute-value.v2", "type": "string", "raw": "/Game/BP_Hero.BP_Hero:AnimGraph", "value": "/Game/BP_Hero.BP_Hero:AnimGraph"},
+                    "graph_role": {"schema_version": "uepi.attribute-value.v2", "type": "string", "raw": "animation_graph", "value": "animation_graph"},
+                    "node_guid": {"schema_version": "uepi.attribute-value.v2", "type": "string", "raw": "SLOT-GUID", "value": "SLOT-GUID"},
+                    "node_class": {"schema_version": "uepi.attribute-value.v2", "type": "string", "raw": "/Script/AnimGraph.AnimGraphNode_Slot", "value": "/Script/AnimGraph.AnimGraphNode_Slot"},
+                    "semantic_kind": {"schema_version": "uepi.attribute-value.v2", "type": "string", "raw": "slot", "value": "slot"},
+                },
+                "completeness": {"state": "partial", "covered": ["node"], "omitted": [], "warnings": []},
+                "diagnostics": [],
+                "evidence": [],
+            },
         ],
         "relations": [
             contains_node_relation,
@@ -530,7 +639,18 @@ def write_fixture(root: Path) -> None:
                 "confidence": 1.0,
                 "attributes": {},
                 "evidence": [],
-            }
+            },
+            {
+                "id": "rel-typed-slot-node",
+                "type": "contains_node",
+                "from_id": asset_id,
+                "to_id": typed_slot_node_id,
+                "source_layer": "editor_source_graph",
+                "derived": False,
+                "confidence": 1.0,
+                "attributes": {},
+                "evidence": [],
+            },
         ],
         "diagnostics": [],
     }
@@ -874,6 +994,32 @@ def write_fixture(root: Path) -> None:
         "diagnostics": [],
         "evidence": [],
     }
+    anim_blueprint_asset_entity = {
+        "id": "asset-abp-manny",
+        "kind": "asset",
+        "canonical_key": "/Game/Animations/ABP_Manny.ABP_Manny",
+        "display_name": "ABP_Manny",
+        "source_layer": "asset_registry",
+        "attributes": {
+            "object_path": "/Game/Animations/ABP_Manny.ABP_Manny",
+            "asset_name": "ABP_Manny",
+            "asset_class": "/Script/Engine.AnimBlueprint",
+        },
+        "completeness": {"state": "partial", "covered": ["asset_registry_metadata"], "omitted": [], "warnings": []},
+        "diagnostics": [],
+        "evidence": [],
+    }
+    anim_blueprint_state_entity = {
+        "id": "anim-state-abp-manny-idle",
+        "kind": "anim_state",
+        "canonical_key": "/Game/Animations/ABP_Manny.ABP_Manny::AnimGraph::Idle",
+        "display_name": "Idle",
+        "source_layer": "editor_source_graph",
+        "attributes": {"graph_name": "AnimGraph", "state_name": "Idle"},
+        "completeness": {"state": "partial", "covered": ["anim_state"], "omitted": [], "warnings": []},
+        "diagnostics": [],
+        "evidence": [],
+    }
     animation_fragment = {
         "schema_version": "uepi.asset-fragment.v2",
         "project_id": "project-fixture",
@@ -882,7 +1028,7 @@ def write_fixture(root: Path) -> None:
         "engine_version": "5.3.2",
         "source_scan_finished_at_utc": "2026-06-26T00:00:01Z",
         "asset": {"id": animation_asset_id, "canonical_key": "/Game/Animations/Waving.Waving", "display_name": "Waving", "kind": "asset"},
-        "entities": [animation_asset_entity, animation_sequence_entity],
+        "entities": [anim_blueprint_state_entity, anim_blueprint_asset_entity, animation_asset_entity, animation_sequence_entity],
         "relations": [
             {
                 "id": animation_relation_id,
@@ -1249,6 +1395,76 @@ def assert_bridge_token_and_registry_resolution(root: Path) -> None:
             os.environ["UEPI_SESSION_REGISTRY_DIR"] = old_registry
 
 
+def assert_versioned_cache_contract() -> None:
+    with tempfile.TemporaryDirectory(prefix="uepi_cache_generation_") as temp_dir:
+        root = Path(temp_dir)
+        write_fixture(root)
+        store = SnapshotStore.from_paths(store=root)
+        first = sync_cache(store)
+        first_path = Path(first["cache_path"])
+        assert first_path.name.startswith("uepi-live-g2-")
+        assert Path(first["pointer_path"]).is_file()
+
+        old_engine = make_engine(store=root)
+        try:
+            assert old_engine.cache is not None
+            old_counts = old_engine.cache.counts()
+
+            live_path = root / "store" / "manifests" / "live.json"
+            live_manifest = json.loads(live_path.read_text(encoding="utf-8"))
+            live_manifest["generation"] = 3
+            live_manifest["created_at_utc"] = "2026-06-26T00:00:05Z"
+            live_path.write_text(json.dumps(live_manifest, ensure_ascii=False), encoding="utf-8")
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(lambda _: sync_cache(store), range(2)))
+            published_paths = {item["cache_path"] for item in results}
+            assert len(published_paths) == 1
+            assert first_path not in {Path(item) for item in published_paths}
+            assert old_engine.cache.counts() == old_counts
+
+            status = cache_status(store)
+            assert status["synced"] is True
+            assert status["versioned"] is True
+            assert status["generation"] == 3
+
+            live_manifest["generation"] = 4
+            live_manifest["created_at_utc"] = "2026-06-26T00:00:06Z"
+            live_path.write_text(json.dumps(live_manifest, ensure_ascii=False), encoding="utf-8")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(PYTHONPATH)
+            processes = [
+                subprocess.Popen(
+                    [sys.executable, "-B", "-m", "uepi", "sync", "--store", str(root)],
+                    cwd=ROOT,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                for _ in range(2)
+            ]
+            process_results = []
+            for process in processes:
+                stdout, stderr = process.communicate(timeout=30)
+                assert process.returncode == 0, stderr
+                process_results.append(json.loads(stdout))
+            assert len({item["cache_path"] for item in process_results}) == 1
+            assert cache_status(store)["generation"] == 4
+
+            before = set((root / "cache").glob("uepi-live-g*.sqlite3"))
+            started = time.perf_counter()
+            for _ in range(20):
+                with make_engine(store=root) as engine:
+                    assert engine.cache is not None
+                    assert engine.status()["result"]["cache"]["synced"] is True
+            assert time.perf_counter() - started < 2.0
+            after = set((root / "cache").glob("uepi-live-g*.sqlite3"))
+            assert after == before
+        finally:
+            old_engine.close()
+
+
 def main() -> int:
     assert_error_evidence_contract()
     assert_timing_contract()
@@ -1260,6 +1476,7 @@ def main() -> int:
     assert_response_budget_contract()
     assert_operation_machine_contract()
     assert_context_identity_contract()
+    assert_versioned_cache_contract()
     with tempfile.TemporaryDirectory(prefix="uepi_snapshot_mcp_") as temp_dir:
         root = Path(temp_dir)
         write_fixture(root)
@@ -1306,6 +1523,14 @@ def main() -> int:
             world_tool = next(tool for tool in tools if tool["name"] == "uepi_world")
             assert world_tool["inputSchema"]["properties"]["filters"]["additionalProperties"] is False
             assert {"actor", "component", "property_names"}.issubset(world_tool["inputSchema"]["properties"])
+            discover_tool = next(tool for tool in tools if tool["name"] == "uepi_edit_discover")
+            assert {
+                "cursor",
+                "page_size",
+                "max_payload_bytes",
+                "fields",
+                "exclude",
+            }.issubset(discover_tool["inputSchema"]["properties"])
 
             status = request(process, 3, "tools/call", {"name": "uepi_status", "arguments": {}})["structuredContent"]
             assert_envelope(status)
@@ -1412,6 +1637,56 @@ def main() -> int:
             )["structuredContent"]
             assert package_scoped_context["ok"] is True
             assert package_scoped_context["result"]["matches"]
+
+            animation_scope = [
+                "/Game/Animations/ABP_Manny",
+                "/Game/Animations/Waving",
+                "/Game/BP_Hero",
+            ]
+            scoped_animation = request(
+                process,
+                70,
+                "tools/call",
+                {
+                    "name": "uepi_context",
+                    "arguments": {
+                        "question": "Analyze the Waving animation sequence",
+                        "route": "animation_playback",
+                        "hard_scope": animation_scope,
+                        "max_items": 6,
+                    },
+                },
+            )["structuredContent"]
+            assert_envelope(scoped_animation)
+            summary = scoped_animation["result"]["sections"]["animation_summary"]
+            assert summary["asset"]["canonical_key"] == "/Game/Animations/Waving.Waving"
+            assert summary["motion_summary"] is not None
+            assert summary["sequence"] is not None
+            root_paths = {
+                _normalized_asset_identity(item.get("canonical_key"))
+                for item in scoped_animation["result"]["matches"]
+                if item.get("kind") == "asset"
+            }
+            assert {
+                _normalized_asset_identity(scope)
+                for scope in animation_scope
+            }.issubset(root_paths)
+
+            reversed_animation = request(
+                process,
+                71,
+                "tools/call",
+                {
+                    "name": "uepi_context",
+                    "arguments": {
+                        "question": "Analyze the Waving animation sequence",
+                        "route": "animation_playback",
+                        "hard_scope": list(reversed(animation_scope)),
+                        "max_items": 6,
+                    },
+                },
+            )["structuredContent"]
+            assert reversed_animation["result"]["sections"]["animation_summary"]["asset"]["canonical_key"] == "/Game/Animations/Waving.Waving"
 
             first_page = request(
                 process,
@@ -1531,6 +1806,68 @@ def main() -> int:
             assert any((root / "store" / "requests").glob("*.json"))
             assert "semantic_summary" in blueprint["result"]
             assert blueprint["result"]["semantic_summary"]["schema_version"] == "uepi.blueprint-semantic-summary.v1"
+
+            typed_filter_cases = [
+                {"graph": "AnimGraph"},
+                {"graph_role": "animation_graph"},
+                {"node_guid": "SLOT-GUID"},
+                {"node_classes": ["AnimGraphNode_Slot"]},
+                {"semantic_kinds": ["slot"]},
+                {"graph": "AnimGraph", "node_classes": ["AnimGraphNode_Slot"]},
+            ]
+            for request_id, filters in enumerate(typed_filter_cases, start=72):
+                filtered = request(
+                    process,
+                    request_id,
+                    "tools/call",
+                    {
+                        "name": "uepi_blueprint",
+                        "arguments": {"asset": "/Game/BP_Hero.BP_Hero", **filters},
+                    },
+                )["structuredContent"]
+                assert filtered["ok"] is True
+                assert {item["id"] for item in filtered["result"]["blueprint_entities"]} == {"node-typed-slot"}
+
+            untyped_filter_cases = [
+                {"graph": "EventGraph"},
+                {"graph_role": "event_graph"},
+                {"node_guid": "BEGIN-GUID"},
+                {"node_classes": ["K2Node_Event"]},
+                {"semantic_kinds": ["event"]},
+            ]
+            for request_id, filters in enumerate(untyped_filter_cases, start=80):
+                filtered = request(
+                    process,
+                    request_id,
+                    "tools/call",
+                    {
+                        "name": "uepi_blueprint",
+                        "arguments": {"asset": "/Game/BP_Hero.BP_Hero", **filters},
+                    },
+                )["structuredContent"]
+                assert filtered["ok"] is True
+                assert "node-beginplay" in {item["id"] for item in filtered["result"]["blueprint_entities"]}
+
+            requests_before_no_match = {path.name for path in (root / "store" / "requests").glob("*.json")}
+            no_match = request(
+                process,
+                85,
+                "tools/call",
+                {
+                    "name": "uepi_blueprint",
+                    "arguments": {
+                        "asset": "/Game/BP_Hero.BP_Hero",
+                        "node_classes": ["DefinitelyMissingNodeClass"],
+                    },
+                },
+            )["structuredContent"]
+            assert no_match["ok"] is True
+            assert no_match["result"]["blueprint_entities"] == []
+            assert no_match["result"]["unfiltered_entity_count"] > 0
+            assert "blueprint_graph_entities_not_present_in_snapshot" not in no_match["omissions"]
+            assert any(item.get("code") == "UEPI_BLUEPRINT_FILTER_NO_MATCH" for item in no_match["diagnostics"])
+            assert {path.name for path in (root / "store" / "requests").glob("*.json")} == requests_before_no_match
+
             metadata_blueprint = request(process, 50, "tools/call", {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_MetadataOnly.BP_MetadataOnly"}})["structuredContent"]
             assert_envelope(metadata_blueprint)
             assert metadata_blueprint["snapshot"]["freshness"] == "refresh_requested"

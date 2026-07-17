@@ -16,6 +16,7 @@ PYTHON_SOURCE = ROOT / "Services" / "uepi" / "src"
 if str(PYTHON_SOURCE) not in sys.path:
     sys.path.insert(0, str(PYTHON_SOURCE))
 
+from uepi import __version__  # noqa: E402
 from uepi.bridge_client import bridge_session_path, call_bridge, read_bridge_session  # noqa: E402
 from uepi.identity import project_identity, session_matches_identity  # noqa: E402
 from uepi.store import SnapshotStore, SnapshotStoreError, _parse_utc  # noqa: E402
@@ -97,6 +98,11 @@ def run_doctor(project: Path, *, require_editor: bool = False) -> dict[str, Any]
     plugin = project_root / "Plugins" / "UEProjectIntelligence"
     server = plugin / "Services" / "uepi" / "src" / "uepi" / "mcp_server.py"
     store = SnapshotStore.from_paths(project=project)
+    try:
+        descriptor = _load_json(plugin / "UEProjectIntelligence.uplugin") if (plugin / "UEProjectIntelligence.uplugin").is_file() else {}
+    except (OSError, ValueError, json.JSONDecodeError):
+        descriptor = {}
+    plugin_version = str(descriptor.get("VersionName") or "")
 
     project_data: dict[str, Any] = {}
     try:
@@ -176,6 +182,7 @@ def run_doctor(project: Path, *, require_editor: bool = False) -> dict[str, Any]
     checks.append(_check("project_binding", bool(identity.get("project_binding_id")), f"Project binding is {identity.get('project_binding_id') or 'missing'}."))
 
     session = read_bridge_session(store)
+    catalog_result: dict[str, Any] = {}
     if session:
         matched = session_matches_identity(session, identity)
         heartbeat = _parse_utc(session.get("heartbeat_at") or session.get("last_seen_at_utc") or session.get("started_at"))
@@ -222,6 +229,12 @@ def run_doctor(project: Path, *, require_editor: bool = False) -> dict[str, Any]
         "schema_version": "uepi.doctor-report.v1",
         "ok": ok,
         "project": identity,
+        "versions": {
+            "plugin_version": str((session or {}).get("plugin_version") or plugin_version or "") or None,
+            "plugin_build_id": str((session or {}).get("plugin_build_id") or (f"uepi-{plugin_version}" if plugin_version else "")) or None,
+            "catalog_hash": str(catalog_result.get("catalog_hash") or (session or {}).get("catalog_hash") or "") or None,
+            "service_version": __version__,
+        },
         "editor_required": require_editor,
         "checks": checks,
         "summary": {

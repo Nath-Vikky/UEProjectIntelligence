@@ -1,7 +1,7 @@
 {
   "schema_version": "uepi.mcp-contract-snapshot.v2",
-  "captured_at_utc": "2026-07-17T05:42:32.398697Z",
-  "uepi_version": "2.0.0.dev0",
+  "captured_at_utc": "2026-07-17T07:40:04.068079Z",
+  "uepi_version": "2.0.0-beta.3",
   "profiles": {
     "readonly": [
       "uepi_status",
@@ -1622,6 +1622,51 @@
           },
           "expected_editor_session_id": {
             "type": "string"
+          },
+          "compact": {
+            "type": "boolean",
+            "default": true
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "typed_attribute_level": {
+            "type": "string",
+            "enum": [
+              "none",
+              "summary",
+              "full"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "max_payload_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 4194304
           }
         }
       }

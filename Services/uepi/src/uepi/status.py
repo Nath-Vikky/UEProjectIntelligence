@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .bridge_client import call_bridge, read_bridge_session
 from .identity import session_matches_identity
 from .store import SnapshotState, SnapshotStore, SnapshotStoreError, _parse_utc
@@ -16,6 +18,18 @@ def _cached_catalog_hash(store: SnapshotStore) -> str:
     except (OSError, json.JSONDecodeError):
         return ""
     return str(value.get("catalog_hash") or "") if isinstance(value, dict) else ""
+
+
+def _installed_plugin_version(identity: dict[str, Any]) -> str:
+    project_root = identity.get("project_root")
+    if not isinstance(project_root, str) or not project_root:
+        return ""
+    descriptor = Path(project_root) / "Plugins" / "UEProjectIntelligence" / "UEProjectIntelligence.uplugin"
+    try:
+        value = json.loads(descriptor.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    return str(value.get("VersionName") or "") if isinstance(value, dict) else ""
 
 
 def _heartbeat_age_ms(session: dict[str, Any]) -> int | None:
@@ -107,6 +121,8 @@ def resolve_status(
     probe_result = probe.get("result") if isinstance(probe, dict) and isinstance(probe.get("result"), dict) else {}
     live_catalog_hash = str(probe_result.get("catalog_hash") or (session or {}).get("catalog_hash") or "")
     cached_catalog_hash = _cached_catalog_hash(store)
+    plugin_version = str(probe_result.get("plugin_version") or (session or {}).get("plugin_version") or _installed_plugin_version(identity))
+    plugin_build_id = str(probe_result.get("plugin_build_id") or (session or {}).get("plugin_build_id") or (f"uepi-{plugin_version}" if plugin_version else ""))
     editor = {
         "connected": connected,
         "session_id": session_id or None,
@@ -119,6 +135,9 @@ def resolve_status(
         "pie_owned_by_uepi": bool(probe_result.get("pie_owned_by_uepi", False)),
         "runtime_session_id": probe_result.get("runtime_session_id") or None,
         "catalog_hash": live_catalog_hash or None,
+        "plugin_version": plugin_version or None,
+        "plugin_build_id": plugin_build_id or None,
+        "service_version": __version__,
         "data_mode": probe_result.get("data_mode") or ("live" if connected else state.data_mode),
         "source": "bridge_probe" if probe else ("project_session" if ready else "snapshot"),
         "observed_at": probe_result.get("observed_at") or (session or {}).get("heartbeat_at") or (session or {}).get("last_seen_at_utc"),
@@ -171,6 +190,10 @@ def resolve_status(
         "snapshot_ready": state.generation > 0,
         "catalog_current": bool(connected and live_catalog_hash),
         "catalog_cache_current": bool(cached_catalog_hash and live_catalog_hash and cached_catalog_hash == live_catalog_hash),
+        "plugin_version": plugin_version or None,
+        "plugin_build_id": plugin_build_id or None,
+        "catalog_hash": live_catalog_hash or cached_catalog_hash or None,
+        "service_version": __version__,
         "live_catalog_hash": live_catalog_hash or None,
         "cached_catalog_hash": cached_catalog_hash or None,
     }

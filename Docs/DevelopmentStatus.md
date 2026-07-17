@@ -1,6 +1,6 @@
 # UE Project Intelligence Development Status
 
-`main` is the `2.0.0-beta.2` release-candidate line for UE 5.3.2 and Codex.
+`main` is the `2.0.0-beta.3` release-candidate line for UE 5.3.2 and Codex.
 
 ## Implemented
 
@@ -48,12 +48,16 @@
 - UEPIBlank passes an eight-operation/four-asset success transaction with exact reads, semantic diff, explicit rollback, and restart tombstones. A second transaction injects failure after operation four, restores atomicity across all four targets, writes `failed_rolled_back`, leaves no package files, and preserves its structured failure evidence through the MCP envelope.
 - The `2.0.0-beta.2` Source archive passes isolated UE5.3.2 `BuildPlugin`; the Win64 archive contains the isolated DLL, passes root/version/exclusion/hash inspection, and a fresh archive install reaches online Doctor 17/17 after its first `UEPIIndex` Snapshot.
 - The 2026-07-17 contract-hardening pass builds on UE5.3.2, passes the synthetic Snapshot MCP regression and online Doctor 17/17, and passes the live read-contract smoke for current map, catalog, exact World actor, strict operation schema/example, 640x360 viewport, camera metadata, absolute screenshot artifact, inline PNG content, and all eight timing stages.
+- The Beta.3 recheck hardening replaces mutable Windows cache publication with generation-addressed SQLite files and atomic pointers; two concurrent sync clients publish one generation while an old reader remains usable, and 20 warm fixture engines do not rebuild the cache.
+- The LLMNPCDemo live read-contract now resolves `ABP_Manny1`'s `DefaultSlot` through typed graph/class filters, returns an empty non-refreshing result for a missing node class, and consistently selects `Waving.Waving` from a shuffled three-asset Hard Scope.
+- Twenty mixed live Status/World/Schema reads complete without `WinError 5` or `UEPI_CACHE_SYNC_FAILED`; tail-window incremental-event parsing lowers the measured warm P95 to 1,021.636 ms on the 2026-07-17 test machine.
+- UE 5.3.2 recompiles the Beta.3 Editor module successfully after adding version/build metadata to Bridge Status and session publication.
 
-## Beta.2 Release Gate
+## Beta.3 Release Gate
 
-- All Beta.1 P0 Golden, routing, restart, rollback, isolated build, archive, and clean-install requirements remain satisfied.
-- The larger atomic budget, Preview budget gate, one-approval continuation, four-asset success path, and injected-failure compensation path pass on UE5.3.2.
-- Release artifacts and their checksums are recorded in `Docs/Releases/2.0.0-beta.2.md`.
+- All Beta.2 Golden, routing, restart, rollback, atomicity, and guarded-write requirements remain satisfied.
+- Versioned Cache publication, explicit connection closure, typed Blueprint filtering, non-refreshing filter misses, Hard Scope root preservation, animation ranking, and Discover pagination pass isolated regressions.
+- The source tree compiles against UE 5.3.2 and the LLMNPCDemo read-only live contract passes against the matching Editor bridge.
 - Broader per-operation real-machine coverage continues after Beta and does not block this release candidate.
 
-The `v2.0.0-beta.2` tag may be created after this verification record is committed.
+The `v2.0.0-beta.3` tag may be created after this verification record is committed and the target-project copy is rebuilt.

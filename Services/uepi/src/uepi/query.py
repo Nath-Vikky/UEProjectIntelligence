@@ -22,6 +22,11 @@ BLUEPRINT_KINDS = {
     "blueprint_node",
     "blueprint_pin",
     "blueprint_event",
+    "anim_slot",
+    "anim_state_machine",
+    "anim_state",
+    "anim_transition",
+    "anim_asset_player",
     "cfg_basic_block",
     "dfg_value",
 }
@@ -64,6 +69,35 @@ def _as_list(value: Any) -> list[Any]:
 
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def typed_attribute_value(entity: dict[str, Any], key: str, default: Any = None) -> Any:
+    typed = _as_dict(entity.get("typed_attributes"))
+    if key in typed:
+        wrapped = typed[key]
+        if isinstance(wrapped, dict) and "value" in wrapped:
+            return wrapped["value"]
+        if not isinstance(wrapped, dict):
+            return wrapped
+    attributes = _as_dict(entity.get("attributes"))
+    return attributes.get(key, default)
+
+
+def _first_attribute_value(entity: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = typed_attribute_value(entity, key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _graph_name_matches(value: Any, requested: str) -> bool:
+    candidate = str(value or "").strip().replace("\\", "/").casefold()
+    expected = requested.strip().casefold()
+    if candidate == expected:
+        return True
+    graph_suffix = candidate.rsplit(":", 1)[-1]
+    return graph_suffix == expected or graph_suffix.split(".", 1)[0] == expected
 
 
 def _short_entity(entity: dict[str, Any], include_snapshot: bool = False) -> dict[str, Any]:
@@ -135,7 +169,7 @@ class UEPIQueryEngine:
         self._cache_sync_error: str | None = None
         if not self._cache_status.get("synced"):
             try:
-                self._cache_sync_result = sync_cache(self.store)
+                self._cache_sync_result = sync_cache(self.store, self.state)
             except Exception as exc:
                 self._cache_sync_error = str(exc)
         self.cache = SQLiteSnapshotCache.open_if_synced(store, self.state)
@@ -153,6 +187,33 @@ class UEPIQueryEngine:
         self.entity_by_id: dict[str, dict[str, Any]] = {}
         self.outgoing: dict[str, list[dict[str, Any]]] = {}
         self.incoming: dict[str, list[dict[str, Any]]] = {}
+
+    def close(self) -> None:
+        cache = self.cache
+        self.cache = None
+        if cache is not None:
+            cache.close()
+
+    def __enter__(self) -> "UEPIQueryEngine":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        self.close()
+
+    def _cache_diagnostics(self) -> list[dict[str, Any]]:
+        if not self._cache_sync_error:
+            return []
+        return [
+            {
+                "severity": "warning",
+                "blocking": False,
+                "code": "UEPI_CACHE_SYNC_FAILED",
+                "message": f"SQLite cache synchronization failed; this request fell back to Snapshot fragments: {self._cache_sync_error}",
+                "phase": "cache_sync",
+                "retryable": True,
+                "recoverable": True,
+            }
+        ]
 
     @property
     def scan(self) -> dict[str, Any]:
@@ -210,7 +271,7 @@ class UEPIQueryEngine:
             editor=status["editor"],
             state=state,
             result=result,
-            diagnostics=self.identity_diagnostics + status["diagnostics"] + (diagnostics or []),
+            diagnostics=self.identity_diagnostics + self._cache_diagnostics() + status["diagnostics"] + (diagnostics or []),
             omissions=omissions,
             truncation=truncation,
             evidence=evidence,
@@ -244,7 +305,7 @@ class UEPIQueryEngine:
                 "retryable": False,
                 "candidates": candidates or [],
             },
-            diagnostics=self.identity_diagnostics + status["diagnostics"] + (diagnostics or []),
+            diagnostics=self.identity_diagnostics + self._cache_diagnostics() + status["diagnostics"] + (diagnostics or []),
             next_actions=next_actions,
         )
 
@@ -633,7 +694,7 @@ class UEPIQueryEngine:
             project=self.identity,
             editor=resolved["editor"],
             state=status_state,
-            diagnostics=self.identity_diagnostics + guard_diagnostics + resolved["diagnostics"],
+            diagnostics=self.identity_diagnostics + self._cache_diagnostics() + guard_diagnostics + resolved["diagnostics"],
             result={
                 "ok": True,
                 "project_state": "snapshot_ready",
@@ -641,6 +702,10 @@ class UEPIQueryEngine:
                 "manifest_path": str(self.state.manifest_path),
                 "schema_version": self.state.manifest.get("schema_version"),
                 "generation": self.state.generation,
+                "plugin_version": resolved["doctor"].get("plugin_version"),
+                "plugin_build_id": resolved["doctor"].get("plugin_build_id"),
+                "catalog_hash": resolved["doctor"].get("catalog_hash"),
+                "service_version": resolved["doctor"].get("service_version"),
                 "counts": self.counts,
                 "manifest_counts": self.state.counts,
                 "manifest_counts_scope": self.state.manifest.get("counts_scope") or "manifest",
@@ -830,35 +895,71 @@ class UEPIQueryEngine:
                 tool="uepi_blueprint",
                 operation="graph_summary",
             )
+        node_class_set = {str(item).casefold() for item in (node_classes or [])}
+        semantic_set = {str(item).casefold() for item in (semantic_kinds or [])}
+        filters_active = bool(graph or graph_role or node_guid or node_class_set or semantic_set)
         domain_entities = self._domain_entities_for_asset(
             entity,
             BLUEPRINT_KINDS,
             max(1, min(limit, 1000)),
             relation_types=BLUEPRINT_SCOPE_RELATIONS,
         )
-        node_class_set = {str(item).casefold() for item in (node_classes or [])}
-        semantic_set = {str(item).casefold() for item in (semantic_kinds or [])}
+        if filters_active:
+            asset_key = str(entity.get("canonical_key") or "")
+            if self.cache:
+                scoped_entities = self.cache.scoped_entities_for_asset(asset_key, BLUEPRINT_KINDS)
+            else:
+                self._ensure_loaded()
+                folded_asset = asset_key.casefold().rstrip(":")
+                scoped_entities = [
+                    item
+                    for item in self.entities
+                    if item.get("kind") in BLUEPRINT_KINDS
+                    and (
+                        str(item.get("canonical_key") or "").casefold() == folded_asset
+                        or str(item.get("canonical_key") or "").casefold().startswith(folded_asset + ":")
+                        or folded_asset in json.dumps(_as_dict(item.get("attributes")), ensure_ascii=False).casefold()
+                    )
+                ]
+            merged = {str(item.get("id") or ""): item for item in domain_entities if item.get("id")}
+            for item in scoped_entities:
+                item_id = str(item.get("id") or "")
+                if item_id:
+                    merged[item_id] = item
+            domain_entities = list(merged.values())
+        unfiltered_domain_entities = list(domain_entities)
 
         def blueprint_filter(item: dict[str, Any]) -> bool:
-            attrs = _as_dict(item.get("attributes"))
-            typed = _as_dict(item.get("typed_attributes"))
-            values = {**attrs, **typed}
-            if graph and str(values.get("graph_name") or values.get("graph") or "").casefold() != graph.casefold():
+            if graph and not _graph_name_matches(_first_attribute_value(item, "graph_name", "graph", "graph_path"), graph):
                 return False
-            if graph_role and str(values.get("graph_role") or "").casefold() != graph_role.casefold():
+            if graph_role and str(_first_attribute_value(item, "graph_role") or "").casefold() != graph_role.casefold():
                 return False
-            if node_guid and str(values.get("node_guid") or values.get("guid") or "").casefold() != node_guid.casefold():
+            if node_guid and str(_first_attribute_value(item, "node_guid", "guid") or "").casefold() != node_guid.casefold():
                 return False
-            node_class = str(values.get("node_class") or values.get("class_path") or values.get("node_class_path") or "").casefold()
+            node_class = str(_first_attribute_value(item, "node_class", "class_path", "node_class_path") or "").casefold()
             if node_class_set and not any(candidate == node_class or candidate in node_class for candidate in node_class_set):
                 return False
-            semantic = str(values.get("semantic_kind") or values.get("semantic") or item.get("kind") or "").casefold()
+            semantic = str(_first_attribute_value(item, "semantic_kind", "semantic") or item.get("kind") or "").casefold()
             if semantic_set and semantic not in semantic_set:
                 return False
             return True
 
-        if graph or graph_role or node_guid or node_class_set or semantic_set:
+        if filters_active:
             domain_entities = [item for item in domain_entities if blueprint_filter(item)]
+
+            def filtered_rank(item: dict[str, Any]) -> tuple[int, str]:
+                kind = str(item.get("kind") or "")
+                specific_domain = kind not in {"blueprint_node", "blueprint_pin", "cfg_basic_block", "dfg_value"}
+                has_domain_metadata = any(
+                    _first_attribute_value(item, key) not in (None, "")
+                    for key in ("slot_name", "state_name", "transition_name", "animation_asset")
+                )
+                return (
+                    0 if has_domain_metadata else (1 if specific_domain else 2),
+                    str(item.get("canonical_key") or item.get("id") or "").casefold(),
+                )
+
+            domain_entities = sorted(domain_entities, key=filtered_rank)[: max(1, min(limit, 1000))]
         entity_id = str(entity.get("id") or "")
         relation_ids = {item.get("id") for item in domain_entities if item.get("id")}
         relation_ids.add(entity_id)
@@ -874,7 +975,7 @@ class UEPIQueryEngine:
             ][:limit]
             query_source = "snapshot_fragments"
         omissions: list[str] = []
-        if not domain_entities:
+        if not unfiltered_domain_entities:
             omissions.append("blueprint_graph_entities_not_present_in_snapshot")
             freshness, diagnostics = self._domain_refresh_for_missing_snapshot(
                 entity,
@@ -884,6 +985,18 @@ class UEPIQueryEngine:
                 domain="Blueprint graph",
                 freshness=freshness,
                 diagnostics=diagnostics,
+            )
+        elif filters_active and not domain_entities:
+            diagnostics.append(
+                {
+                    "severity": "info",
+                    "blocking": False,
+                    "code": "UEPI_BLUEPRINT_FILTER_NO_MATCH",
+                    "message": "Blueprint graph data is present, but no graph entity matched the requested filters.",
+                    "phase": "query",
+                    "retryable": False,
+                    "recoverable": True,
+                }
             )
         semantic_summary = summarize_blueprint_semantics(_short_entity(entity), domain_entities, relations, limit=max(20, min(limit, 120)))
         return self._envelope(
@@ -896,6 +1009,7 @@ class UEPIQueryEngine:
                 "data_mutations": semantic_summary["data_mutations"],
                 "resolution_candidates": candidates,
                 "query_source": query_source,
+                "unfiltered_entity_count": len(unfiltered_domain_entities),
                 "filters": {"graph": graph or None, "graph_role": graph_role or None, "node_guid": node_guid or None, "node_classes": node_classes or [], "semantic_kinds": semantic_kinds or []},
             },
             diagnostics=diagnostics,
@@ -1083,7 +1197,7 @@ class UEPIQueryEngine:
             "mode": mode,
             "include": requested,
             "animation_entities": domain_entities,
-            "motion_summary": snapshot.get("animation_motion_summary") or snapshot.get("motion_summary"),
+            "motion_summary": snapshot.get("animation_motion_summary") or snapshot.get("motion_summary") or (sequence_snapshot or {}).get("motion_summary"),
             "sequence": sequence_snapshot,
             "bone_motion_profile_manifest": bone_motion_profile_manifest or None,
             "reconstruction_profile_manifest": reconstruction_profile_manifest or None,

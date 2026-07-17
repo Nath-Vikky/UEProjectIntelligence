@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 2.0.0-beta.3
+
+- Replaced the mutable Windows SQLite cache with generation-addressed saved/live files, atomically published pointers, cross-process synchronization, explicit connection ownership, and structured cache-failure diagnostics.
+- Bounded incremental-event reads to a tail window so large append-only Editor logs no longer penalize every Status or asset freshness query.
+- Corrected Blueprint graph filters to unwrap typed attribute values and stopped filter misses from repeatedly queuing targeted refresh work.
+- Guaranteed Hard Scope root-asset candidates and made animation context ranking prefer explicitly named sequence or montage roots over AnimBP graph/state entities.
+- Published Edit Discover projection and pagination arguments, executable continuation actions, and explicit stale-cursor restart guidance.
+- Added plugin, build, operation catalog, and Python service versions to Editor sessions, Status, and Doctor output.
+- Expanded isolated and live read-contract regressions for concurrent cache publication, warm-read latency, Blueprint filters, animation routing, and Discover pagination.
+
 - Enforced projection, pagination, artifact fallback, and UTF-8 payload budgets across the complete MCP envelope, including late timing metadata.
 - Published strict machine-readable JSON Schema, required fields, examples, and contract hashes for all 64 Editor operations.
 - Unified implicit and explicit refresh request IDs and aligned live Status map, PIE, catalog, and independent saved/live generation semantics.

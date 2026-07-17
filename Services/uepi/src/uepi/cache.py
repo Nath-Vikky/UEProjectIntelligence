@@ -1,19 +1,62 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import sqlite3
 import time
 from typing import Any
+from uuid import uuid4
 
 from .store import SnapshotState, SnapshotStore
 
 
 SCHEMA_VERSION = "uepi.sqlite-cache.v2.1"
+POINTER_SCHEMA_VERSION = "uepi.sqlite-cache-pointer.v1"
+SYNC_LOCK_TIMEOUT_SECONDS = 60.0
+SYNC_LOCK_STALE_SECONDS = 180.0
 
 
-def cache_path(store: SnapshotStore) -> Path:
-    return store.root / "cache" / "uepi.sqlite3"
+def _cache_dir(store: SnapshotStore) -> Path:
+    return store.root / "cache"
+
+
+def _legacy_cache_path(store: SnapshotStore) -> Path:
+    return _cache_dir(store) / "uepi.sqlite3"
+
+
+def _mode_name(state: SnapshotState) -> str:
+    return "live" if state.data_mode == "live" else "saved"
+
+
+def _pointer_path(store: SnapshotStore, state: SnapshotState) -> Path:
+    return _cache_dir(store) / f"current-{_mode_name(state)}.json"
+
+
+def _load_pointer(store: SnapshotStore, state: SnapshotState) -> dict[str, Any] | None:
+    path = _pointer_path(store, state)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict) or value.get("schema_version") != POINTER_SCHEMA_VERSION:
+        return None
+    cache_file = value.get("cache_file")
+    if not isinstance(cache_file, str) or not cache_file or Path(cache_file).name != cache_file:
+        return None
+    return value
+
+
+def cache_path(store: SnapshotStore, state: SnapshotState | None = None) -> Path:
+    state = state or store.load_state()
+    pointer = _load_pointer(store, state)
+    if pointer:
+        candidate = _cache_dir(store) / str(pointer["cache_file"])
+        if candidate.exists():
+            return candidate
+    return _legacy_cache_path(store)
 
 
 def _json(value: Any) -> str:
@@ -98,7 +141,9 @@ def _json_array(value: str | None) -> list[Any]:
 
 def _connect(path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(path)
-    connection.execute("PRAGMA journal_mode=WAL")
+    # Generated cache files are immutable after publication; a single-file
+    # journal avoids leaving WAL sidecars behind when the file is renamed.
+    connection.execute("PRAGMA journal_mode=DELETE")
     connection.execute("PRAGMA synchronous=NORMAL")
     return connection
 
@@ -164,17 +209,138 @@ def _metadata_for_state(state: SnapshotState, scan: dict[str, Any], entity_count
     }
 
 
-def sync_cache(store: SnapshotStore) -> dict[str, Any]:
-    state = store.load_state()
+def _read_metadata(path: Path) -> dict[str, str]:
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=1.0)
+        return {str(key): str(value) for key, value in connection.execute("SELECT key, value FROM metadata").fetchall()}
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _sync_result_from_status(status: dict[str, Any], *, reused: bool) -> dict[str, Any]:
+    return {
+        "schema_version": str(status.get("schema_version") or SCHEMA_VERSION),
+        "cache_path": str(status.get("path") or ""),
+        "pointer_path": status.get("pointer_path"),
+        "data_mode": str(status.get("data_mode") or ""),
+        "generation": int(status.get("generation") or 0),
+        "entity_count": int(status.get("entity_count") or 0),
+        "relation_count": int(status.get("relation_count") or 0),
+        "reused": reused,
+    }
+
+
+@contextmanager
+def _sync_lock(store: SnapshotStore, state: SnapshotState):
+    directory = _cache_dir(store)
+    directory.mkdir(parents=True, exist_ok=True)
+    lock_path = directory / f"sync-{_mode_name(state)}.lock"
+    token = f"{os.getpid()}:{uuid4().hex}"
+    deadline = time.monotonic() + SYNC_LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                stale = time.time() - lock_path.stat().st_mtime > SYNC_LOCK_STALE_SECONDS
+            except OSError:
+                stale = False
+            if stale:
+                try:
+                    lock_path.unlink()
+                except OSError:
+                    pass
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Timed out waiting for SQLite cache sync lock: {lock_path}")
+            time.sleep(0.05)
+            continue
+        else:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(token)
+            break
+
+    try:
+        yield
+    finally:
+        try:
+            if lock_path.read_text(encoding="utf-8") == token:
+                lock_path.unlink()
+        except OSError:
+            pass
+
+
+def _publish_pointer(store: SnapshotStore, state: SnapshotState, destination: Path) -> Path:
+    pointer_path = _pointer_path(store, state)
+    pointer = {
+        "schema_version": POINTER_SCHEMA_VERSION,
+        "data_mode": state.data_mode,
+        "generation": state.generation,
+        "manifest_path": str(state.manifest_path),
+        "cache_file": destination.name,
+        "published_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    temp_path = pointer_path.with_name(f".{pointer_path.name}.{os.getpid()}.{uuid4().hex}.tmp")
+    temp_path.write_text(json.dumps(pointer, ensure_ascii=False, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+    delay = 0.02
+    try:
+        for attempt in range(8):
+            try:
+                os.replace(temp_path, pointer_path)
+                return pointer_path
+            except PermissionError:
+                if attempt == 7:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2.0, 0.5)
+    finally:
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
+    return pointer_path
+
+
+def _cleanup_old_generations(store: SnapshotStore, state: SnapshotState, current: Path, keep: int = 4) -> None:
+    pattern = f"uepi-{_mode_name(state)}-g*.sqlite3"
+    candidates = sorted(_cache_dir(store).glob(pattern), key=lambda item: item.stat().st_mtime, reverse=True)
+    protected = {current.resolve()}
+    protected.update(item.resolve() for item in candidates[: max(1, keep)])
+    for candidate in candidates:
+        try:
+            if candidate.resolve() not in protected:
+                candidate.unlink()
+        except OSError:
+            # A previous generation may still be held by another Windows reader.
+            pass
+
+
+def sync_cache(store: SnapshotStore, state: SnapshotState | None = None) -> dict[str, Any]:
+    state = state or store.load_state()
+    existing = cache_status(store, state)
+    if existing.get("synced"):
+        return _sync_result_from_status(existing, reused=True)
+
+    with _sync_lock(store, state):
+        existing = cache_status(store, state)
+        if existing.get("synced"):
+            return _sync_result_from_status(existing, reused=True)
+
+        return _build_and_publish_cache(store, state)
+
+
+def _build_and_publish_cache(store: SnapshotStore, state: SnapshotState) -> dict[str, Any]:
     scan = store.load_project_scan(state)
     entities = [entity for entity in scan.get("entities") or [] if isinstance(entity, dict)]
     relations = [relation for relation in scan.get("relations") or [] if isinstance(relation, dict)]
 
-    destination = cache_path(store)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = destination.with_suffix(".sqlite3.tmp")
-    if temp_path.exists():
-        temp_path.unlink()
+    directory = _cache_dir(store)
+    directory.mkdir(parents=True, exist_ok=True)
+    build_id = uuid4().hex
+    destination = directory / f"uepi-{_mode_name(state)}-g{state.generation}-{build_id}.sqlite3"
+    temp_path = directory / f".{destination.name}.{os.getpid()}.tmp"
 
     connection = _connect(temp_path)
     try:
@@ -233,43 +399,45 @@ def sync_cache(store: SnapshotStore) -> dict[str, Any]:
     finally:
         connection.close()
 
-    temp_path.replace(destination)
+    os.replace(temp_path, destination)
+    pointer_path = _publish_pointer(store, state, destination)
+    _cleanup_old_generations(store, state, destination)
     return {
         "schema_version": SCHEMA_VERSION,
         "cache_path": str(destination),
+        "pointer_path": str(pointer_path),
         "data_mode": state.data_mode,
         "generation": state.generation,
         "entity_count": len(entities),
         "relation_count": len(relations),
+        "reused": False,
     }
 
 
 def cache_status(store: SnapshotStore, state: SnapshotState | None = None) -> dict[str, Any]:
     state = state or store.load_state()
-    path = cache_path(store)
+    pointer_path = _pointer_path(store, state)
+    pointer = _load_pointer(store, state)
+    path = cache_path(store, state)
     if not path.exists():
         return {
             "available": False,
             "synced": False,
             "path": str(path),
+            "pointer_path": str(pointer_path),
             "reason": "cache_missing",
         }
 
     try:
-        connection = sqlite3.connect(path)
-        rows = dict(connection.execute("SELECT key, value FROM metadata").fetchall())
-    except sqlite3.Error as exc:
+        rows = _read_metadata(path)
+    except (OSError, sqlite3.Error) as exc:
         return {
             "available": False,
             "synced": False,
             "path": str(path),
+            "pointer_path": str(pointer_path),
             "reason": f"cache_unreadable: {exc}",
         }
-    finally:
-        try:
-            connection.close()
-        except Exception:
-            pass
 
     synced = (
         rows.get("schema_version") == SCHEMA_VERSION
@@ -281,6 +449,8 @@ def cache_status(store: SnapshotStore, state: SnapshotState | None = None) -> di
         "available": True,
         "synced": synced,
         "path": str(path),
+        "pointer_path": str(pointer_path) if pointer else None,
+        "versioned": bool(pointer),
         "schema_version": rows.get("schema_version"),
         "data_mode": rows.get("data_mode"),
         "generation": int(rows.get("generation") or 0),
@@ -292,8 +462,24 @@ def cache_status(store: SnapshotStore, state: SnapshotState | None = None) -> di
 class SQLiteSnapshotCache:
     def __init__(self, path: Path):
         self.path = path
-        self.connection = sqlite3.connect(path)
+        self.connection: sqlite3.Connection | None = sqlite3.connect(
+            f"file:{path.as_posix()}?mode=ro",
+            uri=True,
+            timeout=1.0,
+        )
         self.connection.row_factory = sqlite3.Row
+
+    def close(self) -> None:
+        connection = self.connection
+        self.connection = None
+        if connection is not None:
+            connection.close()
+
+    def __enter__(self) -> "SQLiteSnapshotCache":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        self.close()
 
     @classmethod
     def open_if_synced(cls, store: SnapshotStore, state: SnapshotState) -> "SQLiteSnapshotCache | None":
@@ -303,15 +489,13 @@ class SQLiteSnapshotCache:
         cache: SQLiteSnapshotCache | None = None
         try:
             cache = cls(Path(str(status["path"])))
+            assert cache.connection is not None
             cache.connection.execute("SELECT typed_attributes_json FROM entities LIMIT 1").fetchone()
             cache.connection.execute("SELECT typed_attributes_json FROM relations LIMIT 1").fetchone()
             return cache
         except sqlite3.Error:
             if cache is not None:
-                try:
-                    cache.connection.close()
-                except Exception:
-                    pass
+                cache.close()
             return None
 
     def metadata(self) -> dict[str, str]:
@@ -544,3 +728,30 @@ class SQLiteSnapshotCache:
                 if len(results) >= limit:
                     break
         return results
+
+    def scoped_entities_for_asset(
+        self,
+        asset_key: str,
+        domain_kinds: set[str],
+        limit: int = 5000,
+    ) -> list[dict[str, Any]]:
+        if not asset_key or not domain_kinds:
+            return []
+        kind_placeholders = ",".join("?" for _ in domain_kinds)
+        canonical_prefix = asset_key.rstrip(":") + ":%"
+        attribute_match = f"%{asset_key}%"
+        rows = self.connection.execute(
+            f"""
+            SELECT * FROM entities
+            WHERE kind IN ({kind_placeholders})
+              AND (
+                    lower(canonical_key) = lower(?)
+                 OR lower(canonical_key) LIKE lower(?)
+                 OR attributes_json LIKE ?
+              )
+            ORDER BY canonical_key ASC, kind ASC, id ASC
+            LIMIT ?
+            """,
+            (*sorted(domain_kinds), asset_key, canonical_prefix, attribute_match, max(1, int(limit))),
+        ).fetchall()
+        return [entity for row in rows if (entity := self._entity_from_row(row, include_snapshot=True))]

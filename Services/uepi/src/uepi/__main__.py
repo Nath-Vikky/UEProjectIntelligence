@@ -74,16 +74,19 @@ def main(argv: list[str] | None = None) -> int:
         return emit({"schema_version": "uepi.compact-result.v1", "output_path": str(output_path), "cache": cache})
 
     engine = make_engine(project=args.project, store=args.store, db=args.db)
-    if args.command == "status":
-        return emit(engine.status())
-    if args.command == "overview":
-        return emit(engine.overview(limit=args.limit))
-    if args.command == "search":
-        return emit(engine.search(query=args.query, kind=args.kind, limit=args.limit))
-    if args.command == "asset":
-        if not args.asset:
-            parser.error("--asset is required for the asset command")
-        return emit(engine.asset(args.asset, relation_limit=args.limit))
+    try:
+        if args.command == "status":
+            return emit(engine.status())
+        if args.command == "overview":
+            return emit(engine.overview(limit=args.limit))
+        if args.command == "search":
+            return emit(engine.search(query=args.query, kind=args.kind, limit=args.limit))
+        if args.command == "asset":
+            if not args.asset:
+                parser.error("--asset is required for the asset command")
+            return emit(engine.asset(args.asset, relation_limit=args.limit))
+    finally:
+        engine.close()
     parser.error(f"Unknown command: {args.command}")
     return 2
 

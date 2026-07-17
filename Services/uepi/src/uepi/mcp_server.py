@@ -300,7 +300,18 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_edit_discover",
         "description": "Discover the experimental UEPI edit operation catalog without modifying Unreal assets.",
-        "inputSchema": guarded_edit_schema({}),
+        "inputSchema": guarded_edit_schema(
+            {
+                "compact": {"type": "boolean", "default": True},
+                "fields": {"type": "array", "items": {"type": "string"}},
+                "exclude": {"type": "array", "items": {"type": "string"}},
+                "evidence_level": {"type": "string", "enum": ["none", "summary", "full"]},
+                "typed_attribute_level": {"type": "string", "enum": ["none", "summary", "full"]},
+                "page_size": {"type": "integer", "minimum": 1, "maximum": 500},
+                "cursor": {"type": "string"},
+                "max_payload_bytes": {"type": "integer", "minimum": 4096, "maximum": 4194304},
+            }
+        ),
     },
     {
         "name": "uepi_edit_preview",
@@ -628,6 +639,12 @@ class UEPIMCPServer:
                 return self._read_result(engine._error("UEPI_TOOL_FAILED", str(exc), diagnostics=[{"severity": "error", "blocking": True, "code": "UEPI_TOOL_FAILED", "message": diagnostic}], tool=name, operation="call"), arguments)
             return self._read_result(envelope(tool=name, operation="call", project={}, editor={}, state={}, error={"code": "UEPI_TOOL_FAILED", "message": str(exc), "retryable": False, "candidates": []}, diagnostics=[{"severity": "error", "blocking": True, "code": "UEPI_TOOL_FAILED", "message": diagnostic}]), arguments)
         finally:
+            if engine is not None:
+                try:
+                    engine.close()
+                except Exception:
+                    pass
+            self._current_engine = None
             end_request(timing_token)
 
     def resources(self) -> list[dict[str, Any]]:
@@ -654,13 +671,16 @@ class UEPIMCPServer:
 
     def read_resource(self, uri: str) -> dict[str, Any]:
         engine = self._engine()
-        if uri == "uepi://snapshot/manifest":
-            text = json.dumps(engine.state.manifest, ensure_ascii=False, indent=2)
-        elif uri in {"uepi://snapshot/current-view", "uepi://snapshot/project-scan"}:
-            text = json.dumps(engine.scan, ensure_ascii=False, indent=2)
-        else:
-            raise ValueError(f"Unknown UEPI resource: {uri}")
-        return {"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]}
+        try:
+            if uri == "uepi://snapshot/manifest":
+                text = json.dumps(engine.state.manifest, ensure_ascii=False, indent=2)
+            elif uri in {"uepi://snapshot/current-view", "uepi://snapshot/project-scan"}:
+                text = json.dumps(engine.scan, ensure_ascii=False, indent=2)
+            else:
+                raise ValueError(f"Unknown UEPI resource: {uri}")
+            return {"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]}
+        finally:
+            engine.close()
 
     def handle(self, message: dict[str, Any]) -> dict[str, Any] | None:
         method = message.get("method")

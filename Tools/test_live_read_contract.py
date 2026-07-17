@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -13,6 +14,17 @@ sys.path.insert(0, str(ROOT / "Services" / "uepi" / "src"))
 
 from uepi.mcp_server import UEPIMCPServer  # noqa: E402
 from uepi.timing import TIMING_FIELDS  # noqa: E402
+
+
+def _attribute(entity: dict[str, Any], key: str) -> Any:
+    typed = entity.get("typed_attributes") if isinstance(entity.get("typed_attributes"), dict) else {}
+    wrapped = typed.get(key)
+    if isinstance(wrapped, dict) and "value" in wrapped:
+        return wrapped["value"]
+    if wrapped is not None and not isinstance(wrapped, dict):
+        return wrapped
+    attributes = entity.get("attributes") if isinstance(entity.get("attributes"), dict) else {}
+    return attributes.get(key)
 
 
 def _value(server: UEPIMCPServer, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -39,6 +51,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project", type=Path, required=True)
     parser.add_argument("--viewport-width", type=int, default=640)
     parser.add_argument("--viewport-height", type=int, default=360)
+    parser.add_argument("--warm-read-p95-ms", type=float, default=2000.0)
+    parser.add_argument("--llmnpc-regression", action="store_true")
     args = parser.parse_args(argv)
 
     project_file = args.project.resolve()
@@ -60,6 +74,16 @@ def main(argv: list[str] | None = None) -> int:
     assert status["editor"]["active_map"]
     assert status["result"]["doctor"]["catalog_current"] is True
     assert isinstance(status["result"]["doctor"]["catalog_cache_current"], bool)
+    assert status["result"]["cache"]["synced"] is True
+    assert status["result"]["cache"]["generation"] == status["snapshot"]["view_generation"]
+    assert status["result"]["plugin_version"]
+    assert status["result"]["plugin_build_id"]
+    assert status["result"]["catalog_hash"]
+    assert status["result"]["service_version"]
+    assert not any(item.get("code") == "UEPI_CACHE_SYNC_FAILED" for item in status["diagnostics"])
+
+    discover_tool = next(tool for tool in server.tools() if tool["name"] == "uepi_edit_discover")
+    assert {"cursor", "page_size", "max_payload_bytes", "fields", "exclude"}.issubset(discover_tool["inputSchema"]["properties"])
 
     world_page = _value(
         server,
@@ -161,6 +185,90 @@ def main(argv: list[str] | None = None) -> int:
     assert artifact_path.is_absolute(), capture
     assert artifact_path.is_file() and artifact_path.stat().st_size > 0, capture
 
+    warm_timings: list[float] = []
+    for index in range(20):
+        if index % 3 == 0:
+            warm = _value(server, "uepi_status", guard)
+        elif index % 3 == 1:
+            warm = _value(
+                server,
+                "uepi_world",
+                {**guard, "action": "read", "world": "editor", "include_components": False, "page_size": 4},
+            )
+        else:
+            warm = _value(
+                server,
+                "uepi_schema",
+                {**guard, "action": "edit_operation", "query": "content.create_asset"},
+            )
+        assert not any(item.get("code") == "UEPI_CACHE_SYNC_FAILED" for item in warm["diagnostics"])
+        assert "WinError 5" not in json.dumps(warm, ensure_ascii=False)
+        warm_timings.append(float(warm["timing"]["total_ms"]))
+    sorted_timings = sorted(warm_timings)
+    warm_p95_ms = sorted_timings[max(0, math.ceil(len(sorted_timings) * 0.95) - 1)]
+    assert warm_p95_ms < args.warm_read_p95_ms, warm_timings
+
+    llmnpc: dict[str, Any] | None = None
+    if args.llmnpc_regression:
+        slot = _value(
+            server,
+            "uepi_blueprint",
+            {
+                **guard,
+                "asset": "/Game/LLMNPC/Animation/ABP_Manny1.ABP_Manny1",
+                "graph": "AnimGraph",
+                "node_classes": ["AnimGraphNode_Slot"],
+            },
+        )
+        slot_nodes = slot["result"]["blueprint_entities"]
+        assert any("AnimGraphNode_Slot_0" in str(item.get("canonical_key") or "") for item in slot_nodes), slot_nodes
+        assert any(str(_attribute(item, "slot_name") or "") == "DefaultSlot" for item in slot_nodes)
+
+        no_match = _value(
+            server,
+            "uepi_blueprint",
+            {
+                **guard,
+                "asset": "/Game/LLMNPC/Animation/ABP_Manny1.ABP_Manny1",
+                "graph": "AnimGraph",
+                "node_classes": ["DefinitelyMissingNodeClass"],
+            },
+        )
+        assert no_match["result"]["blueprint_entities"] == []
+        assert any(item.get("code") == "UEPI_BLUEPRINT_FILTER_NO_MATCH" for item in no_match["diagnostics"])
+        assert not any(item.get("code") == "UEPI_REFRESH_REQUESTED" for item in no_match["diagnostics"])
+
+        animation_context = _value(
+            server,
+            "uepi_context",
+            {
+                **guard,
+                "question": "Analyze the Waving animation sequence",
+                "route": "animation_playback",
+                "hard_scope": [
+                    "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny",
+                    "/Game/LLMNPC/Animation/Waving",
+                    "/Game/LLMNPC/Animation/ABP_Manny1",
+                ],
+                "max_items": 12,
+                "fields": [
+                    "sections.animation_summary.asset",
+                    "sections.animation_summary.motion_summary",
+                    "sections.animation_summary.sequence.sequence_path",
+                    "sections.animation_summary.sequence.play_length_seconds",
+                ],
+                "max_payload_bytes": 131072,
+            },
+        )
+        animation_summary = animation_context["result"]["sections"]["animation_summary"]
+        assert animation_summary["asset"]["canonical_key"] == "/Game/LLMNPC/Animation/Waving.Waving"
+        assert animation_summary["motion_summary"] is not None
+        assert animation_summary["sequence"] is not None
+        llmnpc = {
+            "slot_node_count": len(slot_nodes),
+            "animation_asset": animation_summary["asset"]["canonical_key"],
+        }
+
     summary = {
         "ok": True,
         "project": status["project"]["project_name"],
@@ -182,7 +290,9 @@ def main(argv: list[str] | None = None) -> int:
             "component": component["timing"],
             "schema": operation["timing"],
             "viewport": viewport["timing"],
+            "warm_read_p95_ms": warm_p95_ms,
         },
+        "llmnpc": llmnpc,
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
