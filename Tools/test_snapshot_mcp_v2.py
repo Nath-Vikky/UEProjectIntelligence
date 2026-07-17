@@ -20,6 +20,7 @@ from uepi.bridge_client import _read_token  # noqa: E402
 from uepi.diff import build_transaction_diff  # noqa: E402
 from uepi.edit import _apply_timeout_seconds, _asset_values, _budget_diagnostics, _refresh_timeout_seconds, _transaction_budgets  # noqa: E402
 from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
+from uepi.projections import apply_response_options  # noqa: E402
 from uepi.runtime import _approved_subset, _matches_approved, _value_at_path  # noqa: E402
 from uepi.result import envelope  # noqa: E402
 from uepi.store import resolve_store_root  # noqa: E402
@@ -164,6 +165,54 @@ def assert_envelope(value: dict[str, Any]) -> None:
     assert "item_limit_hit" in value["truncation"]
     assert "byte_limit_hit" in value["truncation"]
     assert "continuation" in value
+
+
+def assert_response_budget_contract() -> None:
+    base = envelope(
+        tool="uepi_context",
+        operation="context_route:auto",
+        project={"project_id": "test", "project_name": "Test"},
+        state={"freshness": "current", "saved_generation": 7},
+        result={
+            "matches": [{"id": f"asset-{index}", "canonical_key": f"/Game/A{index}.A{index}", "attributes": {"blob": "m" * 300}} for index in range(20)],
+            "sections": {"asset_snapshot": {"entities": [{"blob": "s" * 1200} for _ in range(12)]}},
+            "live_editor": {"output_log": ["log " + ("x" * 500) for _ in range(20)]},
+        },
+    )
+    projected = apply_response_options(base, {"fields": ["matches.id"], "page_size": 4, "max_payload_bytes": 4096})
+    assert set(projected["result"]) == {"matches"}
+    assert len(projected["result"]["matches"]) <= 4
+    assert projected["payload_bytes"] == len(json.dumps(projected, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    assert projected["payload_bytes"] <= 4096
+    assert projected["continuation"]["has_more"] is True
+
+    schema_response = envelope(
+        tool="uepi_schema",
+        operation="asset_property",
+        project={"project_id": "test", "project_name": "Test"},
+        state={"freshness": "current", "saved_generation": 7},
+        result={"properties": [{"name": f"P{index}", "schema": {"description": "p" * 400}} for index in range(30)]},
+    )
+    schema_page = apply_response_options(schema_response, {"page_size": 3, "max_payload_bytes": 4096})
+    assert len(schema_page["result"]["properties"]) <= 3
+    assert schema_page["continuation"]["has_more"] is True
+    assert schema_page["payload_bytes"] <= 4096
+
+    animation_response = envelope(
+        tool="uepi_animation",
+        operation="animation",
+        project={"project_id": "test", "project_name": "Test"},
+        state={"freshness": "current", "saved_generation": 7},
+        result={
+            "bone_motion_profile_manifest": {"artifact_uri": "uepi://animation-bone-motion-profile/test", "artifact_id": "test"},
+            "bone_motion_profile": {"changed_bones": [{"bone_name": "hand_r", "samples": ["v" * 600 for _ in range(20)]}]},
+        },
+    )
+    bounded_animation = apply_response_options(animation_response, {"fields": ["bone_motion_profile"], "max_payload_bytes": 4096})
+    assert "bone_motion_profile_manifest" in bounded_animation["result"]
+    assert "bone_motion_profile" not in bounded_animation["result"]
+    assert bounded_animation["truncation"]["byte_limit_hit"] is True
+    assert bounded_animation["payload_bytes"] <= 4096
 
 
 def assert_plan_v2_contract() -> None:
@@ -1106,6 +1155,7 @@ def main() -> int:
     assert_edit_transaction_budget_contract()
     assert_plan_v2_contract()
     assert_runtime_ticket_contract()
+    assert_response_budget_contract()
     with tempfile.TemporaryDirectory(prefix="uepi_snapshot_mcp_") as temp_dir:
         root = Path(temp_dir)
         write_fixture(root)
