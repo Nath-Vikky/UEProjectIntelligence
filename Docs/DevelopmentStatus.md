@@ -23,6 +23,8 @@
 - Exact Blueprint reads traverse only structural containment relations, and Blueprint node schemas return stable/reflected real pin names without constructing unsafe transient graph nodes.
 - Transaction-bound UEPI-owned PIE status/start/stop/input/typed allowlisted invoke/read/wait/assert and cleanup. Runtime tickets bind exact targets, functions, arguments, observations, and maps; function Schema and typed outputs are available to the Agent.
 - Project-local Codex setup script, machine-readable Doctor, public schemas, v2 contract snapshot, release packaging, architecture/safety/edit/runtime guides, and real-machine report templates.
+- Whole-envelope response projection/pagination/budget enforcement, artifact-backed large animation payloads, strict operation contracts, and end-to-end timing diagnostics.
+- Exact World actor/component reads and filters plus viewport resize, camera metadata, absolute artifacts, and inline MCP image content.
 
 ## Verified In This Development Pass
 
@@ -45,6 +47,7 @@
 - Post-Beta hardening raises the default atomic budget to 96 operations/12 assets, checks active Editor limits during Preview, reports large-transaction risk, scales Apply/Refresh timeouts, and makes the one-approval Agent continuation contract explicit. Online GasDemo Doctor reports the new limits and the 13-asset dry-run is blocked before approval.
 - UEPIBlank passes an eight-operation/four-asset success transaction with exact reads, semantic diff, explicit rollback, and restart tombstones. A second transaction injects failure after operation four, restores atomicity across all four targets, writes `failed_rolled_back`, leaves no package files, and preserves its structured failure evidence through the MCP envelope.
 - The `2.0.0-beta.2` Source archive passes isolated UE5.3.2 `BuildPlugin`; the Win64 archive contains the isolated DLL, passes root/version/exclusion/hash inspection, and a fresh archive install reaches online Doctor 17/17 after its first `UEPIIndex` Snapshot.
+- The 2026-07-17 contract-hardening pass builds on UE5.3.2, passes the synthetic Snapshot MCP regression and online Doctor 17/17, and passes the live read-contract smoke for current map, catalog, exact World actor, strict operation schema/example, 640x360 viewport, camera metadata, absolute screenshot artifact, inline PNG content, and all eight timing stages.
 
 ## Beta.2 Release Gate
 

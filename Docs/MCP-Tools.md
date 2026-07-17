@@ -2,6 +2,8 @@
 
 All read tools accept common v2 options such as `expected_project_file`, `expected_editor_session_id`, `exact`, `refresh`, `compact`, field projection, evidence level, page size, cursor, and payload budget where applicable.
 
+Every tool result uses MCP envelope v2. `max_payload_bytes` applies to the complete UTF-8 envelope, not only its primary list. Large animation profiles and curve payloads fall back to file-backed artifact manifests when needed. Nested `fields`, `page_size`, and opaque `cursor` options apply to declared result page roots such as matches, graph entities, properties, operations, actors, and components.
+
 ## Read And Live Tools
 
 | Tool | Purpose | Editor required |
@@ -55,3 +57,22 @@ uepi_runtime only when a returned ticket requires runtime proof
 ```
 
 `UEPI_REFRESH_REQUESTED` means retry after the Editor processes the targeted request. `UEPI_SNAPSHOT_STALE` means offline evidence is older than a known change.
+
+## Timing
+
+Every MCP tool envelope contains:
+
+```text
+timing.total_ms
+timing.mcp_queue_ms
+timing.snapshot_query_ms
+timing.bridge_connect_ms
+timing.bridge_wait_ms
+timing.editor_dispatch_ms
+timing.editor_execute_ms
+timing.serialization_ms
+```
+
+The fields are non-overlapping server-observed stages. `editor_dispatch_ms` is the time from localhost Bridge acceptance until the Editor game-thread tick dispatches the request. Calls over the configurable `UEPI_SLOW_OPERATION_MS` threshold, 5000 ms by default, include a non-blocking `UEPI_SLOW_OPERATION` diagnostic.
+
+`uepi_world` rejects unknown filter keys. Use `action="read"` for a filtered actor page, `action="actor"` with an exact actor path for details, and `action="component"` with exact actor/component selectors for component state and requested properties. Viewport capture honors `viewport`, `width`, `height`, `include_camera_metadata`, and `inline_image`; the artifact path is absolute and inline mode adds MCP `image/png` content.

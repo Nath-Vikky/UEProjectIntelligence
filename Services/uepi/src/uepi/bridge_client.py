@@ -150,7 +150,7 @@ def call_bridge(
     if not isinstance(value, dict):
         record("bridge_wait_ms", wait_elapsed_ms)
         return {"ok": False, "error": {"code": "UEPI_BRIDGE_BAD_RESPONSE", "message": "Bridge response was not an object."}}
-    editor_elapsed_ms = absorb_editor_timing(value.pop("timing", None))
+    editor_elapsed_ms = absorb_editor_timing(value.pop("timing", None), wait_elapsed_ms)
     record("bridge_wait_ms", max(0.0, wait_elapsed_ms - editor_elapsed_ms))
     return value
 

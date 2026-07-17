@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Enforced projection, pagination, artifact fallback, and UTF-8 payload budgets across the complete MCP envelope, including late timing metadata.
+- Published strict machine-readable JSON Schema, required fields, examples, and contract hashes for all 64 Editor operations.
+- Unified implicit and explicit refresh request IDs and aligned live Status map, PIE, catalog, and independent saved/live generation semantics.
+- Removed unimplemented Runtime actions from the public MCP contract and compiled Enhanced Input handlers from the plugin's own dependency declaration.
+- Added strict World filters, exact actor/component reads, requested viewport sizing, camera metadata, absolute screenshot artifacts, and inline MCP image content.
+- Normalized Hard Scope package/object/generated-class identities and corrected animation-route selection inside multi-asset context.
+- Added end-to-end request timing for MCP queue, Snapshot query, Bridge connect/wait, Editor dispatch/execute, and serialization, with `UEPI_SLOW_OPERATION` diagnostics.
+- Added a repeatable live read-contract smoke test covering project Status, catalog currency, World detail, operation contracts, viewport artifacts, inline images, and timing.
+
 ## 2.0.0-beta.2
 
 - Raised the Agent-ready atomic transaction defaults from 32 operations/3 assets to 96 operations/12 assets, with configurable hard caps of 256 operations and 64 assets.

@@ -181,6 +181,8 @@ def assert_envelope(value: dict[str, Any]) -> None:
     }
     assert all(isinstance(item, (int, float)) and item >= 0 for item in value["timing"].values())
     assert value["timing"]["total_ms"] >= value["timing"]["serialization_ms"]
+    stage_total = sum(value["timing"][field] for field in value["timing"] if field != "total_ms")
+    assert stage_total <= value["timing"]["total_ms"] + 1.0
 
 
 def assert_timing_contract() -> None:
@@ -1312,6 +1314,8 @@ def main() -> int:
             assert status["result"]["llm_readiness"]["requires_daemon"] is False
             assert status["result"]["llm_readiness"]["bridge_ready"] is False
             assert status["result"]["doctor"]["project_bound"] is True
+            assert status["result"]["doctor"]["catalog_current"] is False
+            assert status["result"]["doctor"]["catalog_cache_current"] is False
             assert status["result"]["editor"]["active_map"] is None
             assert status["result"]["editor"]["pie_state"] == "stopped"
             assert status["result"]["snapshot"]["generation_comparable"] is False

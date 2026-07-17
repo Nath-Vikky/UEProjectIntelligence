@@ -1678,7 +1678,8 @@ namespace UE::ProjectIntelligence
 			return ErrorResponse(RequestId, TEXT("UEPI_VIEWPORT_CAPTURE_ENCODE_FAILED"), TEXT("Failed to encode active viewport pixels as PNG."));
 		}
 
-		const FString ArtifactDirectory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("artifacts"), TEXT("screenshots"));
+		FString ArtifactDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("artifacts"), TEXT("screenshots")));
+		FPaths::NormalizeFilename(ArtifactDirectory);
 		IFileManager::Get().MakeDirectory(*ArtifactDirectory, true);
 		const FString CreatedAt = FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"));
 		const FString ArtifactPath = FPaths::Combine(ArtifactDirectory, FString::Printf(TEXT("viewport-%s.png"), *CreatedAt));

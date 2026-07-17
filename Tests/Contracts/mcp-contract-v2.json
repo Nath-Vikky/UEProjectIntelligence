@@ -1,6 +1,6 @@
 {
   "schema_version": "uepi.mcp-contract-snapshot.v2",
-  "captured_at_utc": "2026-07-12T11:19:20.017314Z",
+  "captured_at_utc": "2026-07-17T05:42:32.398697Z",
   "uepi_version": "2.0.0.dev0",
   "profiles": {
     "readonly": [
@@ -1202,7 +1202,47 @@
             ]
           },
           "filters": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "class_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "object_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "actor": {
+            "type": "string",
+            "description": "Exact live actor object path; required for action=actor/component."
+          },
+          "component": {
+            "type": "string",
+            "description": "Exact component object path or component name; required for action=component."
+          },
+          "property_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64
+          },
+          "include_components": {
+            "type": "boolean",
+            "default": true
           }
         }
       }
@@ -1524,9 +1564,7 @@
               "invoke",
               "read",
               "wait",
-              "assert",
-              "automation",
-              "job_status"
+              "assert"
             ]
           },
           "ticket_id": {

@@ -83,6 +83,8 @@ codex
 
 This single profile exposes read tools and guarded edit tools together. You do not need a separate write profile. Edit apply is available when the editor live bridge is online, and it still requires a preview plan plus explicit user approval.
 
+After replacing or rebuilding UEPI, restart Codex once. The stdio MCP process loads its Python modules and tool contract when Codex starts; reopening only the Unreal Editor reloads the C++ Bridge but does not replace an already running Codex MCP process.
+
 Working directory:
 
 ```text
@@ -136,6 +138,8 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 - `uepi_edit_validate`: validate a transaction.
 - `uepi_edit_rollback`: undo the last applied UEPI transaction in the editor session.
 
+Every tool response includes eight-stage `timing` diagnostics. A high `editor_dispatch_ms` means the request waited for the next Editor Bridge tick; a high `editor_execute_ms` means the Unreal operation itself was expensive. Calls over 5000 ms include `UEPI_SLOW_OPERATION` unless `UEPI_SLOW_OPERATION_MS` configures another threshold.
+
 Successful approved plans save only touched packages by default. UEPI never exposes save-all.
 
 Fresh installs allow up to 96 operations and 12 affected assets in one atomic transaction. Project Settings may raise the hard caps to 256 operations and 64 assets. Preview rejects over-budget plans before approval; plans above the normal 64-operation or 12-asset risk thresholds are marked as large atomic transactions and use extended execution timeouts.
@@ -147,4 +151,7 @@ $env:PYTHONPATH="__PROJECT_ROOT__\Plugins\UEProjectIntelligence\Services\uepi\sr
 python -m uepi status --project "__PROJECT_ROOT__\__PROJECT_NAME__.uproject"
 python "__PROJECT_ROOT__\Plugins\UEProjectIntelligence\Tools\test_snapshot_mcp_v2.py"
 python "__PROJECT_ROOT__\Plugins\UEProjectIntelligence\Tools\uepi_doctor.py" --project "__PROJECT_ROOT__\__PROJECT_NAME__.uproject"
+python "__PROJECT_ROOT__\Plugins\UEProjectIntelligence\Tools\test_live_read_contract.py" --project "__PROJECT_ROOT__\__PROJECT_NAME__.uproject"
 ```
+
+The final command requires the matching Editor to be open. It performs read-only Status, World, Schema, and viewport checks, writes only a screenshot under `Saved/UEProjectIntelligence/artifacts`, and never calls Preview or Apply.

@@ -169,7 +169,8 @@ def resolve_status(
         "session_bound": bool(matched and fresh),
         "bridge_reachable": connected,
         "snapshot_ready": state.generation > 0,
-        "catalog_current": bool(connected and live_catalog_hash and cached_catalog_hash == live_catalog_hash),
+        "catalog_current": bool(connected and live_catalog_hash),
+        "catalog_cache_current": bool(cached_catalog_hash and live_catalog_hash and cached_catalog_hash == live_catalog_hash),
         "live_catalog_hash": live_catalog_hash or None,
         "cached_catalog_hash": cached_catalog_hash or None,
     }

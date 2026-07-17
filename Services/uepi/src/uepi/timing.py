@@ -28,11 +28,12 @@ _CURRENT: ContextVar[dict[str, Any] | None] = ContextVar("uepi_request_timing", 
 
 
 def begin_request(received_at: float | None = None) -> object:
-    started_at = perf_counter()
+    dispatched_at = perf_counter()
+    started_at = received_at if received_at is not None else dispatched_at
     state: dict[str, Any] = {
         "started_at": started_at,
         "stages": {field: 0.0 for field in _BRIDGE_FIELDS},
-        "mcp_queue_ms": max(0.0, (started_at - received_at) * 1000.0) if received_at is not None else 0.0,
+        "mcp_queue_ms": max(0.0, (dispatched_at - started_at) * 1000.0),
     }
     return _CURRENT.set(state)
 
@@ -49,17 +50,20 @@ def record(stage: str, elapsed_ms: float) -> None:
     stages[stage] = float(stages.get(stage, 0.0)) + max(0.0, float(elapsed_ms))
 
 
-def absorb_editor_timing(value: Any) -> float:
+def absorb_editor_timing(value: Any, wait_elapsed_ms: float | None = None) -> float:
     if not isinstance(value, dict):
         return 0.0
-    absorbed_ms = 0.0
-    for field in ("editor_dispatch_ms", "editor_execute_ms"):
-        raw = value.get(field)
-        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-            elapsed_ms = max(0.0, float(raw))
-            record(field, elapsed_ms)
-            absorbed_ms += elapsed_ms
-    return absorbed_ms
+    raw_dispatch = value.get("editor_dispatch_ms")
+    raw_execute = value.get("editor_execute_ms")
+    dispatch_ms = max(0.0, float(raw_dispatch)) if isinstance(raw_dispatch, (int, float)) and not isinstance(raw_dispatch, bool) else 0.0
+    execute_ms = max(0.0, float(raw_execute)) if isinstance(raw_execute, (int, float)) and not isinstance(raw_execute, bool) else 0.0
+    if wait_elapsed_ms is not None:
+        available_ms = max(0.0, wait_elapsed_ms)
+        execute_ms = min(execute_ms, available_ms)
+        dispatch_ms = min(dispatch_ms, max(0.0, available_ms - execute_ms))
+    record("editor_dispatch_ms", dispatch_ms)
+    record("editor_execute_ms", execute_ms)
+    return dispatch_ms + execute_ms
 
 
 def _rounded(value: float) -> float:
@@ -78,10 +82,11 @@ def _timing_value(state: dict[str, Any], *, serialization_ms: float = 0.0) -> di
     stages = state["stages"]
     elapsed_ms = (perf_counter() - float(state["started_at"])) * 1000.0
     bridge_ms = sum(float(stages.get(field, 0.0)) for field in _BRIDGE_FIELDS)
-    snapshot_ms = max(0.0, elapsed_ms - bridge_ms)
+    mcp_queue_ms = float(state["mcp_queue_ms"])
+    snapshot_ms = max(0.0, elapsed_ms - mcp_queue_ms - bridge_ms - serialization_ms)
     return {
-        "total_ms": _rounded(elapsed_ms + serialization_ms),
-        "mcp_queue_ms": _rounded(float(state["mcp_queue_ms"])),
+        "total_ms": _rounded(elapsed_ms),
+        "mcp_queue_ms": _rounded(mcp_queue_ms),
         "snapshot_query_ms": _rounded(snapshot_ms),
         "bridge_connect_ms": _rounded(float(stages["bridge_connect_ms"])),
         "bridge_wait_ms": _rounded(float(stages["bridge_wait_ms"])),

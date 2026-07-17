@@ -6,6 +6,7 @@ Beta promotion requires UE 5.3.2 Win64 records for:
 2. Third Person Template: exact Blueprint read/edit/compile/save/reopen, actor/world read, targeted refresh, transaction diff.
 3. Minimal blank Blueprint project: source install, setup, doctor, snapshot, offline read, live bridge, rollback.
 4. Two project copies: exact online routing, mismatched binding rejection, explicit offline selection.
+5. Contract hardening: whole-envelope budgets, current Catalog semantics, exact World detail, machine-readable operation contracts, viewport sizing/inline image, and end-to-end timing.
 
 Create one Markdown record per run using `template.md`. Attach only sanitized logs/artifact paths; never commit bridge tokens or session files.
 
