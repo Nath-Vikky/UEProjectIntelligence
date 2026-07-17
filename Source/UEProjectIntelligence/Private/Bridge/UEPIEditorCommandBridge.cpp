@@ -11,7 +11,9 @@
 #include "Engine/Selection.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 #include "GameFramework/PlayerInput.h"
+#include "Engine/GameViewportClient.h"
 #include "EngineUtils.h"
 #include "Engine/Blueprint.h"
 #include "FileHelpers.h"
@@ -46,6 +48,7 @@
 #include "HAL/PlatformProcess.h"
 #include "ScopedTransaction.h"
 #include "PlayInEditorDataTypes.h"
+#include "LevelEditorViewport.h"
 #include "Reflection/UEPIPropertyCodec.h"
 #include "GenericPlatform/GenericPlatformOutputDevices.h"
 #include "Serialization/JsonSerializer.h"
@@ -1032,7 +1035,7 @@ namespace UE::ProjectIntelligence
 		}
 		if (Command == TEXT("editor.capture_viewport"))
 		{
-			return ViewportCaptureUnsupported(RequestId);
+			return ViewportCaptureUnsupported(RequestId, Params);
 		}
 		if (Command == TEXT("edit.discover"))
 		{
@@ -1200,6 +1203,7 @@ namespace UE::ProjectIntelligence
 
 	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::WorldReadResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const
 	{
+		const FString Action = JsonString(Params, TEXT("action"), TEXT("read")).ToLower();
 		const FString WorldKind = JsonString(Params, TEXT("world"), TEXT("editor"));
 		UWorld* World = nullptr;
 		if (GEditor)
@@ -1226,9 +1230,120 @@ namespace UE::ProjectIntelligence
 		}
 
 		const TSharedPtr<FJsonObject> Filters = JsonObjectField(Params, TEXT("filters"));
+		if (Filters.IsValid())
+		{
+			const TSet<FString> AllowedFilterKeys = { TEXT("class_paths"), TEXT("labels"), TEXT("object_paths") };
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Filters->Values)
+			{
+				if (!AllowedFilterKeys.Contains(Pair.Key))
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_WORLD_FILTER_UNKNOWN"), FString::Printf(TEXT("Unsupported world filter key: %s"), *Pair.Key));
+				}
+			}
+		}
 		const TArray<FString> ClassPaths = Filters.IsValid() ? JsonStringArray(Filters, TEXT("class_paths")) : TArray<FString>();
 		const TArray<FString> Labels = Filters.IsValid() ? JsonStringArray(Filters, TEXT("labels")) : TArray<FString>();
 		const TArray<FString> ObjectPaths = Filters.IsValid() ? JsonStringArray(Filters, TEXT("object_paths")) : TArray<FString>();
+		auto PropertyValues = [Params](UObject* Object)
+		{
+			TSharedRef<FJsonObject> Values = MakeShared<FJsonObject>();
+			TArray<TSharedPtr<FJsonValue>> Missing;
+			for (const FString& PropertyName : JsonStringArray(Params, TEXT("property_names")))
+			{
+				FProperty* Property = Object ? FindFProperty<FProperty>(Object->GetClass(), *PropertyName) : nullptr;
+				if (Property)
+				{
+					Values->SetField(PropertyName, FUEPIPropertyCodec::ReadValue(Property, Property->ContainerPtrToValuePtr<void>(Object)));
+				}
+				else
+				{
+					Missing.Add(MakeShared<FJsonValueString>(PropertyName));
+				}
+			}
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetObjectField(TEXT("values"), Values);
+			Result->SetArrayField(TEXT("missing"), Missing);
+			return Result;
+		};
+
+		auto ComponentObject = [&PropertyValues](UActorComponent* Component)
+		{
+			TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
+			if (!Component)
+			{
+				return Item;
+			}
+			Item->SetStringField(TEXT("name"), Component->GetName());
+			Item->SetStringField(TEXT("path"), Component->GetPathName());
+			Item->SetStringField(TEXT("class"), Component->GetClass() ? Component->GetClass()->GetPathName() : FString());
+			Item->SetStringField(TEXT("owner"), Component->GetOwner() ? Component->GetOwner()->GetPathName() : FString());
+			Item->SetBoolField(TEXT("registered"), Component->IsRegistered());
+			Item->SetBoolField(TEXT("active"), Component->IsActive());
+			Item->SetObjectField(TEXT("properties"), PropertyValues(Component));
+			return Item;
+		};
+
+		FString RequestedActor = JsonString(Params, TEXT("actor"), JsonString(Params, TEXT("actor_path")));
+		if (RequestedActor.IsEmpty() && ObjectPaths.Num() == 1)
+		{
+			RequestedActor = ObjectPaths[0];
+		}
+		if (Action == TEXT("actor") || Action == TEXT("component"))
+		{
+			AActor* FoundActor = nullptr;
+			for (TActorIterator<AActor> It(World); It; ++It)
+			{
+				if (*It && (*It)->GetPathName().Equals(RequestedActor, ESearchCase::IgnoreCase))
+				{
+					FoundActor = *It;
+					break;
+				}
+			}
+			if (!FoundActor)
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_WORLD_ACTOR_NOT_FOUND"), FString::Printf(TEXT("Actor was not found in the requested world: %s"), *RequestedActor));
+			}
+			if (Action == TEXT("component"))
+			{
+				const FString RequestedComponent = JsonString(Params, TEXT("component"), JsonString(Params, TEXT("component_path")));
+				UActorComponent* FoundComponent = nullptr;
+				for (UActorComponent* Component : FoundActor->GetComponents())
+				{
+					if (Component && (Component->GetPathName().Equals(RequestedComponent, ESearchCase::IgnoreCase) || Component->GetName().Equals(RequestedComponent, ESearchCase::IgnoreCase)))
+					{
+						FoundComponent = Component;
+						break;
+					}
+				}
+				if (!FoundComponent)
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_WORLD_COMPONENT_NOT_FOUND"), FString::Printf(TEXT("Component was not found on actor %s: %s"), *RequestedActor, *RequestedComponent));
+				}
+				TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+				Result->SetStringField(TEXT("world"), WorldKind.ToLower());
+				Result->SetStringField(TEXT("map"), World->GetOutermost() ? World->GetOutermost()->GetName() : FString());
+				Result->SetObjectField(TEXT("component"), ComponentObject(FoundComponent));
+				return SuccessResponse(RequestId, Result);
+			}
+
+			TSharedRef<FJsonObject> ActorJson = ActorObject(FoundActor);
+			ActorJson->SetObjectField(TEXT("properties"), PropertyValues(FoundActor));
+			if (JsonBool(Params, TEXT("include_components"), true))
+			{
+				TArray<TSharedPtr<FJsonValue>> Components;
+				for (UActorComponent* Component : FoundActor->GetComponents())
+				{
+					if (Component) Components.Add(MakeShared<FJsonValueObject>(ComponentObject(Component)));
+				}
+				ActorJson->SetArrayField(TEXT("components"), Components);
+			}
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetStringField(TEXT("world"), WorldKind.ToLower());
+			Result->SetStringField(TEXT("map"), World->GetOutermost() ? World->GetOutermost()->GetName() : FString());
+			Result->SetObjectField(TEXT("actor"), ActorJson);
+			return SuccessResponse(RequestId, Result);
+		}
+
 		TArray<TSharedPtr<FJsonValue>> ActorValues;
 		for (TActorIterator<AActor> It(World); It && ActorValues.Num() < 5000; ++It)
 		{
@@ -1258,11 +1373,7 @@ namespace UE::ProjectIntelligence
 				{
 					continue;
 				}
-				TSharedRef<FJsonObject> ComponentJson = MakeShared<FJsonObject>();
-				ComponentJson->SetStringField(TEXT("name"), Component->GetName());
-				ComponentJson->SetStringField(TEXT("path"), Component->GetPathName());
-				ComponentJson->SetStringField(TEXT("class"), Component->GetClass() ? Component->GetClass()->GetPathName() : FString());
-				Components.Add(MakeShared<FJsonValueObject>(ComponentJson));
+				Components.Add(MakeShared<FJsonValueObject>(ComponentObject(Component)));
 			}
 			ActorJson->SetArrayField(TEXT("components"), Components);
 			ActorValues.Add(MakeShared<FJsonValueObject>(ActorJson));
@@ -1488,22 +1599,44 @@ namespace UE::ProjectIntelligence
 		return SuccessResponse(RequestId, Result);
 	}
 
-	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::ViewportCaptureUnsupported(const FString& RequestId) const
+	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::ViewportCaptureUnsupported(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const
 	{
-		if (!GEditor || !GEditor->GetActiveViewport())
+		const FString ViewportKind = JsonString(Params, TEXT("viewport"), TEXT("active")).ToLower();
+		FViewport* Viewport = nullptr;
+		FLevelEditorViewportClient* LevelViewportClient = nullptr;
+		UWorld* PIEWorld = GEditor ? GEditor->PlayWorld : nullptr;
+		if (ViewportKind == TEXT("level"))
 		{
-			return ErrorResponse(RequestId, TEXT("UEPI_VIEWPORT_CAPTURE_NO_ACTIVE_VIEWPORT"), TEXT("No active editor viewport is available for capture."));
+			LevelViewportClient = GCurrentLevelEditingViewportClient;
+			Viewport = LevelViewportClient ? LevelViewportClient->Viewport : nullptr;
+		}
+		else if (ViewportKind == TEXT("pie"))
+		{
+			UGameViewportClient* GameViewport = PIEWorld ? PIEWorld->GetGameViewport() : nullptr;
+			Viewport = GameViewport ? GameViewport->Viewport : nullptr;
+		}
+		else if (ViewportKind == TEXT("active"))
+		{
+			Viewport = GEditor ? GEditor->GetActiveViewport() : nullptr;
+			LevelViewportClient = GCurrentLevelEditingViewportClient && GCurrentLevelEditingViewportClient->Viewport == Viewport ? GCurrentLevelEditingViewportClient : nullptr;
+		}
+		else
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_VIEWPORT_KIND_INVALID"), FString::Printf(TEXT("Unsupported viewport kind: %s"), *ViewportKind));
+		}
+		if (!Viewport)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_VIEWPORT_CAPTURE_NO_ACTIVE_VIEWPORT"), FString::Printf(TEXT("The requested %s viewport is not available for capture."), *ViewportKind));
 		}
 
-		FViewport* Viewport = GEditor->GetActiveViewport();
-		const FIntPoint Size = Viewport->GetSizeXY();
-		if (Size.X <= 0 || Size.Y <= 0)
+		const FIntPoint SourceSize = Viewport->GetSizeXY();
+		if (SourceSize.X <= 0 || SourceSize.Y <= 0)
 		{
 			return ErrorResponse(RequestId, TEXT("UEPI_VIEWPORT_CAPTURE_BAD_SIZE"), TEXT("Active viewport has no readable size."));
 		}
 
 		TArray<FColor> Pixels;
-		if (!Viewport->ReadPixels(Pixels) || Pixels.Num() != Size.X * Size.Y)
+		if (!Viewport->ReadPixels(Pixels) || Pixels.Num() != SourceSize.X * SourceSize.Y)
 		{
 			return ErrorResponse(RequestId, TEXT("UEPI_VIEWPORT_CAPTURE_READ_FAILED"), TEXT("Failed to read pixels from the active editor viewport."));
 		}
@@ -1512,8 +1645,21 @@ namespace UE::ProjectIntelligence
 			Pixel.A = 255;
 		}
 
+		int32 TargetWidth = JsonInt(Params, TEXT("width"), SourceSize.X);
+		int32 TargetHeight = JsonInt(Params, TEXT("height"), SourceSize.Y);
+		if (TargetWidth <= 0 && TargetHeight > 0) TargetWidth = FMath::RoundToInt(static_cast<double>(SourceSize.X) * TargetHeight / SourceSize.Y);
+		if (TargetHeight <= 0 && TargetWidth > 0) TargetHeight = FMath::RoundToInt(static_cast<double>(SourceSize.Y) * TargetWidth / SourceSize.X);
+		TargetWidth = FMath::Clamp(TargetWidth, 64, 4096);
+		TargetHeight = FMath::Clamp(TargetHeight, 64, 4096);
+		if (TargetWidth != SourceSize.X || TargetHeight != SourceSize.Y)
+		{
+			TArray<FColor> Resized;
+			FImageUtils::ImageResize(SourceSize.X, SourceSize.Y, Pixels, TargetWidth, TargetHeight, Resized, false, true);
+			Pixels = MoveTemp(Resized);
+		}
+
 		TArray64<uint8> PngData;
-		FImageUtils::PNGCompressImageArray(Size.X, Size.Y, MakeArrayView(Pixels), PngData);
+		FImageUtils::PNGCompressImageArray(TargetWidth, TargetHeight, MakeArrayView(Pixels), PngData);
 		if (PngData.Num() <= 0)
 		{
 			return ErrorResponse(RequestId, TEXT("UEPI_VIEWPORT_CAPTURE_ENCODE_FAILED"), TEXT("Failed to encode active viewport pixels as PNG."));
@@ -1534,9 +1680,56 @@ namespace UE::ProjectIntelligence
 		Result->SetStringField(TEXT("artifact_path"), ArtifactPath);
 		Result->SetStringField(TEXT("artifact_directory"), ArtifactDirectory);
 		Result->SetStringField(TEXT("format"), TEXT("png"));
-		Result->SetNumberField(TEXT("width"), Size.X);
-		Result->SetNumberField(TEXT("height"), Size.Y);
+		Result->SetStringField(TEXT("viewport"), ViewportKind);
+		Result->SetNumberField(TEXT("source_width"), SourceSize.X);
+		Result->SetNumberField(TEXT("source_height"), SourceSize.Y);
+		Result->SetNumberField(TEXT("width"), TargetWidth);
+		Result->SetNumberField(TEXT("height"), TargetHeight);
 		Result->SetNumberField(TEXT("byte_count"), static_cast<double>(PngData.Num()));
+		if (JsonBool(Params, TEXT("include_camera_metadata"), false))
+		{
+			FVector Location = FVector::ZeroVector;
+			FRotator Rotation = FRotator::ZeroRotator;
+			double FieldOfView = 0.0;
+			FString CameraSource = TEXT("unavailable");
+			if (ViewportKind == TEXT("pie") && PIEWorld)
+			{
+				APlayerController* Controller = PIEWorld->GetFirstPlayerController();
+				APlayerCameraManager* CameraManager = Controller ? Controller->PlayerCameraManager : nullptr;
+				if (CameraManager)
+				{
+					Location = CameraManager->GetCameraLocation();
+					Rotation = CameraManager->GetCameraRotation();
+					FieldOfView = CameraManager->GetFOVAngle();
+					CameraSource = TEXT("pie_player_camera");
+				}
+			}
+			else
+			{
+				LevelViewportClient = LevelViewportClient ? LevelViewportClient : GCurrentLevelEditingViewportClient;
+				if (LevelViewportClient)
+				{
+					Location = LevelViewportClient->GetViewLocation();
+					Rotation = LevelViewportClient->GetViewRotation();
+					FieldOfView = LevelViewportClient->ViewFOV;
+					CameraSource = TEXT("level_editor_viewport");
+				}
+			}
+			TSharedRef<FJsonObject> Camera = MakeShared<FJsonObject>();
+			Camera->SetStringField(TEXT("source"), CameraSource);
+			TSharedRef<FJsonObject> LocationObject = MakeShared<FJsonObject>();
+			LocationObject->SetNumberField(TEXT("x"), Location.X);
+			LocationObject->SetNumberField(TEXT("y"), Location.Y);
+			LocationObject->SetNumberField(TEXT("z"), Location.Z);
+			Camera->SetObjectField(TEXT("location"), LocationObject);
+			TSharedRef<FJsonObject> RotationObject = MakeShared<FJsonObject>();
+			RotationObject->SetNumberField(TEXT("pitch"), Rotation.Pitch);
+			RotationObject->SetNumberField(TEXT("yaw"), Rotation.Yaw);
+			RotationObject->SetNumberField(TEXT("roll"), Rotation.Roll);
+			Camera->SetObjectField(TEXT("rotation"), RotationObject);
+			Camera->SetNumberField(TEXT("field_of_view"), FieldOfView);
+			Result->SetObjectField(TEXT("camera"), Camera);
+		}
 		return SuccessResponse(RequestId, Result);
 	}
 

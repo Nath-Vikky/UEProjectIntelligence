@@ -18,6 +18,7 @@ sys.path.insert(0, str(PYTHONPATH))
 sys.path.insert(0, str(ROOT / "Tools"))
 
 from uepi.bridge_client import _read_token  # noqa: E402
+from uepi.context_routes import _best_domain_asset, _normalized_asset_identity  # noqa: E402
 from uepi.diff import build_transaction_diff  # noqa: E402
 from uepi.edit import _apply_timeout_seconds, _asset_values, _budget_diagnostics, _refresh_timeout_seconds, _transaction_budgets  # noqa: E402
 from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
@@ -241,6 +242,16 @@ def assert_operation_machine_contract() -> None:
     assert writes["items"]["required"] == ["path", "value"]
     add_node = contracts["blueprint.add_node"]["input_schema"]
     assert len(add_node["allOf"]) >= 5
+
+
+def assert_context_identity_contract() -> None:
+    assert _normalized_asset_identity("/Game/Animations/Waving") == "/game/animations/waving.waving"
+    assert _normalized_asset_identity("/Game/Animations/Waving.Waving_C") == "/game/animations/waving.waving"
+    matches = [
+        {"kind": "asset", "canonical_key": "/Game/BP_Character.BP_Character", "display_name": "BP_Character", "attributes": {"asset_class": "Blueprint"}},
+        {"kind": "animation_sequence", "canonical_key": "/Game/Animations/Waving.Waving::sequence", "display_name": "Waving", "attributes": {"asset_class": "AnimSequence"}},
+    ]
+    assert _best_domain_asset(matches, "Analyze the Waving animation", {"animation_sequence"}) == "/Game/Animations/Waving.Waving"
 
 
 def assert_plan_v2_contract() -> None:
@@ -1185,6 +1196,7 @@ def main() -> int:
     assert_runtime_ticket_contract()
     assert_response_budget_contract()
     assert_operation_machine_contract()
+    assert_context_identity_contract()
     with tempfile.TemporaryDirectory(prefix="uepi_snapshot_mcp_") as temp_dir:
         root = Path(temp_dir)
         write_fixture(root)
@@ -1228,6 +1240,9 @@ def main() -> int:
             runtime_actions = runtime_tool["inputSchema"]["properties"]["action"]["enum"]
             assert "automation" not in runtime_actions
             assert "job_status" not in runtime_actions
+            world_tool = next(tool for tool in tools if tool["name"] == "uepi_world")
+            assert world_tool["inputSchema"]["properties"]["filters"]["additionalProperties"] is False
+            assert {"actor", "component", "property_names"}.issubset(world_tool["inputSchema"]["properties"])
 
             status = request(process, 3, "tools/call", {"name": "uepi_status", "arguments": {}})["structuredContent"]
             assert_envelope(status)
@@ -1316,6 +1331,22 @@ def main() -> int:
             assert scoped_context["ok"] is True
             assert scoped_context["result"]["matches"]
             assert all(str(item.get("canonical_key") or "").startswith("/Game/BP_Hero.BP_Hero") for item in scoped_context["result"]["matches"])
+            package_scoped_context = request(
+                process,
+                68,
+                "tools/call",
+                {
+                    "name": "uepi_context",
+                    "arguments": {
+                        "question": "Read this Blueprint only",
+                        "route": "blueprint_behavior",
+                        "hard_scope": ["/Game/BP_Hero"],
+                        "max_items": 20,
+                    },
+                },
+            )["structuredContent"]
+            assert package_scoped_context["ok"] is True
+            assert package_scoped_context["result"]["matches"]
 
             first_page = request(
                 process,
@@ -1366,6 +1397,9 @@ def main() -> int:
             world_read = request(process, 57, "tools/call", {"name": "uepi_world", "arguments": {"action": "read", "world": "editor"}})["structuredContent"]
             assert world_read["ok"] is False
             assert world_read["error"]["code"] in {"UEPI_BRIDGE_NOT_CONFIGURED", "UEPI_BRIDGE_NOT_READY", "UEPI_WORLD_READ_FAILED"}
+            bad_world_filter = request(process, 69, "tools/call", {"name": "uepi_world", "arguments": {"action": "read", "filters": {"unknown": ["value"]}}})["structuredContent"]
+            assert bad_world_filter["ok"] is False
+            assert bad_world_filter["error"]["code"] == "UEPI_WORLD_FILTER_UNKNOWN"
             refresh_request = request(
                 process,
                 58,

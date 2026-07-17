@@ -143,6 +143,11 @@ public class UEProjectIntelligence : ModuleRules
 
 	private IEnumerable<string> ProjectDescriptorPaths(ReadOnlyTargetRules Target)
 	{
+		string PluginDescriptor = Path.Combine(PluginDirectory, "UEProjectIntelligence.uplugin");
+		if (File.Exists(PluginDescriptor))
+		{
+			yield return PluginDescriptor;
+		}
 		if (Target.ProjectFile != null && File.Exists(Target.ProjectFile.FullName))
 		{
 			yield return Target.ProjectFile.FullName;

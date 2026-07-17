@@ -38,7 +38,7 @@ namespace UE::ProjectIntelligence
 		TSharedRef<FJsonObject> SchemaResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const;
 		TSharedRef<FJsonObject> RuntimeResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params);
 		TSharedRef<FJsonObject> RefreshNowResult(const FString& RequestId, const TArray<FString>& Targets, const FString& DataMode) const;
-		TSharedRef<FJsonObject> ViewportCaptureUnsupported(const FString& RequestId) const;
+		TSharedRef<FJsonObject> ViewportCaptureUnsupported(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const;
 		TSharedRef<FJsonObject> EditDiscoverResult(const FString& RequestId) const;
 		TSharedRef<FJsonObject> EditApplyResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params);
 		TSharedRef<FJsonObject> EditValidateResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const;

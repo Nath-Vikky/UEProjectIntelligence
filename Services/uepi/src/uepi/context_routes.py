@@ -59,14 +59,36 @@ def _entity_text(entity: dict[str, Any]) -> str:
     ).casefold()
 
 
+def _normalized_asset_identity(value: Any) -> str:
+    text = str(value or "").strip().replace("\\", "/")
+    if not text.startswith("/"):
+        return text.casefold()
+    suffix = ""
+    if "::" in text:
+        text, suffix = text.split("::", 1)
+    if "." not in text.rsplit("/", 1)[-1]:
+        asset_name = text.rsplit("/", 1)[-1]
+        text = f"{text}.{asset_name}"
+    package, object_name = text.rsplit(".", 1)
+    if object_name.endswith("_C"):
+        object_name = object_name[:-2]
+    normalized = f"{package}.{object_name}"
+    return (f"{normalized}::{suffix}" if suffix else normalized).casefold()
+
+
 def _in_hard_scope(entity: dict[str, Any], hard_scope: list[str]) -> bool:
     if not hard_scope:
         return True
-    key = str(entity.get("canonical_key") or "").casefold()
+    key = _normalized_asset_identity(entity.get("canonical_key"))
     attributes = _as_dict(entity.get("attributes"))
-    owner_values = [key, str(attributes.get("object_path") or "").casefold(), str(attributes.get("asset_path") or "").casefold()]
+    owner_values = [
+        key,
+        _normalized_asset_identity(attributes.get("object_path")),
+        _normalized_asset_identity(attributes.get("asset_path")),
+        _normalized_asset_identity(attributes.get("package_name")),
+    ]
     for scope in hard_scope:
-        folded = str(scope).casefold()
+        folded = _normalized_asset_identity(scope)
         if any(value == folded or value.startswith(folded + "::") for value in owner_values if value):
             return True
     return False
@@ -155,6 +177,32 @@ def _first_asset(matches: list[dict[str, Any]]) -> str | None:
         if value:
             return value
     return None
+
+
+def _best_domain_asset(matches: list[dict[str, Any]], question: str, preferred_kinds: set[str]) -> str | None:
+    question_folded = question.casefold()
+    candidates: dict[str, tuple[int, str]] = {}
+    for entity in matches:
+        canonical = str(entity.get("canonical_key") or "").split("::", 1)[0]
+        if not canonical:
+            continue
+        kind = str(entity.get("kind") or "")
+        display = str(entity.get("display_name") or "")
+        attributes = _as_dict(entity.get("attributes"))
+        score = 0
+        if kind in preferred_kinds:
+            score += 60
+        if kind == "asset":
+            score += 10
+        if display and display.casefold() in question_folded:
+            score += 100
+        asset_class = " ".join(str(attributes.get(key) or "") for key in ("asset_class", "class", "class_path")).casefold()
+        if any(token in asset_class for token in ("animsequence", "animmontage", "blendspace", "animblueprint")):
+            score += 50
+        previous = candidates.get(canonical)
+        if previous is None or score > previous[0]:
+            candidates[canonical] = (score, canonical)
+    return max(candidates.values(), default=(0, ""))[1] or None
 
 
 @dataclass
@@ -274,7 +322,11 @@ class AnimationPlaybackRoute(KeywordRoute):
 
     def build(self, engine: Any, question: str, args: dict[str, Any]) -> ContextPack:
         pack = super().build(engine, question, args)
-        asset = _first_asset(pack.matches)
+        asset = _best_domain_asset(
+            pack.matches,
+            question,
+            {"animation_sequence", "animation_montage", "blend_space", "anim_blueprint", "anim_asset_player"},
+        )
         if asset:
             animation = engine.animation(asset=asset, limit=min(int(args.get("max_items") or 40) * 4, 300))
             if animation.get("ok"):

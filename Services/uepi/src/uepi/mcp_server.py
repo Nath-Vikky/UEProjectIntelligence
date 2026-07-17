@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 from pathlib import Path
 import sys
@@ -219,7 +220,19 @@ TOOLS: list[dict[str, Any]] = [
             {
                 "action": {"type": "string", "enum": ["read", "actor", "component"]},
                 "world": {"type": "string", "enum": ["editor", "pie"]},
-                "filters": {"type": "object"},
+                "filters": {
+                    "type": "object",
+                    "properties": {
+                        "class_paths": {"type": "array", "items": {"type": "string"}},
+                        "labels": {"type": "array", "items": {"type": "string"}},
+                        "object_paths": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "additionalProperties": False,
+                },
+                "actor": {"type": "string", "description": "Exact live actor object path; required for action=actor/component."},
+                "component": {"type": "string", "description": "Exact component object path or component name; required for action=component."},
+                "property_names": {"type": "array", "items": {"type": "string"}, "maxItems": 64},
+                "include_components": {"type": "boolean", "default": True},
             }
         ),
     },
@@ -400,7 +413,21 @@ class UEPIMCPServer:
                     value["ok"] = False
                     value["error"] = {"code": blocking.get("code"), "message": blocking.get("message"), "retryable": bool(blocking.get("retryable")), "candidates": []}
                     value["result"] = None
-        return tool_response(apply_response_options(value, arguments))
+        bounded = apply_response_options(value, arguments)
+        response = tool_response(bounded)
+        if bounded.get("tool") == "uepi_editor" and bounded.get("operation") == "viewport_capture" and arguments.get("inline_image"):
+            result = bounded.get("result") if isinstance(bounded.get("result"), dict) else {}
+            artifact_path = Path(str(result.get("artifact_path") or ""))
+            allowed_roots = [(engine.store.root / "artifacts").resolve(), (engine.store.store_dir / "artifacts").resolve()] if engine is not None else []
+            try:
+                resolved_path = artifact_path.resolve()
+                if artifact_path.suffix.casefold() == ".png" and any(resolved_path.is_relative_to(root) for root in allowed_roots):
+                    data = resolved_path.read_bytes()
+                    if len(data) <= 16 * 1024 * 1024:
+                        response["content"].append({"type": "image", "data": base64.b64encode(data).decode("ascii"), "mimeType": "image/png"})
+            except OSError:
+                pass
+        return response
 
     def _edit_guard(self, engine: Any, name: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
         diagnostics = project_guard_diagnostics(
