@@ -10,6 +10,7 @@ from .cache import SQLiteSnapshotCache, cache_status, sync_cache
 from .cpp_symbols import project_module_manifest, scan_cpp_symbols
 from .bridge_client import bridge_status, call_bridge, live_context
 from .identity import project_guard_diagnostics, project_identity
+from .refresh import request_payload
 from .status import resolve_status
 from .result import envelope as make_envelope
 from .snapshot import SnapshotView
@@ -432,6 +433,7 @@ class UEPIQueryEngine:
                 tool_name=tool_name,
                 data_mode="live",
             )
+            refresh = request_payload(request_path)
             return "refresh_requested", [
                 {
                     "severity": "warning",
@@ -440,6 +442,8 @@ class UEPIQueryEngine:
                     "event": event,
                     "observed_at": observed_at.isoformat().replace("+00:00", "Z") if observed_at else None,
                     "request_path": str(request_path),
+                    "request_id": refresh["request_id"],
+                    "request": refresh["request"],
                     "editor_session_id": session.get("session_id"),
                 }
             ]
@@ -492,6 +496,7 @@ class UEPIQueryEngine:
             tool_name=tool_name,
             data_mode="live",
         )
+        refresh = request_payload(request_path)
         session = self.snapshot.active_editor_session()
         message = f"{domain} details are not present in the current snapshot. A targeted editor refresh request was queued; retry the same read after the editor processes it."
         if not session:
@@ -503,6 +508,8 @@ class UEPIQueryEngine:
                 "message": message,
                 "target_object_path": target,
                 "request_path": str(request_path),
+                "request_id": refresh["request_id"],
+                "request": refresh["request"],
                 "editor_session_id": session.get("session_id") if session else None,
             }
         ]
@@ -527,9 +534,15 @@ class UEPIQueryEngine:
                     "message": "A live editor bridge refresh request was queued for this target.",
                     "target_object_path": target,
                     "request_path": result.get("request_path"),
+                    "request_id": result.get("request_id"),
+                    "request": result.get("request") or {},
                     "recoverable": True,
                     "recommended_user_action": "Keep the editor open and retry after UEPI processes the refresh request.",
-                    "recommended_agent_action": {"tool": "uepi_status", "after_seconds": 2},
+                    "recommended_agent_action": {
+                        "tool": "uepi_refresh" if result.get("request_id") else "uepi_status",
+                        "arguments": {"action": "wait", "request_id": result.get("request_id")} if result.get("request_id") else {},
+                        "after_seconds": 0 if result.get("request_id") else 2,
+                    },
                 }
             ]
         error = _as_dict(response.get("error"))
@@ -613,12 +626,13 @@ class UEPIQueryEngine:
             expected_editor_session_id=expected_editor_session_id,
         )
         guard_diagnostics = project_guard_diagnostics(self.identity, expected_project_file=expected_project_file)
+        status_state = {**self.state.envelope_state(), "freshness": resolved["snapshot"]["freshness"]}
         return make_envelope(
             tool="uepi_status",
             operation="status",
             project=self.identity,
             editor=resolved["editor"],
-            state=self.state.envelope_state(),
+            state=status_state,
             diagnostics=self.identity_diagnostics + guard_diagnostics + resolved["diagnostics"],
             result={
                 "ok": True,
@@ -658,6 +672,8 @@ class UEPIQueryEngine:
                 },
                 "capabilities": resolved["capabilities"],
                 "doctor": resolved["doctor"],
+                "editor": resolved["editor"],
+                "snapshot": resolved["snapshot"],
             },
             next_actions=[
                 {

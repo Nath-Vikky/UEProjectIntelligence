@@ -553,7 +553,7 @@ namespace UE::ProjectIntelligence
 			OperationResults.Add(MakeShared<FJsonValueObject>(Object));
 		}
 
-		bool WriteRefreshRequest(const TArray<FString>& Targets, const FString& DataMode, FString& OutRequestPath, FString& OutError)
+		bool WriteRefreshRequest(const TArray<FString>& Targets, const FString& DataMode, FString& OutRequestId, FString& OutRequestPath, FString& OutError)
 		{
 			const FString RequestIdPart = FString::Printf(TEXT("uepi-refresh:%s"), *FGuid::NewGuid().ToString(EGuidFormats::Digits));
 			const FString CreatedAt = FDateTime::UtcNow().ToIso8601();
@@ -581,6 +581,7 @@ namespace UE::ProjectIntelligence
 				return false;
 			}
 			OutRequestPath = RequestPath;
+			OutRequestId = RequestIdPart;
 			OutError.Reset();
 			return true;
 		}
@@ -1063,6 +1064,12 @@ namespace UE::ProjectIntelligence
 
 	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::StatusResult(const FString& RequestId) const
 	{
+		UWorld* EditorWorldValue = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+		UWorld* PIEWorld = GEditor ? GEditor->PlayWorld : nullptr;
+		const bool bSimulating = GEditor && GEditor->IsSimulatingInEditor();
+		const bool bPlayRequested = GEditor && GEditor->IsPlaySessionRequestQueued();
+		FUEPIEditOperationRegistry& Registry = FUEPIEditOperationRegistry::Get();
+		Registry.EnsureBuiltinsRegistered();
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetStringField(TEXT("session_id"), SessionId);
 		Result->SetStringField(TEXT("editor_session_id"), SessionId);
@@ -1072,6 +1079,15 @@ namespace UE::ProjectIntelligence
 		Result->SetStringField(TEXT("session_path"), SessionPath);
 		Result->SetNumberField(TEXT("port"), Port);
 		Result->SetBoolField(TEXT("transport_ready"), true);
+		Result->SetStringField(TEXT("active_map"), EditorWorldValue && EditorWorldValue->GetOutermost() ? EditorWorldValue->GetOutermost()->GetName() : FString());
+		Result->SetStringField(TEXT("pie_map"), PIEWorld && PIEWorld->GetOutermost() ? PIEWorld->GetOutermost()->GetName() : FString());
+		Result->SetStringField(TEXT("pie_state"), PIEWorld ? (bSimulating ? TEXT("simulating") : TEXT("running")) : (bPlayRequested || bOwnsPIESession ? TEXT("starting") : TEXT("stopped")));
+		Result->SetBoolField(TEXT("simulating"), bSimulating);
+		Result->SetBoolField(TEXT("pie_owned_by_uepi"), bOwnsPIESession);
+		Result->SetStringField(TEXT("runtime_session_id"), OwnedRuntimeSessionId);
+		Result->SetStringField(TEXT("catalog_hash"), Registry.GetCatalogHash());
+		Result->SetStringField(TEXT("data_mode"), TEXT("live"));
+		Result->SetStringField(TEXT("observed_at"), FDateTime::UtcNow().ToIso8601());
 		TArray<FString> Capabilities = FUEPIBridgeProtocol::ReadCapabilities();
 		Capabilities.Append(FUEPIBridgeProtocol::WriteCapabilities());
 		Result->SetArrayField(TEXT("capabilities"), StringArrayToJsonValues(Capabilities));
@@ -1450,14 +1466,23 @@ namespace UE::ProjectIntelligence
 	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::RefreshNowResult(const FString& RequestId, const TArray<FString>& Targets, const FString& DataMode) const
 	{
 		FString RequestPath;
+		FString RefreshRequestId;
 		FString Error;
-		if (!WriteRefreshRequest(Targets, DataMode, RequestPath, Error))
+		if (!WriteRefreshRequest(Targets, DataMode, RefreshRequestId, RequestPath, Error))
 		{
 			return ErrorResponse(RequestId, TEXT("UEPI_BRIDGE_REFRESH_REQUEST_FAILED"), Error);
 		}
 
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetStringField(TEXT("request_id"), RefreshRequestId);
 		Result->SetStringField(TEXT("request_path"), RequestPath);
+		TSharedRef<FJsonObject> Request = MakeShared<FJsonObject>();
+		Request->SetStringField(TEXT("schema_version"), TEXT("uepi.refresh-request.v2"));
+		Request->SetStringField(TEXT("request_id"), RefreshRequestId);
+		Request->SetStringField(TEXT("status"), TEXT("queued"));
+		Request->SetStringField(TEXT("data_mode"), DataMode);
+		Request->SetArrayField(TEXT("target_object_paths"), StringArrayToJsonValues(Targets));
+		Result->SetObjectField(TEXT("request"), Request);
 		Result->SetStringField(TEXT("data_mode"), DataMode);
 		Result->SetArrayField(TEXT("target_object_paths"), StringArrayToJsonValues(Targets));
 		return SuccessResponse(RequestId, Result);
@@ -2039,10 +2064,11 @@ namespace UE::ProjectIntelligence
 		FUEPITransactionJournal::Write(TransactionId, JournalPhase, AffectedAssets, TransactionBackupFiles, bSaved, FailureMessage, JournalPath, JournalError);
 
 		FString RefreshRequestPath;
+		FString RefreshRequestId;
 		FString RefreshError;
 		if (AffectedAssets.Num() > 0)
 		{
-			WriteRefreshRequest(AffectedAssets, TEXT("live"), RefreshRequestPath, RefreshError);
+			WriteRefreshRequest(AffectedAssets, TEXT("live"), RefreshRequestId, RefreshRequestPath, RefreshError);
 		}
 
 		if (bMutated && bAllOk)
@@ -2073,6 +2099,7 @@ namespace UE::ProjectIntelligence
 		Result->SetArrayField(TEXT("operations"), OperationResults);
 		Result->SetArrayField(TEXT("compile"), CompileResults);
 		Result->SetStringField(TEXT("refresh_request_path"), RefreshRequestPath);
+		Result->SetStringField(TEXT("refresh_request_id"), RefreshRequestId);
 		Result->SetStringField(TEXT("refresh_error"), RefreshError);
 		Result->SetStringField(TEXT("rollback_strategy"), bSaved ? TEXT("file_backup_restore_and_package_reload") : TEXT("editor_transaction_undo"));
 
@@ -2162,10 +2189,11 @@ namespace UE::ProjectIntelligence
 			bFilesRestored = FUEPIBackupService::Restore(LastAppliedBackupFiles, LastAppliedAffectedAssets, RestoreError);
 		}
 		FString RefreshRequestPath;
+		FString RefreshRequestId;
 		FString RefreshError;
 		if (bUndone && bFilesRestored && LastAppliedAffectedAssets.Num() > 0)
 		{
-			WriteRefreshRequest(LastAppliedAffectedAssets, TEXT("live"), RefreshRequestPath, RefreshError);
+			WriteRefreshRequest(LastAppliedAffectedAssets, TEXT("live"), RefreshRequestId, RefreshRequestPath, RefreshError);
 		}
 		FString JournalPath;
 		FString JournalError;
@@ -2178,6 +2206,7 @@ namespace UE::ProjectIntelligence
 		Result->SetBoolField(TEXT("files_restored"), bFilesRestored);
 		Result->SetStringField(TEXT("journal_path"), JournalPath);
 		Result->SetStringField(TEXT("refresh_request_path"), RefreshRequestPath);
+		Result->SetStringField(TEXT("refresh_request_id"), RefreshRequestId);
 		Result->SetStringField(TEXT("refresh_error"), RefreshError);
 		if (bUndone && bFilesRestored)
 		{

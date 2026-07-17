@@ -66,7 +66,15 @@ def normalize_diagnostics(diagnostics: list[dict[str, Any]] | None) -> list[dict
                 "recommended_user_action",
                 "Keep the Unreal Editor open and retry after UEPI processes the targeted refresh request.",
             )
-            diagnostic.setdefault("recommended_agent_action", {"tool": "uepi_status", "after_seconds": 2})
+            request_id = str(diagnostic.get("request_id") or "")
+            diagnostic.setdefault(
+                "recommended_agent_action",
+                {
+                    "tool": "uepi_refresh" if request_id else "uepi_status",
+                    "arguments": {"action": "wait", "request_id": request_id} if request_id else {},
+                    "after_seconds": 0 if request_id else 2,
+                },
+            )
         elif code == "UEPI_SNAPSHOT_STALE":
             diagnostic.setdefault("recoverable", True)
             diagnostic.setdefault(
@@ -140,13 +148,15 @@ def collect_evidence(value: Any, limit: int = 50) -> list[dict[str, Any]]:
 
 def default_next_actions(tool: str, diagnostics: list[dict[str, Any]], result: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
-    if any(item.get("code") == "UEPI_REFRESH_REQUESTED" for item in diagnostics):
+    refresh_diagnostic = next((item for item in diagnostics if item.get("code") == "UEPI_REFRESH_REQUESTED"), None)
+    if refresh_diagnostic:
+        request_id = str(refresh_diagnostic.get("request_id") or "")
         actions.append(
             {
                 "reason": "A targeted refresh has been queued for fresher editor data.",
-                "tool": tool,
-                "arguments": {},
-                "after_seconds": 2,
+                "tool": "uepi_refresh" if request_id else tool,
+                "arguments": {"action": "wait", "request_id": request_id} if request_id else {},
+                "after_seconds": 0 if request_id else 2,
             }
         )
     if tool == "uepi_search" and result is not None and _as_list(result.get("matches")):
@@ -217,7 +227,12 @@ def envelope(
     else:
         body["result"] = result or {}
         body["error"] = None
-    body["next_actions"] = next_actions if next_actions is not None else default_next_actions(tool, normalized_diagnostics, result)
+    defaults = default_next_actions(tool, normalized_diagnostics, result)
+    if next_actions is None:
+        body["next_actions"] = defaults
+    else:
+        refresh_actions = [item for item in defaults if item.get("tool") == "uepi_refresh"]
+        body["next_actions"] = refresh_actions + [item for item in next_actions if item not in refresh_actions]
     return body
 
 

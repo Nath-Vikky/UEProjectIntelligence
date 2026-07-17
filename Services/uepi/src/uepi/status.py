@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Any
 
 from .bridge_client import call_bridge, read_bridge_session
 from .identity import session_matches_identity
-from .store import SnapshotState, SnapshotStore, _parse_utc
+from .store import SnapshotState, SnapshotStore, SnapshotStoreError, _parse_utc
+
+
+def _cached_catalog_hash(store: SnapshotStore) -> str:
+    path = store.store_dir / "catalog" / "operation-catalog.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    return str(value.get("catalog_hash") or "") if isinstance(value, dict) else ""
 
 
 def _heartbeat_age_ms(session: dict[str, Any]) -> int | None:
@@ -95,22 +105,55 @@ def resolve_status(
         connected = True
 
     probe_result = probe.get("result") if isinstance(probe, dict) and isinstance(probe.get("result"), dict) else {}
+    live_catalog_hash = str(probe_result.get("catalog_hash") or (session or {}).get("catalog_hash") or "")
+    cached_catalog_hash = _cached_catalog_hash(store)
     editor = {
         "connected": connected,
         "session_id": session_id or None,
         "pid": (session or {}).get("pid"),
         "heartbeat_age_ms": heartbeat_age_ms,
         "active_map": probe_result.get("active_map") or (session or {}).get("active_map"),
+        "pie_map": probe_result.get("pie_map"),
         "pie_state": probe_result.get("pie_state") or "stopped",
+        "simulating": bool(probe_result.get("simulating", False)),
+        "pie_owned_by_uepi": bool(probe_result.get("pie_owned_by_uepi", False)),
+        "runtime_session_id": probe_result.get("runtime_session_id") or None,
+        "catalog_hash": live_catalog_hash or None,
+        "data_mode": probe_result.get("data_mode") or ("live" if connected else state.data_mode),
         "source": "bridge_probe" if probe else ("project_session" if ready else "snapshot"),
         "observed_at": probe_result.get("observed_at") or (session or {}).get("heartbeat_at") or (session or {}).get("last_seen_at_utc"),
     }
+    try:
+        saved_state = store.load_state("saved")
+        saved_generation = saved_state.generation
+    except SnapshotStoreError:
+        saved_generation = state.manifest.get("base_saved_generation") or (state.generation if state.data_mode != "live" else None)
+    live_generation = state.generation if state.data_mode == "live" else None
+    live_base_generation = state.manifest.get("base_saved_generation") if state.data_mode == "live" else None
+    live_base_current = not live_generation or not saved_generation or not live_base_generation or int(live_base_generation) == int(saved_generation)
+    freshness = "current" if live_base_current else "stale"
+    if not live_base_current:
+        diagnostics.append(
+            {
+                "severity": "warning",
+                "blocking": False,
+                "code": "UEPI_LIVE_BASE_STALE",
+                "message": "The active live overlay was created from an older saved Snapshot generation.",
+                "phase": "status",
+                "retryable": True,
+                "recoverable": True,
+            }
+        )
     snapshot = {
-        "saved_generation": state.manifest.get("base_saved_generation") or state.manifest.get("saved_generation") or (state.generation if state.data_mode != "live" else None),
+        "saved_generation": saved_generation,
         "live_generation": state.generation if state.data_mode == "live" else None,
+        "live_base_saved_generation": live_base_generation,
         "view_generation": state.generation,
+        "view_identity": f"saved:{saved_generation or 0}|live:{live_generation or 0}|base:{live_base_generation or 0}",
+        "generation_semantics": "independent_saved_and_live_streams",
+        "generation_comparable": False,
         "observed_at": state.manifest.get("created_at_utc"),
-        "freshness": "current",
+        "freshness": freshness,
         "manifest_path": str(state.manifest_path),
     }
     capabilities = {
@@ -126,7 +169,9 @@ def resolve_status(
         "session_bound": bool(matched and fresh),
         "bridge_reachable": connected,
         "snapshot_ready": state.generation > 0,
-        "catalog_current": bool((session or {}).get("catalog_hash")) if connected else False,
+        "catalog_current": bool(connected and live_catalog_hash and cached_catalog_hash == live_catalog_hash),
+        "live_catalog_hash": live_catalog_hash or None,
+        "cached_catalog_hash": cached_catalog_hash or None,
     }
     return {
         "project": identity,

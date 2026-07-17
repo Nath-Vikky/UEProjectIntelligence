@@ -261,7 +261,7 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Run transaction-bound, UEPI-owned PIE verification with guarded read, input, invoke, wait, and assert actions.",
         "inputSchema": read_schema(
             {
-                "action": {"type": "string", "enum": ["status", "start", "stop", "input", "invoke", "read", "wait", "assert", "automation", "job_status"]},
+                "action": {"type": "string", "enum": ["status", "start", "stop", "input", "invoke", "read", "wait", "assert"]},
                 "ticket_id": {"type": "string"},
                 "map": {"type": "string"},
                 "object_path": {"type": "string"},

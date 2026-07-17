@@ -17,6 +17,16 @@ def _load(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def request_payload(path: Path | str | None) -> dict[str, Any]:
+    request_path = Path(path) if path else None
+    request = _load(request_path) if request_path else None
+    return {
+        "request": request or {},
+        "request_id": str((request or {}).get("request_id") or "") or None,
+        "request_path": str(request_path) if request_path else None,
+    }
+
+
 def _find_request(engine: Any, request_id: str) -> tuple[Path | None, dict[str, Any] | None]:
     if not request_id:
         return None, None
@@ -43,8 +53,7 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             project_binding_id=str(engine.identity.get("project_binding_id") or ""),
             editor_session_id=str(arguments.get("expected_editor_session_id") or ""),
         )
-        request = _load(path) or {}
-        return engine._envelope({"request": request, "request_path": str(path)}, tool="uepi_refresh", operation=action)
+        return engine._envelope(request_payload(path), tool="uepi_refresh", operation=action)
 
     request_id = str(arguments.get("request_id") or "")
     if not request_id:
@@ -57,7 +66,7 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             path, request = _find_request(engine, request_id)
             status = str((request or {}).get("status") or "").casefold()
             if request and status in TERMINAL_STATUSES:
-                return engine._envelope({"request": request, "request_path": str(path)}, tool="uepi_refresh", operation=action)
+                return engine._envelope(request_payload(path), tool="uepi_refresh", operation=action)
             if time.monotonic() >= deadline:
                 return engine._envelope(
                     {"request": request, "request_path": str(path) if path else None, "timed_out": True},
@@ -70,5 +79,5 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         path, request = _find_request(engine, request_id)
         if not request:
             return engine._error("UEPI_REFRESH_REQUEST_NOT_FOUND", "Refresh request was not found.", tool="uepi_refresh", operation=action)
-        return engine._envelope({"request": request, "request_path": str(path)}, tool="uepi_refresh", operation=action)
+        return engine._envelope(request_payload(path), tool="uepi_refresh", operation=action)
     return engine._error("UEPI_REFRESH_ACTION_UNKNOWN", f"Unknown refresh action: {action}", tool="uepi_refresh", operation=action)

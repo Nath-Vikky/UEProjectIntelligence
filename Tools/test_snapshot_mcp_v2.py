@@ -1224,6 +1224,10 @@ def main() -> int:
             names = {tool["name"] for tool in tools}
             assert names == EXPECTED_TOOLS
             assert not any("worker" in name or "queue" in name or "daemon" in name for name in names)
+            runtime_tool = next(tool for tool in tools if tool["name"] == "uepi_runtime")
+            runtime_actions = runtime_tool["inputSchema"]["properties"]["action"]["enum"]
+            assert "automation" not in runtime_actions
+            assert "job_status" not in runtime_actions
 
             status = request(process, 3, "tools/call", {"name": "uepi_status", "arguments": {}})["structuredContent"]
             assert_envelope(status)
@@ -1232,6 +1236,10 @@ def main() -> int:
             assert status["result"]["llm_readiness"]["requires_daemon"] is False
             assert status["result"]["llm_readiness"]["bridge_ready"] is False
             assert status["result"]["doctor"]["project_bound"] is True
+            assert status["result"]["editor"]["active_map"] is None
+            assert status["result"]["editor"]["pie_state"] == "stopped"
+            assert status["result"]["snapshot"]["generation_comparable"] is False
+            assert status["result"]["snapshot"]["freshness"] == "current"
             assert status["result"]["cache"]["synced"] is True
             assert status["result"]["cache"]["schema_version"] == "uepi.sqlite-cache.v2.1"
             overview = request(process, 45, "tools/call", {"name": "uepi_overview", "arguments": {"limit": 10}})["structuredContent"]
@@ -1375,6 +1383,7 @@ def main() -> int:
             refresh_value = refresh_request["result"]["request"]
             assert refresh_value["schema_version"] == "uepi.refresh-request.v2"
             assert refresh_value["status"] in {"queued", "running"}
+            assert refresh_request["result"]["request_id"] == refresh_value["request_id"]
             refresh_status = request(
                 process,
                 59,
@@ -1412,6 +1421,10 @@ def main() -> int:
             assert blueprint["result"]["query_source"] == "sqlite_cache"
             assert blueprint["snapshot"]["freshness"] == "refresh_requested"
             assert blueprint["diagnostics"][0]["code"] == "UEPI_REFRESH_REQUESTED"
+            assert blueprint["diagnostics"][0]["request_id"]
+            assert blueprint["diagnostics"][0]["request"]["schema_version"] == "uepi.refresh-request.v2"
+            assert blueprint["next_actions"][0]["tool"] == "uepi_refresh"
+            assert blueprint["next_actions"][0]["arguments"]["request_id"] == blueprint["diagnostics"][0]["request_id"]
             blueprint_names = {item["display_name"] for item in blueprint["result"]["blueprint_entities"]}
             assert "Event BeginPlay" in blueprint_names
             assert "Asset Fragment Node" in blueprint_names
