@@ -1557,6 +1557,7 @@ namespace UE::ProjectIntelligence
 			Operation->SetStringField(TEXT("rollback_behavior"), Descriptor.RollbackMode);
 			Operation->SetStringField(TEXT("save_behavior"), Descriptor.SaveBehavior);
 			Operation->SetStringField(TEXT("idempotency_behavior"), Descriptor.IdempotencyBehavior);
+			Operation->SetStringField(TEXT("contract_hash"), Descriptor.ContractHash);
 			Operation->SetStringField(TEXT("required_plugin"), Descriptor.RequiredPlugin);
 			Operation->SetBoolField(TEXT("requires_save"), Descriptor.bRequiresSave);
 			Operation->SetBoolField(TEXT("atomic_supported"), Descriptor.bAtomicSupported);
@@ -1568,28 +1569,18 @@ namespace UE::ProjectIntelligence
 			Operation->SetArrayField(TEXT("supported_engine_versions"), StringArrayToJsonValues(Descriptor.SupportedEngineVersions));
 			Operation->SetArrayField(TEXT("supported_asset_classes"), StringArrayToJsonValues(Descriptor.SupportedAssetClasses));
 			Operation->SetArrayField(TEXT("supported_graph_schemas"), StringArrayToJsonValues(Descriptor.SupportedGraphSchemas));
-			TSharedRef<FJsonObject> InputSchema = MakeShared<FJsonObject>();
-			InputSchema->SetStringField(TEXT("type"), TEXT("object"));
-			TSharedRef<FJsonObject> InputProperties = MakeShared<FJsonObject>();
-			for (const FString& TargetField : Descriptor.TargetFields)
+			TSharedRef<FJsonObject> InputSchema = Descriptor.InputSchema.IsValid() ? Descriptor.InputSchema.ToSharedRef() : MakeShared<FJsonObject>();
+			if (!Descriptor.InputSchema.IsValid())
 			{
-				TSharedRef<FJsonObject> TargetSchema = MakeShared<FJsonObject>();
-				TargetSchema->SetArrayField(TEXT("type"), { MakeShared<FJsonValueString>(TEXT("string")), MakeShared<FJsonValueString>(TEXT("object")), MakeShared<FJsonValueString>(TEXT("array")) });
-				InputProperties->SetObjectField(TargetField, TargetSchema);
+				InputSchema->SetStringField(TEXT("type"), TEXT("object"));
+				InputSchema->SetObjectField(TEXT("properties"), MakeShared<FJsonObject>());
+				InputSchema->SetBoolField(TEXT("additionalProperties"), false);
 			}
-			for (const FString& DependencyField : Descriptor.DependencyFields)
-			{
-				TSharedRef<FJsonObject> DependencySchema = MakeShared<FJsonObject>();
-				DependencySchema->SetArrayField(TEXT("type"), { MakeShared<FJsonValueString>(TEXT("string")), MakeShared<FJsonValueString>(TEXT("object")), MakeShared<FJsonValueString>(TEXT("array")) });
-				InputProperties->SetObjectField(DependencyField, DependencySchema);
-			}
-			InputSchema->SetObjectField(TEXT("properties"), InputProperties);
-			InputSchema->SetBoolField(TEXT("additionalProperties"), true);
 			Operation->SetObjectField(TEXT("input_schema"), InputSchema);
 			TSharedRef<FJsonObject> OutputSchema = MakeShared<FJsonObject>();
 			OutputSchema->SetStringField(TEXT("type"), TEXT("object"));
 			Operation->SetObjectField(TEXT("output_schema"), OutputSchema);
-			Operation->SetArrayField(TEXT("examples"), EmptyJsonArray());
+			Operation->SetArrayField(TEXT("examples"), Descriptor.Examples);
 			TSharedRef<FJsonObject> Availability = MakeShared<FJsonObject>();
 			Availability->SetBoolField(TEXT("preview"), true);
 			Availability->SetBoolField(TEXT("apply"), bApplySupported);
@@ -1615,7 +1606,7 @@ namespace UE::ProjectIntelligence
 
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-discover.v2"));
-		Result->SetStringField(TEXT("catalog_version"), TEXT("2.0.0"));
+		Result->SetStringField(TEXT("catalog_version"), TEXT("2.1.0"));
 		Result->SetStringField(TEXT("catalog_hash"), Registry.GetCatalogHash());
 		Result->SetStringField(TEXT("engine_version"), FEngineVersion::Current().ToString());
 		Result->SetStringField(TEXT("plugin_build_id"), TEXT("uepi-vnext"));

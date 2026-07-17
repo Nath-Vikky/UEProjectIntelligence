@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -213,6 +214,33 @@ def assert_response_budget_contract() -> None:
     assert "bone_motion_profile" not in bounded_animation["result"]
     assert bounded_animation["truncation"]["byte_limit_hit"] is True
     assert bounded_animation["payload_bytes"] <= 4096
+
+
+def assert_operation_machine_contract() -> None:
+    registry_source = (ROOT / "Source" / "UEProjectIntelligence" / "Private" / "Edit" / "UEPIEditOperationRegistry.cpp").read_text(encoding="utf-8")
+    registry_names = set(re.findall(r'Descriptor\(TEXT\("([^"]+)"\)', registry_source))
+    payload = json.loads((ROOT / "Schemas" / "edit-operation-contracts.json").read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "uepi.edit-operation-contracts.v1"
+    contracts = payload["operations"]
+    assert set(contracts) == registry_names
+    assert len(contracts) == 64
+    for name, contract in contracts.items():
+        schema = contract["input_schema"]
+        assert schema["type"] == "object", name
+        assert schema["additionalProperties"] is False, name
+        assert isinstance(schema.get("properties"), dict) and schema["properties"], name
+        assert isinstance(schema.get("required"), list), name
+        assert isinstance(contract.get("contract_hash"), str) and contract["contract_hash"].startswith("sha256:"), name
+        assert len(contract.get("examples") or []) >= 1, name
+        example = contract["examples"][0]
+        assert set(schema["required"]).issubset(example), name
+        assert set(example).issubset(schema["properties"]), name
+    create_asset = contracts["content.create_asset"]
+    assert {"destination_asset", "asset_class"}.issubset(create_asset["input_schema"]["required"])
+    writes = contracts["asset.set_properties"]["input_schema"]["properties"]["writes"]
+    assert writes["items"]["required"] == ["path", "value"]
+    add_node = contracts["blueprint.add_node"]["input_schema"]
+    assert len(add_node["allOf"]) >= 5
 
 
 def assert_plan_v2_contract() -> None:
@@ -1156,6 +1184,7 @@ def main() -> int:
     assert_plan_v2_contract()
     assert_runtime_ticket_contract()
     assert_response_budget_contract()
+    assert_operation_machine_contract()
     with tempfile.TemporaryDirectory(prefix="uepi_snapshot_mcp_") as temp_dir:
         root = Path(temp_dir)
         write_fixture(root)

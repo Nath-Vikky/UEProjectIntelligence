@@ -53,6 +53,7 @@ public class UEProjectIntelligence : ModuleRules
 			);
 
 		AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenSSL");
+		RuntimeDependencies.Add(Path.Combine(PluginDirectory, "Schemas", "edit-operation-contracts.json"));
 
 		AddOptionalReader(Target, "EnhancedInput", "UEPI_WITH_ENHANCED_INPUT", "EnhancedInput", "InputEditor");
 		AddOptionalReader(Target, "CommonUI", "UEPI_WITH_COMMON_UI", "CommonInput", "CommonUI", "EnhancedInput");

@@ -4,6 +4,7 @@
 #include "Templates/SharedPointer.h"
 
 class FJsonObject;
+class FJsonValue;
 
 namespace UE::ProjectIntelligence
 {
@@ -70,6 +71,9 @@ namespace UE::ProjectIntelligence
 		FString RequiredPlugin;
 		FString SaveBehavior = TEXT("touched_only_after_validation");
 		FString IdempotencyBehavior = TEXT("transaction_and_plan_hash");
+		FString ContractHash;
+		TSharedPtr<FJsonObject> InputSchema;
+		TArray<TSharedPtr<FJsonValue>> Examples;
 		bool bRequiresSave = true;
 		bool bAtomicSupported = true;
 	};

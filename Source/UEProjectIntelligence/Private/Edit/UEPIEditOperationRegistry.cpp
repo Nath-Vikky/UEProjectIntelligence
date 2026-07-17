@@ -9,10 +9,74 @@
 #include "Operations/UEPIMaterialOperations.h"
 #include "Operations/UEPIWidgetOperations.h"
 
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
+#include "Interfaces/IPluginManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+
 namespace UE::ProjectIntelligence
 {
 	namespace
 	{
+		TSharedPtr<FJsonObject> OperationContracts()
+		{
+			static TSharedPtr<FJsonObject> Contracts;
+			static bool bAttempted = false;
+			if (bAttempted)
+			{
+				return Contracts;
+			}
+			bAttempted = true;
+			const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("UEProjectIntelligence"));
+			if (!Plugin.IsValid())
+			{
+				return nullptr;
+			}
+			FString Json;
+			const FString Path = FPaths::Combine(Plugin->GetBaseDir(), TEXT("Schemas"), TEXT("edit-operation-contracts.json"));
+			if (!FFileHelper::LoadFileToString(Json, *Path))
+			{
+				return nullptr;
+			}
+			TSharedPtr<FJsonObject> Root;
+			const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Json);
+			if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+			{
+				return nullptr;
+			}
+			const TSharedPtr<FJsonObject>* Operations = nullptr;
+			if (!Root->TryGetObjectField(TEXT("operations"), Operations) || !Operations || !Operations->IsValid())
+			{
+				return nullptr;
+			}
+			Contracts = *Operations;
+			return Contracts;
+		}
+
+		void AttachMachineContract(FUEPIEditOperationDescriptor& Descriptor)
+		{
+			const TSharedPtr<FJsonObject> Contracts = OperationContracts();
+			const TSharedPtr<FJsonObject>* Contract = nullptr;
+			if (!Contracts.IsValid() || !Contracts->TryGetObjectField(Descriptor.Name, Contract) || !Contract || !Contract->IsValid())
+			{
+				return;
+			}
+			const TSharedPtr<FJsonObject>* InputSchema = nullptr;
+			if ((*Contract)->TryGetObjectField(TEXT("input_schema"), InputSchema) && InputSchema && InputSchema->IsValid())
+			{
+				Descriptor.InputSchema = *InputSchema;
+			}
+			const TArray<TSharedPtr<FJsonValue>>* Examples = nullptr;
+			if ((*Contract)->TryGetArrayField(TEXT("examples"), Examples) && Examples)
+			{
+				Descriptor.Examples = *Examples;
+			}
+			(*Contract)->TryGetStringField(TEXT("contract_hash"), Descriptor.ContractHash);
+		}
+
 		FUEPIEditOperationDescriptor Descriptor(
 			const TCHAR* Name,
 			const TCHAR* Domain,
@@ -39,6 +103,7 @@ namespace UE::ProjectIntelligence
 			{
 				Value.DependencyFields.Add(Field);
 			}
+			AttachMachineContract(Value);
 			return Value;
 		}
 	}
@@ -110,7 +175,7 @@ namespace UE::ProjectIntelligence
 				*Item.RollbackMode,
 				Item.bRequiresSave ? 1 : 0,
 				Item.bAtomicSupported ? 1 : 0);
-			Canonical += FString::Printf(TEXT("validation=%s|idempotency=%s\n"), *Item.ValidationMode, *Item.IdempotencyBehavior);
+			Canonical += FString::Printf(TEXT("validation=%s|idempotency=%s|contract=%s\n"), *Item.ValidationMode, *Item.IdempotencyBehavior, *Item.ContractHash);
 		}
 		FTCHARToUTF8 Utf8(*Canonical);
 		const FString Digest = Sha256Hex(Utf8.Get(), static_cast<uint64>(Utf8.Length()));
