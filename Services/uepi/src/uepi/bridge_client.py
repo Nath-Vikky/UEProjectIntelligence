@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from .store import SnapshotStore
 from .identity import project_identity, session_matches_identity
+from .timing import absorb_editor_timing, record
 
 
 BRIDGE_SESSION_SCHEMAS = {"uepi.editor-bridge-session.v1", "uepi.editor-bridge-session.v2"}
@@ -111,8 +112,12 @@ def call_bridge(
         },
     }
     payload = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    connect_started_at = time.perf_counter()
+    wait_started_at: float | None = None
     try:
         with socket.create_connection((host, port), timeout=timeout) as connection:
+            record("bridge_connect_ms", (time.perf_counter() - connect_started_at) * 1000.0)
+            wait_started_at = time.perf_counter()
             connection.settimeout(timeout)
             connection.sendall(struct.pack(">I", len(payload)) + payload)
             header = connection.recv(4)
@@ -130,13 +135,24 @@ def call_bridge(
                 chunks.append(chunk)
                 remaining -= len(chunk)
     except OSError as exc:
+        if wait_started_at is None:
+            record("bridge_connect_ms", (time.perf_counter() - connect_started_at) * 1000.0)
+        else:
+            record("bridge_wait_ms", (time.perf_counter() - wait_started_at) * 1000.0)
         return {"ok": False, "error": {"code": "UEPI_BRIDGE_CALL_FAILED", "message": str(exc)}}
+    wait_elapsed_ms = (time.perf_counter() - wait_started_at) * 1000.0 if wait_started_at is not None else 0.0
 
     try:
         value = json.loads(b"".join(chunks).decode("utf-8"))
     except json.JSONDecodeError as exc:
+        record("bridge_wait_ms", wait_elapsed_ms)
         return {"ok": False, "error": {"code": "UEPI_BRIDGE_BAD_RESPONSE", "message": str(exc)}}
-    return value if isinstance(value, dict) else {"ok": False, "error": {"code": "UEPI_BRIDGE_BAD_RESPONSE", "message": "Bridge response was not an object."}}
+    if not isinstance(value, dict):
+        record("bridge_wait_ms", wait_elapsed_ms)
+        return {"ok": False, "error": {"code": "UEPI_BRIDGE_BAD_RESPONSE", "message": "Bridge response was not an object."}}
+    editor_elapsed_ms = absorb_editor_timing(value.pop("timing", None))
+    record("bridge_wait_ms", max(0.0, wait_elapsed_ms - editor_elapsed_ms))
+    return value
 
 
 def live_context(store: SnapshotStore, include_log: bool = True) -> dict[str, Any]:

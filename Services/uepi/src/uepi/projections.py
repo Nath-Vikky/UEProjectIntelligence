@@ -385,3 +385,35 @@ def apply_response_options(envelope: dict[str, Any], arguments: dict[str, Any]) 
     )
     _set_payload_size(envelope)
     return envelope
+
+
+def enforce_response_budget(envelope: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:
+    """Rebalance an already projected envelope after late metadata is attached."""
+    max_bytes = max(4096, min(int(arguments.get("max_payload_bytes") or 131072), 4 * 1024 * 1024))
+    if _set_payload_size(envelope) <= max_bytes or not isinstance(envelope.get("result"), dict):
+        return envelope
+
+    result = envelope["result"]
+    fields = [str(item) for item in arguments.get("fields") or [] if isinstance(item, str)]
+    tool = str(envelope.get("tool") or "")
+    page_path, _ = _page_root(result, tool, fields)
+    view_generation = int((envelope.get("snapshot") or {}).get("view_generation") or 0)
+    qhash = query_hash(tool, str(envelope.get("operation") or ""), arguments)
+    offset = 0
+    cursor = arguments.get("cursor")
+    if isinstance(cursor, str) and cursor:
+        try:
+            offset = max(0, int(decode_cursor(cursor, expected_query_hash=qhash, view_generation=view_generation).get("offset") or 0))
+        except CursorError:
+            offset = 0
+    _trim_to_budget(
+        envelope,
+        result,
+        max_bytes=max_bytes,
+        page_path=page_path,
+        offset=offset,
+        qhash=qhash,
+        view_generation=view_generation,
+    )
+    _set_payload_size(envelope)
+    return envelope

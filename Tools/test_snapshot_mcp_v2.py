@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any
 from datetime import datetime, timezone
 
@@ -22,10 +23,11 @@ from uepi.context_routes import _best_domain_asset, _normalized_asset_identity  
 from uepi.diff import build_transaction_diff  # noqa: E402
 from uepi.edit import _apply_timeout_seconds, _asset_values, _budget_diagnostics, _refresh_timeout_seconds, _transaction_budgets  # noqa: E402
 from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
-from uepi.projections import apply_response_options  # noqa: E402
+from uepi.projections import apply_response_options, enforce_response_budget  # noqa: E402
 from uepi.runtime import _approved_subset, _matches_approved, _value_at_path  # noqa: E402
-from uepi.result import envelope  # noqa: E402
+from uepi.result import envelope, tool_response  # noqa: E402
 from uepi.store import resolve_store_root  # noqa: E402
+from uepi.timing import attach_timing, begin_request, end_request, record  # noqa: E402
 from uepi_doctor import _capability_settings, _pid_alive  # noqa: E402
 
 READ_TOOLS = {
@@ -167,6 +169,52 @@ def assert_envelope(value: dict[str, Any]) -> None:
     assert "item_limit_hit" in value["truncation"]
     assert "byte_limit_hit" in value["truncation"]
     assert "continuation" in value
+    assert set(value.get("timing", {})) == {
+        "total_ms",
+        "mcp_queue_ms",
+        "snapshot_query_ms",
+        "bridge_connect_ms",
+        "bridge_wait_ms",
+        "editor_dispatch_ms",
+        "editor_execute_ms",
+        "serialization_ms",
+    }
+    assert all(isinstance(item, (int, float)) and item >= 0 for item in value["timing"].values())
+    assert value["timing"]["total_ms"] >= value["timing"]["serialization_ms"]
+
+
+def assert_timing_contract() -> None:
+    old_threshold = os.environ.get("UEPI_SLOW_OPERATION_MS")
+    os.environ["UEPI_SLOW_OPERATION_MS"] = "1"
+    token = begin_request()
+    try:
+        record("bridge_connect_ms", 0.1)
+        record("bridge_wait_ms", 0.2)
+        time.sleep(0.003)
+        value = envelope(tool="uepi_status", operation="status", project={}, state={}, result={"ready": True})
+        attach_timing(value)
+        response = tool_response(value)
+        assert response["structuredContent"] is value
+        assert set(value["timing"]) == {
+            "total_ms",
+            "mcp_queue_ms",
+            "snapshot_query_ms",
+            "bridge_connect_ms",
+            "bridge_wait_ms",
+            "editor_dispatch_ms",
+            "editor_execute_ms",
+            "serialization_ms",
+        }
+        assert value["timing"]["bridge_connect_ms"] == 0.1
+        assert value["timing"]["bridge_wait_ms"] == 0.2
+        assert value["timing"]["serialization_ms"] >= 0
+        assert any(item.get("code") == "UEPI_SLOW_OPERATION" for item in value["diagnostics"])
+    finally:
+        end_request(token)
+        if old_threshold is None:
+            os.environ.pop("UEPI_SLOW_OPERATION_MS", None)
+        else:
+            os.environ["UEPI_SLOW_OPERATION_MS"] = old_threshold
 
 
 def assert_response_budget_contract() -> None:
@@ -187,6 +235,18 @@ def assert_response_budget_contract() -> None:
     assert projected["payload_bytes"] == len(json.dumps(projected, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
     assert projected["payload_bytes"] <= 4096
     assert projected["continuation"]["has_more"] is True
+    projected["timing"] = {field: 123456.789 for field in (
+        "total_ms",
+        "mcp_queue_ms",
+        "snapshot_query_ms",
+        "bridge_connect_ms",
+        "bridge_wait_ms",
+        "editor_dispatch_ms",
+        "editor_execute_ms",
+        "serialization_ms",
+    )}
+    enforce_response_budget(projected, {"fields": ["matches.id"], "page_size": 4, "max_payload_bytes": 4096})
+    assert projected["payload_bytes"] <= 4096
 
     schema_response = envelope(
         tool="uepi_schema",
@@ -1189,6 +1249,7 @@ def assert_bridge_token_and_registry_resolution(root: Path) -> None:
 
 def main() -> int:
     assert_error_evidence_contract()
+    assert_timing_contract()
     assert_doctor_contract()
     assert_edit_asset_scope_contract()
     assert_edit_transaction_budget_contract()

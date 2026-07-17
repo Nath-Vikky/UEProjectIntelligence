@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
@@ -236,7 +237,17 @@ def envelope(
     return body
 
 
-def tool_response(value: dict[str, Any]) -> dict[str, Any]:
+def tool_response(value: dict[str, Any], response_options: dict[str, Any] | None = None) -> dict[str, Any]:
+    from .timing import finalize_timing
+
+    serialization_started_at = perf_counter()
+    json.dumps(value, ensure_ascii=False, indent=2)
+    serialization_ms = (perf_counter() - serialization_started_at) * 1000.0
+    finalize_timing(value, serialization_ms)
+    if response_options is not None:
+        from .projections import enforce_response_budget
+
+        enforce_response_budget(value, response_options)
     text = json.dumps(value, ensure_ascii=False, indent=2)
     return {
         "content": [{"type": "text", "text": text}],

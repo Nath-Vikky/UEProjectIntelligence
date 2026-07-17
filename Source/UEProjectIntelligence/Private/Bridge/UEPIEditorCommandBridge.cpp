@@ -46,6 +46,7 @@
 #include "Misc/SecureHash.h"
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/PlatformTime.h"
 #include "ScopedTransaction.h"
 #include "PlayInEditorDataTypes.h"
 #include "LevelEditorViewport.h"
@@ -771,13 +772,13 @@ namespace UE::ProjectIntelligence
 			bOwnsPIESession = false;
 			OwnedRuntimeSessionId.Reset();
 		}
-		FSocket* PendingSocket = nullptr;
+		FPendingSocket PendingSocket;
 		while (PendingSockets.Dequeue(PendingSocket))
 		{
-			if (PendingSocket)
+			if (PendingSocket.Socket)
 			{
-				PendingSocket->Close();
-				ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(PendingSocket);
+				PendingSocket.Socket->Close();
+				ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(PendingSocket.Socket);
 			}
 		}
 		if (bActive)
@@ -827,7 +828,10 @@ namespace UE::ProjectIntelligence
 		{
 			return false;
 		}
-		PendingSockets.Enqueue(ClientSocket);
+		FPendingSocket PendingSocket;
+		PendingSocket.Socket = ClientSocket;
+		PendingSocket.AcceptedAtSeconds = FPlatformTime::Seconds();
+		PendingSockets.Enqueue(PendingSocket);
 		return true;
 	}
 
@@ -836,12 +840,14 @@ namespace UE::ProjectIntelligence
 		constexpr int32 MaxSocketsPerTick = 8;
 		for (int32 Index = 0; Index < MaxSocketsPerTick; ++Index)
 		{
-			FSocket* ClientSocket = nullptr;
-			if (!PendingSockets.Dequeue(ClientSocket))
+			FPendingSocket PendingSocket;
+			if (!PendingSockets.Dequeue(PendingSocket))
 			{
 				return;
 			}
-			ProcessSocket(ClientSocket);
+			FSocket* ClientSocket = PendingSocket.Socket;
+			const double EditorDispatchMs = FMath::Max(0.0, (FPlatformTime::Seconds() - PendingSocket.AcceptedAtSeconds) * 1000.0);
+			ProcessSocket(ClientSocket, EditorDispatchMs);
 			if (ClientSocket)
 			{
 				ClientSocket->Close();
@@ -850,7 +856,7 @@ namespace UE::ProjectIntelligence
 		}
 	}
 
-	bool FUEPIEditorCommandBridge::ProcessSocket(FSocket* ClientSocket)
+	bool FUEPIEditorCommandBridge::ProcessSocket(FSocket* ClientSocket, const double EditorDispatchMs)
 	{
 		if (!ClientSocket)
 		{
@@ -871,7 +877,14 @@ namespace UE::ProjectIntelligence
 			return false;
 		}
 
-		return WriteFrame(ClientSocket, HandleRequest(Request));
+		const double ExecuteStartedAt = FPlatformTime::Seconds();
+		TSharedRef<FJsonObject> Response = HandleRequest(Request);
+		const double EditorExecuteMs = FMath::Max(0.0, (FPlatformTime::Seconds() - ExecuteStartedAt) * 1000.0);
+		TSharedRef<FJsonObject> Timing = MakeShared<FJsonObject>();
+		Timing->SetNumberField(TEXT("editor_dispatch_ms"), EditorDispatchMs);
+		Timing->SetNumberField(TEXT("editor_execute_ms"), EditorExecuteMs);
+		Response->SetObjectField(TEXT("timing"), Timing);
+		return WriteFrame(ClientSocket, Response);
 	}
 
 	bool FUEPIEditorCommandBridge::ReadFrame(FSocket* ClientSocket, FString& OutJsonText) const

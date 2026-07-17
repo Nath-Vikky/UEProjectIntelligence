@@ -24,9 +24,15 @@ namespace UE::ProjectIntelligence
 		int32 GetPort() const;
 
 	private:
+		struct FPendingSocket
+		{
+			FSocket* Socket = nullptr;
+			double AcceptedAtSeconds = 0.0;
+		};
+
 		bool HandleConnectionAccepted(FSocket* ClientSocket, const FIPv4Endpoint& RemoteEndpoint);
 		void ProcessPendingSockets();
-		bool ProcessSocket(FSocket* ClientSocket);
+		bool ProcessSocket(FSocket* ClientSocket, double EditorDispatchMs);
 		bool ReadFrame(FSocket* ClientSocket, FString& OutJsonText) const;
 		bool WriteFrame(FSocket* ClientSocket, const TSharedRef<FJsonObject>& Response) const;
 		TSharedRef<FJsonObject> HandleRequest(const TSharedPtr<FJsonObject>& Request);
@@ -60,6 +66,6 @@ namespace UE::ProjectIntelligence
 		int32 Port = 0;
 		bool bActive = false;
 		TUniquePtr<FTcpListener> Listener;
-		TQueue<FSocket*, EQueueMode::Mpsc> PendingSockets;
+		TQueue<FPendingSocket, EQueueMode::Mpsc> PendingSockets;
 	};
 }

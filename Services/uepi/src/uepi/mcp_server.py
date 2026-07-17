@@ -5,6 +5,7 @@ import base64
 import json
 from pathlib import Path
 import sys
+from time import perf_counter
 import traceback
 from typing import Any, BinaryIO
 
@@ -17,6 +18,7 @@ try:
     from .status import resolve_status
     from . import diff as diff_service, editor, refresh, runtime, schema_service, world
     from .result import envelope, tool_response
+    from .timing import attach_timing, begin_request, end_request
 except ImportError:  # Allows direct execution as a script from Codex config.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from uepi import __version__  # type: ignore
@@ -27,6 +29,7 @@ except ImportError:  # Allows direct execution as a script from Codex config.
     from uepi.status import resolve_status  # type: ignore
     from uepi import diff as diff_service, editor, refresh, runtime, schema_service, world  # type: ignore
     from uepi.result import envelope, tool_response  # type: ignore
+    from uepi.timing import attach_timing, begin_request, end_request  # type: ignore
 
 
 def object_schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -413,8 +416,9 @@ class UEPIMCPServer:
                     value["ok"] = False
                     value["error"] = {"code": blocking.get("code"), "message": blocking.get("message"), "retryable": bool(blocking.get("retryable")), "candidates": []}
                     value["result"] = None
+        attach_timing(value)
         bounded = apply_response_options(value, arguments)
-        response = tool_response(bounded)
+        response = tool_response(bounded, arguments)
         if bounded.get("tool") == "uepi_editor" and bounded.get("operation") == "viewport_capture" and arguments.get("inline_image"):
             result = bounded.get("result") if isinstance(bounded.get("result"), dict) else {}
             artifact_path = Path(str(result.get("artifact_path") or ""))
@@ -453,7 +457,7 @@ class UEPIMCPServer:
             tool=name,
             operation="guard",
         )
-        return tool_response(apply_response_options(response, arguments))
+        return response
 
     def initialize(self) -> dict[str, Any]:
         capabilities: dict[str, Any] = {"tools": {"listChanged": False}}
@@ -478,14 +482,16 @@ class UEPIMCPServer:
         return tools
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        timing_token = begin_request(getattr(self, "_request_received_at", None))
         engine = None
         try:
+            self._current_engine = None
             engine = self._engine()
             self._current_engine = engine
             if name.startswith("uepi_edit_"):
                 guarded = self._edit_guard(engine, name, arguments)
                 if guarded is not None:
-                    return guarded
+                    return self._read_result(guarded, arguments)
             if name == "uepi_status":
                 return self._read_result(engine.status(expected_project_file=arguments.get("expected_project_file"), expected_editor_session_id=arguments.get("expected_editor_session_id")), arguments)
             if name == "uepi_overview":
@@ -615,12 +621,14 @@ class UEPIMCPServer:
                     return self._read_result(edit.validate(engine.store, transaction_id=str(arguments.get("transaction_id") or "")), arguments)
                 if name == "uepi_edit_rollback":
                     return self._read_result(edit.rollback(engine.store, transaction_id=str(arguments.get("transaction_id") or "")), arguments)
-            return tool_response(engine._error("UEPI_UNKNOWN_TOOL", f"Unknown UEPI tool: {name}", candidates=[tool["name"] for tool in self.tools()], tool=name, operation="call"))
+            return self._read_result(engine._error("UEPI_UNKNOWN_TOOL", f"Unknown UEPI tool: {name}", candidates=[tool["name"] for tool in self.tools()], tool=name, operation="call"), arguments)
         except Exception as exc:  # Keep tool failures structured for LLM clients.
             diagnostic = traceback.format_exc(limit=5)
             if engine is not None:
-                return tool_response(engine._error("UEPI_TOOL_FAILED", str(exc), diagnostics=[{"severity": "error", "blocking": True, "code": "UEPI_TOOL_FAILED", "message": diagnostic}], tool=name, operation="call"))
-            return tool_response(envelope(tool=name, operation="call", project={}, editor={}, state={}, error={"code": "UEPI_TOOL_FAILED", "message": str(exc), "retryable": False, "candidates": []}, diagnostics=[{"severity": "error", "blocking": True, "code": "UEPI_TOOL_FAILED", "message": diagnostic}]))
+                return self._read_result(engine._error("UEPI_TOOL_FAILED", str(exc), diagnostics=[{"severity": "error", "blocking": True, "code": "UEPI_TOOL_FAILED", "message": diagnostic}], tool=name, operation="call"), arguments)
+            return self._read_result(envelope(tool=name, operation="call", project={}, editor={}, state={}, error={"code": "UEPI_TOOL_FAILED", "message": str(exc), "retryable": False, "candidates": []}, diagnostics=[{"severity": "error", "blocking": True, "code": "UEPI_TOOL_FAILED", "message": diagnostic}]), arguments)
+        finally:
+            end_request(timing_token)
 
     def resources(self) -> list[dict[str, Any]]:
         return [
@@ -670,7 +678,11 @@ class UEPIMCPServer:
             elif method == "tools/call":
                 name = str(params.get("name") or "")
                 arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
-                result = self.call_tool(name, arguments)
+                self._request_received_at = perf_counter()
+                try:
+                    result = self.call_tool(name, arguments)
+                finally:
+                    self._request_received_at = None
             elif method == "resources/list":
                 result = {"resources": self.resources()}
             elif method == "resources/read":
