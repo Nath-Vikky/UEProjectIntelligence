@@ -1,6 +1,6 @@
 # UE Project Intelligence Development Status
 
-`main` is the `2.0.0-beta.3` release-candidate line for UE 5.3.2 and Codex.
+`main` is the `2.0.0-beta.4` release-candidate line for UE 5.3.2 and Codex.
 
 ## Implemented
 
@@ -21,7 +21,10 @@
 - Blueprint/AnimGraph preflight tracks same-plan variables, functions, components, graph nodes, and node references before the first mutation; Apply resolves the corresponding live objects for node creation, pin maintenance, typed properties, compile, validation, and touched-only save.
 - Operation descriptors separate write targets from read-only dependencies. Both participate in stale-plan fingerprints, while only write targets consume mutation budgets and enter backup, validation, save, refresh, and rollback sets.
 - Exact Blueprint reads traverse only structural containment relations, and Blueprint node schemas return stable/reflected real pin names without constructing unsafe transient graph nodes.
-- Transaction-bound UEPI-owned PIE status/start/stop/input/typed allowlisted invoke/read/wait/assert and cleanup. Runtime tickets bind exact targets, functions, arguments, observations, and maps; function Schema and typed outputs are available to the Agent.
+- Standalone, explicitly approved UEPI-owned PIE verification plus edit-bound verification. Runtime Preview/Approve tickets bind exact project, Editor session, map, input delivery, InputAction/key/value, functions, arguments, observations, delays, and timeouts without requiring a dummy asset edit.
+- Gameplay input ownership and cross-asset effect tracing combine live GameMode/Possession/InputComponent evidence with cached Blueprint calls, Custom Events, interface candidates, terminal effects, and duplicate input-path diagnostics.
+- Blueprint Pin snapshots retain container/element/Map terminal types, qualifiers, wildcard state, raw links, and incomplete-projection diagnostics; focused node reads prioritize complete Pins and direct one-hop links.
+- Editor-backed Preview locks graph/node/pin targets for Apply. Dependency readiness, baseline compile, disk-first compensation, deferred reload, persistent recovery markers, targeted-refresh tombstones, and operation-level failure evidence protect edit atomicity.
 - Project-local Codex setup script, machine-readable Doctor, public schemas, v2 contract snapshot, release packaging, architecture/safety/edit/runtime guides, and real-machine report templates.
 - Whole-envelope response projection/pagination/budget enforcement, artifact-backed large animation payloads, strict operation contracts, and end-to-end timing diagnostics.
 - Exact World actor/component reads and filters plus viewport resize, camera metadata, absolute artifacts, and inline MCP image content.
@@ -52,6 +55,9 @@
 - The LLMNPCDemo live read-contract now resolves `ABP_Manny1`'s `DefaultSlot` through typed graph/class filters, returns an empty non-refreshing result for a missing node class, and consistently selects `Waving.Waving` from a shuffled three-asset Hard Scope.
 - Twenty mixed live Status/World/Schema reads complete without `WinError 5` or `UEPI_CACHE_SYNC_FAILED`; tail-window incremental-event parsing lowers the measured warm P95 to 1,021.636 ms on the 2026-07-17 test machine.
 - UE 5.3.2 recompiles the Beta.3 Editor module successfully after adding version/build metadata to Bridge Status and session publication.
+- The Beta.4 synthetic Golden resolves `BP_ThirdPersonCharacter.Three -> GetAllActorsOfClass -> BP_LLMNPC_Manny.333 -> SubmitPublishedTemplate -> Waving -> Dynamic Montage`, selects the Character as input owner, flags Manny's duplicate local input, preserves `OutActors` as an array, and stays below 30 KB and 2 seconds.
+- The Beta.4 Snapshot regression also proves strict tombstone ownership, strong operation schemas, independent Runtime tickets, exact Enhanced Input approval fields, direct Pin disconnect diffs, focused node reads, and cache-only Hard Scope routing.
+- `GasDemoEditor Win64 Development` compiles successfully against UE 5.3.2 with the Beta.4 Bridge, Enhanced Input injection, deferred recovery, locked-target preflight, and Blueprint semantic-ID changes.
 
 ## Beta.3 Release Gate
 
@@ -60,4 +66,11 @@
 - The source tree compiles against UE 5.3.2 and the LLMNPCDemo read-only live contract passes against the matching Editor bridge.
 - Broader per-operation real-machine coverage continues after Beta and does not block this release candidate.
 
-The `v2.0.0-beta.3` tag may be created after this verification record is committed and the target-project copy is rebuilt.
+## Beta.4 Release Gate
+
+- `python -B Tools/test_snapshot_mcp_v2.py` passes.
+- `GasDemoEditor Win64 Development` builds against UE 5.3.2.
+- The matching plugin must be copied to LLMNPCDemo, rebuilt, and exercised with the read-only live contract before tagging.
+- The destructive four-node Apply and standalone PIE input/state assertion remain explicit real-machine checks; they are not claimed by the synthetic gate.
+
+The `v2.0.0-beta.4` tag may be created after the LLMNPCDemo live checks are recorded.

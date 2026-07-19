@@ -110,9 +110,10 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 1. Call `uepi_status`.
 2. Use `uepi_search` or `uepi_context` to identify candidate assets.
 3. Call the narrow read tool needed by the question.
+   For a player key/InputAction that crosses Blueprint assets, use `uepi_context` with `route="gameplay_input_to_effect"`; follow `input_owner` and its reasons instead of assuming every Actor with an input node owns player input.
 4. If the user asks for a project change, call `uepi_edit_discover`, compare compact and expanded Blueprint designs when relevant, then create one complete `uepi_edit_preview` plan for the intended edit.
 5. Ask for explicit approval once. After the user approves the unchanged Preview, the Agent calls `uepi_edit_apply` itself and completes validation, touched-only save, refresh/read, `uepi_diff`, and approved Runtime verification without asking the user to invoke Apply or reconfirm phases.
-6. If diagnostics include `UEPI_REFRESH_REQUESTED`, wait briefly and retry the same tool.
+6. For `refresh="force"`, the read tool requests, waits, reloads the resulting generation, and retries internally. It returns `UEPI_REFRESH_REQUESTED` with a request ID only when the bounded wait expires.
 7. If diagnostics include `UEPI_SNAPSHOT_STALE`, open the editor/plugin for realtime refresh or run a commandlet scan.
 
 ## Tools
@@ -131,7 +132,9 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 - `uepi_world`: live Editor or UEPI-owned PIE actors/components.
 - `uepi_refresh`: request, inspect, or wait for targeted refresh work.
 - `uepi_schema`: authoritative property, operation, Blueprint node, and runtime schemas.
-- `uepi_runtime`: transaction-bound controlled PIE verification.
+- `uepi_runtime_preview`: create an immutable project/session/map-bound PIE verification plan without editing an asset.
+- `uepi_runtime_approve`: issue a restricted Runtime Ticket after one explicit approval of that unchanged plan.
+- `uepi_runtime`: execute ticket-bound PIE start/stop/input/invoke/read/delay/wait/assert steps.
 - `uepi_edit_discover`: discover supported guarded edit operations.
 - `uepi_edit_preview`: create a dry-run operation plan without modifying assets.
 - `uepi_edit_apply`: apply an approved plan through the live editor bridge when write gates allow it.
@@ -139,6 +142,17 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 - `uepi_edit_rollback`: undo the last applied UEPI transaction in the editor session.
 
 Every tool response includes eight-stage `timing` diagnostics. A high `editor_dispatch_ms` means the request waited for the next Editor Bridge tick; a high `editor_execute_ms` means the Unreal operation itself was expensive. Calls over 5000 ms include `UEPI_SLOW_OPERATION` unless `UEPI_SLOW_OPERATION_MS` configures another threshold.
+
+For runtime input, choose the delivery deliberately:
+
+- `possessed_pawn_input_stack`: legacy key input through the possessed Pawn's player input stack.
+- `game_viewport`: mapped key delivery through the PIE viewport.
+- `player_controller`: direct PlayerController key delivery.
+- `enhanced_input_action`: direct injection of an exact `/Game/...` InputAction plus an approved bool/axis value.
+
+Input delivery evidence does not by itself prove the gameplay effect happened. End the approved plan with a `read`, `wait`, or `assert` against the relevant component state. PIE `start` waits for `running` by default, and `delay` is a separate time-only action.
+
+After an Editor restart, a plan from the old session is rejected. Use the returned current session ID and rebound next action to preview again. If Status reports `recovery_required`, inspect the listed transaction marker before attempting another write.
 
 Successful approved plans save only touched packages by default. UEPI never exposes save-all.
 

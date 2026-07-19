@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 2.0.0-beta.4
+
+- Added the cache-backed `gameplay_input_to_effect` route with player-input ownership evidence, cross-Blueprint Custom Event traversal, interface candidates, duplicate input diagnostics, terminal effects, and bounded responses.
+- Preserved Blueprint Pin containers, terminal Map value types, qualifiers, wildcard state, raw links, and explicit `UEPI_PIN_PROJECTION_INCOMPLETE` diagnostics.
+- Made precise node reads return the target node, all owned Pins, raw direct links, and one-hop neighbors before optional asset context.
+- Changed forced refresh into request/wait/reload/retry and removed full Current View loads from warm Hard Scope routing.
+- Added Editor-backed Preview preflight and locked graph/node/pin identifiers so Apply uses the same resolved targets and returns operation-level failure evidence.
+- Added dependency-module and Asset Registry readiness barriers, baseline Blueprint compilation, disk-first compensation, deferred Package reload, and persistent recovery markers.
+- Added standalone immutable Runtime Preview/Approve tickets, ticket-bound delay, PIE start waiting, four explicit input deliveries, typed Enhanced InputAction injection, Mapping Context evidence, and exact input-argument locking.
+- Recorded exact disconnected Pin endpoints in transaction diffs and published targeted-refresh tombstones before replacement fragments so removed relations cannot survive in a newer view.
+- Added strong MCP operation unions, stable Function Entry/Event semantic IDs, session rebound actions, call-graph absence explanations, and metadata-safe Context pagination.
+- Added the LLMNPC gameplay Golden fixture, strict tombstone ownership regression, Runtime ticket regression, Hard Scope/focused-read live performance gates, and UE 5.3.2 compile verification.
+
 ## 2.0.0-beta.3
 
 - Replaced the mutable Windows SQLite cache with generation-addressed saved/live files, atomically published pointers, cross-process synchronization, explicit connection ownership, and structured cache-failure diagnostics.
