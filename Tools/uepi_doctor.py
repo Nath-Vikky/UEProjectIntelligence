@@ -183,11 +183,13 @@ def run_doctor(project: Path, *, require_editor: bool = False) -> dict[str, Any]
 
     session = read_bridge_session(store)
     catalog_result: dict[str, Any] = {}
+    session_current = False
     if session:
         matched = session_matches_identity(session, identity)
         heartbeat = _parse_utc(session.get("heartbeat_at") or session.get("last_seen_at_utc") or session.get("started_at"))
         age = (datetime.now(timezone.utc) - heartbeat).total_seconds() if heartbeat else None
         fresh = age is not None and age <= 30.0
+        session_current = bool(matched and fresh)
         checks.append(_check("editor_session_binding", matched, "Editor session matches this project." if matched else "Editor session belongs to another project.", required=require_editor))
         checks.append(_check("editor_pid_heartbeat", fresh and _pid_alive(session.get("pid")), f"Editor PID={session.get('pid')}, heartbeat_age_seconds={round(age, 3) if age is not None else None}.", required=require_editor))
         token_path = session.get("token_path")
@@ -225,14 +227,15 @@ def run_doctor(project: Path, *, require_editor: bool = False) -> dict[str, Any]
     checks.append(_check("project_plugin_roots", bool(plugin_roots), f"Discovered {len(plugin_roots)} project plugin roots.", required=False, details={"roots": plugin_roots}))
 
     ok = all(item["ok"] for item in checks if item.get("required"))
+    version_session = session if session_current else {}
     return {
         "schema_version": "uepi.doctor-report.v1",
         "ok": ok,
         "project": identity,
         "versions": {
-            "plugin_version": str((session or {}).get("plugin_version") or plugin_version or "") or None,
-            "plugin_build_id": str((session or {}).get("plugin_build_id") or (f"uepi-{plugin_version}" if plugin_version else "")) or None,
-            "catalog_hash": str(catalog_result.get("catalog_hash") or (session or {}).get("catalog_hash") or "") or None,
+            "plugin_version": str((version_session or {}).get("plugin_version") or plugin_version or "") or None,
+            "plugin_build_id": str((version_session or {}).get("plugin_build_id") or (f"uepi-{plugin_version}" if plugin_version else "")) or None,
+            "catalog_hash": str(catalog_result.get("catalog_hash") or (version_session or {}).get("catalog_hash") or "") or None,
             "service_version": __version__,
         },
         "editor_required": require_editor,
