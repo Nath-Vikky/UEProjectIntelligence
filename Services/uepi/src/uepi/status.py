@@ -122,10 +122,13 @@ def resolve_status(
         connected = True
 
     probe_result = probe.get("result") if isinstance(probe, dict) and isinstance(probe.get("result"), dict) else {}
-    live_catalog_hash = str(probe_result.get("catalog_hash") or (session or {}).get("catalog_hash") or "")
+    current_session_catalog_hash = (session or {}).get("catalog_hash") if matched and fresh else None
+    live_catalog_hash = str(probe_result.get("catalog_hash") or current_session_catalog_hash or "")
     cached_catalog_hash = _cached_catalog_hash(store)
-    plugin_version = str(probe_result.get("plugin_version") or (session or {}).get("plugin_version") or _installed_plugin_version(identity))
-    plugin_build_id = str(probe_result.get("plugin_build_id") or (session or {}).get("plugin_build_id") or (f"uepi-{plugin_version}" if plugin_version else ""))
+    current_session_version = (session or {}).get("plugin_version") if matched and fresh else None
+    current_session_build_id = (session or {}).get("plugin_build_id") if matched and fresh else None
+    plugin_version = str(probe_result.get("plugin_version") or current_session_version or _installed_plugin_version(identity))
+    plugin_build_id = str(probe_result.get("plugin_build_id") or current_session_build_id or (f"uepi-{plugin_version}" if plugin_version else ""))
     editor = {
         "connected": connected,
         "session_id": session_id or None,
