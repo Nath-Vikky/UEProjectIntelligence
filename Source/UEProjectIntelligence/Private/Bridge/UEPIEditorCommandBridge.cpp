@@ -3,6 +3,7 @@
 #include "Bridge/UEPIBridgeProtocol.h"
 #include "Common/UEPIHash.h"
 #include "Components/ActorComponent.h"
+#include "Components/InputComponent.h"
 #include "Common/TcpListener.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -11,9 +12,19 @@
 #include "Engine/Selection.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/GameModeBase.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/WorldSettings.h"
 #include "Camera/PlayerCameraManager.h"
 #include "GameFramework/PlayerInput.h"
 #include "Engine/GameViewportClient.h"
+#include "GameMapsSettings.h"
+#if UEPI_WITH_ENHANCED_INPUT
+#include "EnhancedPlayerInput.h"
+#include "InputAction.h"
+#include "InputActionValue.h"
+#include "InputMappingContext.h"
+#endif
 #include "EngineUtils.h"
 #include "Engine/Blueprint.h"
 #include "FileHelpers.h"
@@ -36,6 +47,7 @@
 #include "Animation/AnimMontage.h"
 #include "Animation/Skeleton.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
 #include "Misc/App.h"
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
@@ -45,6 +57,8 @@
 #include "Misc/Paths.h"
 #include "Misc/ScopeLock.h"
 #include "Misc/SecureHash.h"
+#include "Modules/ModuleManager.h"
+#include "PackageTools.h"
 #include "HAL/PlatformMisc.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
@@ -157,6 +171,25 @@ namespace UE::ProjectIntelligence
 			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("requests")));
 		}
 
+		TArray<FString> UEPIUnresolvedRecoveryMarkers()
+		{
+			const FString Directory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("transactions"));
+			TArray<FString> PreparedFiles;
+			IFileManager::Get().FindFiles(PreparedFiles, *FPaths::Combine(Directory, TEXT("*.prepared.json")), true, false);
+			TArray<FString> Result;
+			for (const FString& Prepared : PreparedFiles)
+			{
+				const FString Prefix = Prepared.LeftChop(FString(TEXT(".prepared.json")).Len());
+				bool bTerminal = false;
+				for (const FString& Phase : { TEXT("applied"), TEXT("failed_rolled_back"), TEXT("rollback_failed"), TEXT("rolled_back") })
+				{
+					if (IFileManager::Get().FileExists(*FPaths::Combine(Directory, Prefix + TEXT(".") + Phase + TEXT(".json")))) { bTerminal = true; break; }
+				}
+				if (!bTerminal) Result.Add(FPaths::Combine(Directory, Prepared));
+			}
+			return Result;
+		}
+
 		FString JsonObjectToString(const TSharedRef<FJsonObject>& Object)
 		{
 			FString Output;
@@ -179,6 +212,35 @@ namespace UE::ProjectIntelligence
 		TArray<TSharedPtr<FJsonValue>> EmptyJsonArray()
 		{
 			return TArray<TSharedPtr<FJsonValue>>();
+		}
+
+		TArray<TSharedPtr<FJsonValue>> EnhancedMappingContextValues(const UPlayerInput* PlayerInput)
+		{
+			TArray<TSharedPtr<FJsonValue>> Result;
+#if UEPI_WITH_ENHANCED_INPUT
+			const UEnhancedPlayerInput* EnhancedInput = Cast<UEnhancedPlayerInput>(PlayerInput);
+			const FMapProperty* ContextProperty = EnhancedInput
+				? FindFProperty<FMapProperty>(EnhancedInput->GetClass(), TEXT("AppliedInputContexts"))
+				: nullptr;
+			const FObjectPropertyBase* KeyProperty = ContextProperty ? CastField<FObjectPropertyBase>(ContextProperty->KeyProp) : nullptr;
+			const FNumericProperty* ValueProperty = ContextProperty ? CastField<FNumericProperty>(ContextProperty->ValueProp) : nullptr;
+			if (!EnhancedInput || !ContextProperty || !KeyProperty || !ValueProperty)
+			{
+				return Result;
+			}
+			FScriptMapHelper Contexts(ContextProperty, ContextProperty->ContainerPtrToValuePtr<void>(EnhancedInput));
+			for (int32 Index = 0; Index < Contexts.GetMaxIndex(); ++Index)
+			{
+				if (!Contexts.IsValidIndex(Index)) continue;
+				const UObject* ContextObject = KeyProperty->GetObjectPropertyValue(Contexts.GetKeyPtr(Index));
+				if (!ContextObject) continue;
+				TSharedRef<FJsonObject> Mapping = MakeShared<FJsonObject>();
+				Mapping->SetStringField(TEXT("context"), ContextObject->GetPathName());
+				Mapping->SetNumberField(TEXT("priority"), static_cast<double>(ValueProperty->GetSignedIntPropertyValue(Contexts.GetValuePtr(Index))));
+				Result.Add(MakeShared<FJsonValueObject>(Mapping));
+			}
+#endif
+			return Result;
 		}
 
 		TSharedRef<FJsonObject> SuccessResponse(const FString& RequestId, const TSharedRef<FJsonObject>& Result, TArray<TSharedPtr<FJsonValue>> Diagnostics = EmptyJsonArray())
@@ -555,10 +617,49 @@ namespace UE::ProjectIntelligence
 			return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 		}
 
-		void AddOperationResult(TArray<TSharedPtr<FJsonValue>>& OperationResults, int32 Index, const FString& Type, bool bOk, const FString& Message, const TSharedPtr<FJsonObject>& Detail = nullptr)
+		bool EditDependenciesReady(const TArray<FString>& AffectedAssets, TArray<FString>& OutMissingModules, FString& OutError)
+		{
+			OutMissingModules.Reset();
+			if (!FModuleManager::Get().IsModuleLoaded(TEXT("AssetRegistry")))
+			{
+				OutError = TEXT("Asset Registry module is not loaded yet.");
+				return false;
+			}
+			IAssetRegistry& AssetRegistry = FModuleManager::GetModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+			if (AssetRegistry.IsLoadingAssets())
+			{
+				OutError = TEXT("Asset Registry is still discovering project assets.");
+				return false;
+			}
+			for (const FString& AssetPath : AffectedAssets)
+			{
+				if (!AssetPath.StartsWith(TEXT("/"))) continue;
+				const FName PackageName(*FPackageName::ObjectPathToPackageName(AssetPath));
+				TArray<FName> Dependencies;
+				AssetRegistry.GetDependencies(PackageName, Dependencies, UE::AssetRegistry::EDependencyCategory::Package);
+				for (const FName Dependency : Dependencies)
+				{
+					const FString Package = Dependency.ToString();
+					if (!Package.StartsWith(TEXT("/Script/"))) continue;
+					const FString ModuleName = Package.RightChop(8);
+					if (!ModuleName.IsEmpty() && !FModuleManager::Get().IsModuleLoaded(*ModuleName)) OutMissingModules.AddUnique(ModuleName);
+				}
+			}
+			if (OutMissingModules.Num() > 0)
+			{
+				OutMissingModules.Sort();
+				OutError = FString::Printf(TEXT("Dependent script modules are not loaded: %s"), *FString::Join(OutMissingModules, TEXT(", ")));
+				return false;
+			}
+			OutError.Reset();
+			return true;
+		}
+
+		void AddOperationResult(TArray<TSharedPtr<FJsonValue>>& OperationResults, int32 Index, const FString& Type, bool bOk, const FString& Message, const TSharedPtr<FJsonObject>& Detail = nullptr, const FString& OperationId = FString())
 		{
 			TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
 			Object->SetNumberField(TEXT("index"), Index);
+			Object->SetStringField(TEXT("operation_id"), OperationId);
 			Object->SetStringField(TEXT("type"), Type);
 			Object->SetBoolField(TEXT("ok"), bOk);
 			Object->SetStringField(TEXT("message"), Message);
@@ -809,9 +910,69 @@ namespace UE::ProjectIntelligence
 		{
 			return;
 		}
+		ProcessDeferredRecovery();
 		ProcessPendingSockets();
 		FString Error;
 		WriteSessionObject(TEXT("active"), Error);
+	}
+
+	void FUEPIEditorCommandBridge::ProcessDeferredRecovery()
+	{
+		if (PendingRecoveryTransactionId.IsEmpty() || PendingRecoveryAffectedAssets.Num() == 0 || (GEditor && GEditor->PlayWorld))
+		{
+			return;
+		}
+		const FString TransactionId = PendingRecoveryTransactionId;
+		const TArray<FString> AffectedAssets = PendingRecoveryAffectedAssets;
+		const TMap<FString, FString> BackupFiles = PendingRecoveryBackupFiles;
+		PendingRecoveryTransactionId.Reset();
+		PendingRecoveryAffectedAssets.Reset();
+		PendingRecoveryBackupFiles.Reset();
+
+		TArray<UPackage*> PackagesToUnload;
+		TArray<UPackage*> PackagesToReload;
+		for (const FString& AssetPath : AffectedAssets)
+		{
+			if (!AssetPath.StartsWith(TEXT("/"))) continue;
+			const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
+			UPackage* Package = FindPackage(nullptr, *PackageName);
+			if (!Package) continue;
+			Package->SetDirtyFlag(false);
+			const FString PackageFile = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+			const FString* BackupFile = BackupFiles.Find(PackageFile);
+			if (BackupFile && BackupFile->IsEmpty())
+			{
+				if (UObject* NewAsset = FindObject<UObject>(nullptr, *AssetPath)) FAssetRegistryModule::AssetDeleted(NewAsset);
+				PackagesToUnload.AddUnique(Package);
+			}
+			else
+			{
+				PackagesToReload.AddUnique(Package);
+			}
+		}
+
+		bool bRecovered = true;
+		FString RecoveryError;
+		if (PackagesToUnload.Num() > 0)
+		{
+			FText Error;
+			if (!UPackageTools::UnloadPackages(PackagesToUnload, Error, true)) { bRecovered = false; RecoveryError = Error.ToString(); }
+		}
+		if (bRecovered && PackagesToReload.Num() > 0)
+		{
+			FText Error;
+			if (!UPackageTools::ReloadPackages(PackagesToReload, Error, EReloadPackagesInteractionMode::AssumePositive)) { bRecovered = false; RecoveryError = Error.ToString(); }
+		}
+		FString JournalPath;
+		FString JournalError;
+		FUEPITransactionJournal::Write(TransactionId, bRecovered ? TEXT("failed_rolled_back") : TEXT("rollback_failed"), AffectedAssets, BackupFiles, false, RecoveryError, JournalPath, JournalError);
+		if (bRecovered)
+		{
+			FString RefreshId;
+			FString RefreshPath;
+			FString RefreshError;
+			WriteRefreshRequest(AffectedAssets, TEXT("live"), RefreshId, RefreshPath, RefreshError);
+		}
 	}
 
 	bool FUEPIEditorCommandBridge::IsActive() const
@@ -1070,6 +1231,16 @@ namespace UE::ProjectIntelligence
 		{
 			return EditApplyResult(RequestId, Params);
 		}
+		if (Command == TEXT("edit.preflight"))
+		{
+			if (Params.IsValid())
+			{
+				Params->SetBoolField(TEXT("approved"), true);
+				Params->SetBoolField(TEXT("preflight_only"), true);
+				Params->SetBoolField(TEXT("save"), false);
+			}
+			return EditApplyResult(RequestId, Params);
+		}
 		if (Command == TEXT("edit.validate"))
 		{
 			return EditValidateResult(RequestId, Params);
@@ -1118,6 +1289,44 @@ namespace UE::ProjectIntelligence
 		Result->SetStringField(TEXT("plugin_build_id"), UEPIPluginBuildId());
 		Result->SetStringField(TEXT("data_mode"), TEXT("live"));
 		Result->SetStringField(TEXT("observed_at"), FDateTime::UtcNow().ToIso8601());
+		TSharedRef<FJsonObject> GameplayContext = MakeShared<FJsonObject>();
+		UWorld* GameplayWorld = PIEWorld ? PIEWorld : EditorWorldValue;
+		APlayerController* GameplayController = GameplayWorld ? GameplayWorld->GetFirstPlayerController() : nullptr;
+		APawn* PossessedPawn = GameplayController ? GameplayController->GetPawn() : nullptr;
+		AGameModeBase* GameMode = GameplayWorld ? GameplayWorld->GetAuthGameMode() : nullptr;
+		UClass* GameModeClass = GameMode ? GameMode->GetClass() : nullptr;
+		if (!GameModeClass && GameplayWorld)
+		{
+			if (const AWorldSettings* WorldSettings = GameplayWorld->GetWorldSettings())
+			{
+				GameModeClass = WorldSettings->DefaultGameMode.Get();
+			}
+			if (!GameModeClass)
+			{
+				const FString MapName = GameplayWorld->GetOutermost() ? GameplayWorld->GetOutermost()->GetName() : FString();
+				FString GameModePath = UGameMapsSettings::GetGameModeForMapName(MapName);
+				if (GameModePath.IsEmpty()) GameModePath = UGameMapsSettings::GetGlobalDefaultGameMode();
+				GameModeClass = GameModePath.IsEmpty() ? nullptr : LoadObject<UClass>(nullptr, *GameModePath);
+			}
+		}
+		const AGameModeBase* GameModeDefaults = GameMode ? GameMode : (GameModeClass ? Cast<AGameModeBase>(GameModeClass->GetDefaultObject()) : nullptr);
+		GameplayContext->SetStringField(TEXT("evidence_source"), PIEWorld ? TEXT("live_pie") : TEXT("editor_world"));
+		GameplayContext->SetStringField(TEXT("game_mode"), GameMode ? GameMode->GetPathName() : FString());
+		GameplayContext->SetStringField(TEXT("game_mode_class"), GameModeClass ? GameModeClass->GetPathName() : FString());
+		GameplayContext->SetStringField(TEXT("player_controller"), GameplayController ? GameplayController->GetPathName() : FString());
+		GameplayContext->SetStringField(TEXT("player_controller_class"), GameplayController && GameplayController->GetClass() ? GameplayController->GetClass()->GetPathName() : (GameModeDefaults && GameModeDefaults->PlayerControllerClass ? GameModeDefaults->PlayerControllerClass->GetPathName() : FString()));
+		GameplayContext->SetStringField(TEXT("default_pawn_class"), GameModeDefaults && GameModeDefaults->DefaultPawnClass ? GameModeDefaults->DefaultPawnClass->GetPathName() : FString());
+		GameplayContext->SetStringField(TEXT("possessed_pawn"), PossessedPawn ? PossessedPawn->GetPathName() : FString());
+		GameplayContext->SetStringField(TEXT("possessed_pawn_class"), PossessedPawn && PossessedPawn->GetClass() ? PossessedPawn->GetClass()->GetPathName() : FString());
+		GameplayContext->SetStringField(TEXT("input_component"), PossessedPawn && PossessedPawn->InputComponent ? PossessedPawn->InputComponent->GetPathName() : FString());
+		GameplayContext->SetStringField(TEXT("player_input"), GameplayController && GameplayController->PlayerInput ? GameplayController->PlayerInput->GetPathName() : FString());
+		GameplayContext->SetNumberField(TEXT("auto_receive_input"), PossessedPawn ? static_cast<int32>(PossessedPawn->AutoReceiveInput) : 0);
+		GameplayContext->SetArrayField(TEXT("enhanced_input_mapping_contexts"), EnhancedMappingContextValues(GameplayController ? GameplayController->PlayerInput : nullptr));
+		Result->SetObjectField(TEXT("gameplay_context"), GameplayContext);
+		const TArray<FString> RecoveryMarkers = UEPIUnresolvedRecoveryMarkers();
+		Result->SetBoolField(TEXT("recovery_required"), RecoveryMarkers.Num() > 0 || !PendingRecoveryTransactionId.IsEmpty());
+		Result->SetStringField(TEXT("pending_recovery_transaction_id"), PendingRecoveryTransactionId);
+		Result->SetArrayField(TEXT("recovery_markers"), StringArrayToJsonValues(RecoveryMarkers));
 		TArray<FString> Capabilities = FUEPIBridgeProtocol::ReadCapabilities();
 		Capabilities.Append(FUEPIBridgeProtocol::WriteCapabilities());
 		Result->SetArrayField(TEXT("capabilities"), StringArrayToJsonValues(Capabilities));
@@ -1557,11 +1766,90 @@ namespace UE::ProjectIntelligence
 		if (Action == TEXT("input"))
 		{
 			APlayerController* Controller = PIEWorld->GetFirstPlayerController();
+			APawn* Pawn = Controller ? Controller->GetPawn() : nullptr;
 			const FKey Key(FName(*JsonString(Params, TEXT("key"))));
 			const FString Event = JsonString(Params, TEXT("event"), TEXT("pressed"));
-			if (!Controller || !Key.IsValid()) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_INPUT_INVALID"), TEXT("PIE PlayerController or input key is invalid."));
-			const bool bHandled = Controller->InputKey(FInputKeyParams(Key, Event == TEXT("released") ? IE_Released : IE_Pressed, 1.0, false));
-			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>(); Result->SetBoolField(TEXT("handled"), bHandled); Result->SetStringField(TEXT("key"), Key.ToString()); return SuccessResponse(RequestId, Result);
+			const FString Delivery = JsonString(Params, TEXT("delivery"), TEXT("possessed_pawn_input_stack"));
+			if (!Controller || (Delivery != TEXT("enhanced_input_action") && !Key.IsValid())) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_INPUT_INVALID"), TEXT("PIE PlayerController or input identity is invalid."));
+			const EInputEvent InputEvent = Event == TEXT("released") ? IE_Released : IE_Pressed;
+			const FInputKeyParams KeyParams(Key, InputEvent, 1.0, false);
+			bool bHandled = false;
+			bool bHandledKnown = true;
+			bool bInjectionAccepted = false;
+			FString InputActionPath;
+			if (Delivery == TEXT("player_controller"))
+			{
+				bHandled = Controller->InputKey(KeyParams);
+			}
+			else if (Delivery == TEXT("possessed_pawn_input_stack"))
+			{
+				if (!Pawn || !Pawn->InputComponent || !Controller->PlayerInput) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_PAWN_INPUT_STACK_UNAVAILABLE"), TEXT("The possessed Pawn input stack is unavailable."));
+				bHandled = Controller->PlayerInput->InputKey(KeyParams);
+			}
+			else if (Delivery == TEXT("game_viewport"))
+			{
+				UGameViewportClient* ViewportClient = PIEWorld->GetGameViewport();
+				if (!ViewportClient) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_GAME_VIEWPORT_UNAVAILABLE"), TEXT("The PIE GameViewportClient is unavailable."));
+				bHandled = ViewportClient->InputKey(FInputKeyEventArgs(ViewportClient->Viewport, 0, Key, InputEvent));
+			}
+			else if (Delivery == TEXT("enhanced_input_action"))
+			{
+#if UEPI_WITH_ENHANCED_INPUT
+				UEnhancedPlayerInput* EnhancedInput = Cast<UEnhancedPlayerInput>(Controller->PlayerInput);
+				InputActionPath = JsonString(Params, TEXT("input_action"));
+				UInputAction* InputAction = InputActionPath.IsEmpty() ? nullptr : LoadObject<UInputAction>(nullptr, *InputActionPath);
+				if (!EnhancedInput || !InputAction)
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_ENHANCED_INPUT_ACTION_INVALID"), TEXT("Enhanced PlayerInput or the exact InputAction asset is unavailable."));
+				}
+				const bool bPressed = Event != TEXT("released");
+				double Scalar = bPressed ? 1.0 : 0.0;
+				if (Params.IsValid()) Params->TryGetNumberField(TEXT("value"), Scalar);
+				double X = Scalar; double Y = 0.0; double Z = 0.0;
+				if (const TSharedPtr<FJsonObject> ValueObject = JsonObjectField(Params, TEXT("value")))
+				{
+					ValueObject->TryGetNumberField(TEXT("x"), X);
+					ValueObject->TryGetNumberField(TEXT("y"), Y);
+					ValueObject->TryGetNumberField(TEXT("z"), Z);
+				}
+				FInputActionValue InputValue;
+				switch (InputAction->ValueType)
+				{
+				case EInputActionValueType::Boolean: InputValue = FInputActionValue(bPressed && X != 0.0); break;
+				case EInputActionValueType::Axis1D: InputValue = FInputActionValue(static_cast<float>(X)); break;
+				case EInputActionValueType::Axis2D: InputValue = FInputActionValue(FVector2D(X, Y)); break;
+				case EInputActionValueType::Axis3D: InputValue = FInputActionValue(FVector(X, Y, Z)); break;
+				default: return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_ENHANCED_INPUT_VALUE_INVALID"), TEXT("InputAction has an unsupported value type."));
+				}
+				EnhancedInput->InjectInputForAction(InputAction, InputValue);
+				bInjectionAccepted = true;
+				bHandledKnown = false;
+#else
+				return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_ENHANCED_INPUT_UNAVAILABLE"), TEXT("Enhanced Input is not enabled for this project build."));
+#endif
+			}
+			else
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_INPUT_DELIVERY_UNSUPPORTED"), FString::Printf(TEXT("Unsupported input delivery: %s"), *Delivery));
+			}
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetBoolField(TEXT("handled"), bHandled);
+			Result->SetBoolField(TEXT("handled_known"), bHandledKnown);
+			Result->SetBoolField(TEXT("injection_accepted"), bInjectionAccepted || bHandledKnown);
+			Result->SetStringField(TEXT("key"), Key.ToString());
+			Result->SetStringField(TEXT("input_action"), InputActionPath);
+			Result->SetStringField(TEXT("event"), Event);
+			Result->SetStringField(TEXT("delivery"), Delivery);
+			Result->SetStringField(TEXT("local_player"), Controller->GetLocalPlayer() ? Controller->GetLocalPlayer()->GetPathName() : FString());
+			Result->SetStringField(TEXT("controller"), Controller->GetPathName());
+			Result->SetStringField(TEXT("controller_class"), Controller->GetClass()->GetPathName());
+			Result->SetStringField(TEXT("pawn"), Pawn ? Pawn->GetPathName() : FString());
+			Result->SetStringField(TEXT("pawn_class"), Pawn && Pawn->GetClass() ? Pawn->GetClass()->GetPathName() : FString());
+			Result->SetStringField(TEXT("input_component"), Pawn && Pawn->InputComponent ? Pawn->InputComponent->GetPathName() : FString());
+			Result->SetArrayField(TEXT("mapping_contexts"), EnhancedMappingContextValues(Controller->PlayerInput));
+			Result->SetStringField(TEXT("consumption_scope"), Delivery == TEXT("possessed_pawn_input_stack") ? TEXT("player_input_stack") : Delivery);
+			Result->SetStringField(TEXT("consumption_evidence"), bHandledKnown ? TEXT("delivery_api_handled_result") : TEXT("injected_for_next_enhanced_input_tick; verify the approved gameplay state assertion"));
+			return SuccessResponse(RequestId, Result);
 		}
 		FString ObjectError;
 		UObject* Object = ResolveRuntimeObject(PIEWorld, Params, ObjectError);
@@ -1949,11 +2237,32 @@ namespace UE::ProjectIntelligence
 		{
 			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TOO_MANY_ASSETS"), FString::Printf(TEXT("Affected asset count %d exceeds MaxWriteAssetsPerTransaction=%d before modification."), AffectedAssets.Num(), Settings->MaxWriteAssetsPerTransaction));
 		}
+		TArray<FString> MissingModules;
+		FString ReadinessError;
+		if (!EditDependenciesReady(AffectedAssets, MissingModules, ReadinessError))
+		{
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-preflight.v1"));
+			Result->SetStringField(TEXT("transaction_id"), TransactionId);
+			Result->SetBoolField(TEXT("preflight_ok"), false);
+			Result->SetStringField(TEXT("failure_code"), TEXT("UEPI_DEPENDENCY_MODULE_NOT_READY"));
+			Result->SetStringField(TEXT("failure_message"), ReadinessError);
+			Result->SetStringField(TEXT("atomicity_state"), TEXT("not_modified"));
+			Result->SetBoolField(TEXT("atomicity_restored"), true);
+			Result->SetArrayField(TEXT("missing_modules"), StringArrayToJsonValues(MissingModules));
+			TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
+			Response->SetStringField(TEXT("id"), RequestId);
+			Response->SetBoolField(TEXT("ok"), false);
+			Response->SetObjectField(TEXT("result"), Result);
+			Response->SetArrayField(TEXT("diagnostics"), DiagnosticsArray(TEXT("UEPI_DEPENDENCY_MODULE_NOT_READY"), TEXT("error"), ReadinessError));
+			return Response;
+		}
 		TMap<FString, UClass*> PlannedAssetClasses;
 		TMap<FString, FString> PlannedAssetPaths;
 		TMap<FString, USkeleton*> PlannedMontageSkeletons;
 		TMap<USkeleton*, TSet<FName>> PlannedSkeletonSlots;
 		FUEPIEditExecutionState PreflightExecutionState;
+		TArray<TSharedPtr<FJsonValue>> PreflightOperationResults;
 		for (int32 Index = 0; Index < Operations->Num(); ++Index)
 		{
 			const TSharedPtr<FJsonObject> Operation = (*Operations)[Index].IsValid() ? (*Operations)[Index]->AsObject() : nullptr;
@@ -1980,9 +2289,28 @@ namespace UE::ProjectIntelligence
 				Context.bAllowBlueprintEdits = Settings->bAllowBlueprintEdits;
 				Context.bDryRun = true;
 				const FUEPIEditResult Preflight = Registry.FindOperation(Type)->Preview(Context, *OpParams);
+				AddOperationResult(PreflightOperationResults, Index, Type, Preflight.bOk, Preflight.Message, Preflight.Result, OperationId(Operation));
 				if (!Preflight.bOk)
 				{
-					return ErrorResponse(RequestId, Preflight.ErrorCode.IsEmpty() ? TEXT("UEPI_EDIT_PRECHECK_FAILED") : Preflight.ErrorCode, Preflight.Message);
+					const FString ErrorCode = Preflight.ErrorCode.IsEmpty() ? TEXT("UEPI_EDIT_PRECHECK_FAILED") : Preflight.ErrorCode;
+					TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+					Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-preflight.v1"));
+					Result->SetStringField(TEXT("transaction_id"), TransactionId);
+					Result->SetBoolField(TEXT("preflight_ok"), false);
+					Result->SetNumberField(TEXT("failure_operation_index"), Index);
+					Result->SetStringField(TEXT("failure_operation_id"), OperationId(Operation));
+					Result->SetStringField(TEXT("failure_operation_type"), Type);
+					Result->SetStringField(TEXT("failure_code"), ErrorCode);
+					Result->SetStringField(TEXT("failure_message"), Preflight.Message);
+					Result->SetStringField(TEXT("atomicity_state"), TEXT("not_modified"));
+					Result->SetBoolField(TEXT("atomicity_restored"), true);
+					Result->SetArrayField(TEXT("operations"), PreflightOperationResults);
+					TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
+					Response->SetStringField(TEXT("id"), RequestId);
+					Response->SetBoolField(TEXT("ok"), false);
+					Response->SetObjectField(TEXT("result"), Result);
+					Response->SetArrayField(TEXT("diagnostics"), DiagnosticsArray(ErrorCode, TEXT("error"), Preflight.Message));
+					return Response;
 				}
 				if (Type == TEXT("input.create_action") || Type == TEXT("input.create_mapping_context"))
 				{
@@ -2073,6 +2401,49 @@ namespace UE::ProjectIntelligence
 				}
 			}
 		}
+		if (JsonBool(Params, TEXT("preflight_only"), false))
+		{
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-preflight.v1"));
+			Result->SetStringField(TEXT("transaction_id"), TransactionId);
+			Result->SetBoolField(TEXT("preflight_ok"), true);
+			Result->SetStringField(TEXT("atomicity_state"), TEXT("not_modified"));
+			Result->SetBoolField(TEXT("atomicity_restored"), true);
+			Result->SetArrayField(TEXT("affected_assets"), StringArrayToJsonValues(AffectedAssets));
+			Result->SetArrayField(TEXT("operations"), PreflightOperationResults);
+			return SuccessResponse(RequestId, Result);
+		}
+		TArray<TSharedPtr<FJsonValue>> BaselineCompileResults;
+		for (const FString& AssetPath : AffectedAssets)
+		{
+			UBlueprint* Blueprint = FindObject<UBlueprint>(nullptr, *AssetPath);
+			if (!Blueprint) continue;
+			UPackage* Package = Blueprint->GetOutermost();
+			const bool bWasDirty = Package && Package->IsDirty();
+			TSharedRef<FJsonObject> CompileResult = CompileBlueprintToJson(Blueprint);
+			CompileResult->SetStringField(TEXT("phase"), TEXT("baseline_before_mutation"));
+			BaselineCompileResults.Add(MakeShared<FJsonValueObject>(CompileResult));
+			if (Package && !bWasDirty) Package->SetDirtyFlag(false);
+			if (!CompileResult->GetBoolField(TEXT("ok")))
+			{
+				TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+				Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-apply.v1"));
+				Result->SetStringField(TEXT("transaction_id"), TransactionId);
+				Result->SetBoolField(TEXT("applied"), false);
+				Result->SetStringField(TEXT("failure_code"), TEXT("UEPI_EDIT_BASELINE_COMPILE_FAILED"));
+				Result->SetStringField(TEXT("failure_message"), FString::Printf(TEXT("Target Blueprint baseline compile failed before mutation: %s"), *AssetPath));
+				Result->SetStringField(TEXT("atomicity_state"), TEXT("not_modified"));
+				Result->SetBoolField(TEXT("atomicity_restored"), true);
+				Result->SetArrayField(TEXT("operations"), PreflightOperationResults);
+				Result->SetArrayField(TEXT("baseline_compile"), BaselineCompileResults);
+				TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
+				Response->SetStringField(TEXT("id"), RequestId);
+				Response->SetBoolField(TEXT("ok"), false);
+				Response->SetObjectField(TEXT("result"), Result);
+				Response->SetArrayField(TEXT("diagnostics"), DiagnosticsArray(TEXT("UEPI_EDIT_BASELINE_COMPILE_FAILED"), TEXT("error"), JsonString(Result, TEXT("failure_message"))));
+				return Response;
+			}
+		}
 		TMap<FString, FString> TransactionBackupFiles;
 		FString BackupDirectory;
 		FString ServiceError;
@@ -2091,6 +2462,10 @@ namespace UE::ProjectIntelligence
 		bool bAllOk = true;
 		bool bValidationOk = true;
 		bool bMutated = false;
+		int32 FailureOperationIndex = INDEX_NONE;
+		FString FailureOperationId;
+		FString FailureOperationType;
+		FString FailureCode;
 		FString FailureMessage;
 		TSet<UBlueprint*> TouchedBlueprints;
 		FUEPIEditExecutionState HandlerExecutionState;
@@ -2130,10 +2505,14 @@ namespace UE::ProjectIntelligence
 				Context.bAllowSave = JsonBool(Params, TEXT("save"), false);
 				if (Type != TEXT("content.save_assets")) bMutated = true;
 				const FUEPIEditResult OperationResult = Registry.FindOperation(Type)->Apply(Context, *OpParams);
-				AddOperationResult(OperationResults, Index, Type, OperationResult.bOk, OperationResult.Message, OperationResult.Result);
+				AddOperationResult(OperationResults, Index, Type, OperationResult.bOk, OperationResult.Message, OperationResult.Result, OperationId(Operation));
 				if (!OperationResult.bOk)
 				{
 					bAllOk = false;
+					FailureOperationIndex = Index;
+					FailureOperationId = OperationId(Operation);
+					FailureOperationType = Type;
+					FailureCode = OperationResult.ErrorCode.IsEmpty() ? TEXT("UEPI_EDIT_APPLY_FAILED") : OperationResult.ErrorCode;
 					FailureMessage = OperationResult.Message;
 					break;
 				}
@@ -2276,12 +2655,18 @@ namespace UE::ProjectIntelligence
 		{
 			bCompensationAttempted = true;
 			bCompensationOk = FUEPIBackupService::Restore(TransactionBackupFiles, AffectedAssets, CompensationError);
+			if (bCompensationOk)
+			{
+				PendingRecoveryTransactionId = TransactionId;
+				PendingRecoveryBackupFiles = TransactionBackupFiles;
+				PendingRecoveryAffectedAssets = AffectedAssets;
+			}
 			if (!bCompensationOk)
 			{
 				FailureMessage += FString::Printf(TEXT(" Atomic compensation failed: %s"), *CompensationError);
 			}
 		}
-		const FString JournalPhase = bAllOk ? TEXT("applied") : (bCompensationAttempted ? (bCompensationOk ? TEXT("failed_rolled_back") : TEXT("rollback_failed")) : TEXT("failed_pre_mutation"));
+		const FString JournalPhase = bAllOk ? TEXT("applied") : (bCompensationAttempted ? (bCompensationOk ? TEXT("rollback_files_restored_reload_pending") : TEXT("rollback_failed")) : TEXT("failed_pre_mutation"));
 		FString JournalError;
 		FUEPITransactionJournal::Write(TransactionId, JournalPhase, AffectedAssets, TransactionBackupFiles, bSaved, FailureMessage, JournalPath, JournalError);
 
@@ -2312,24 +2697,31 @@ namespace UE::ProjectIntelligence
 		Result->SetStringField(TEXT("backup_directory"), BackupDirectory);
 		Result->SetStringField(TEXT("journal_path"), JournalPath);
 		Result->SetStringField(TEXT("failure_message"), FailureMessage);
+		Result->SetStringField(TEXT("failure_code"), FailureCode);
+		Result->SetNumberField(TEXT("failure_operation_index"), FailureOperationIndex);
+		Result->SetStringField(TEXT("failure_operation_id"), FailureOperationId);
+		Result->SetStringField(TEXT("failure_operation_type"), FailureOperationType);
 		Result->SetBoolField(TEXT("compensation_attempted"), bCompensationAttempted);
 		Result->SetBoolField(TEXT("compensation_ok"), bCompensationOk);
 		Result->SetStringField(TEXT("compensation_error"), CompensationError);
-		Result->SetBoolField(TEXT("atomicity_restored"), !bAllOk && bMutated && bCompensationOk);
+		const FString AtomicityState = bAllOk ? TEXT("applied") : (!bMutated ? TEXT("not_modified") : (bCompensationOk ? TEXT("files_restored_reload_pending") : TEXT("compensation_failed")));
+		Result->SetStringField(TEXT("atomicity_state"), AtomicityState);
+		Result->SetBoolField(TEXT("atomicity_restored"), AtomicityState == TEXT("not_modified"));
 		Result->SetStringField(TEXT("journal_phase"), JournalPhase);
 		Result->SetArrayField(TEXT("affected_assets"), StringArrayToJsonValues(AffectedAssets));
 		Result->SetArrayField(TEXT("operations"), OperationResults);
 		Result->SetArrayField(TEXT("compile"), CompileResults);
+		Result->SetArrayField(TEXT("baseline_compile"), BaselineCompileResults);
 		Result->SetStringField(TEXT("refresh_request_path"), RefreshRequestPath);
 		Result->SetStringField(TEXT("refresh_request_id"), RefreshRequestId);
 		Result->SetStringField(TEXT("refresh_error"), RefreshError);
-		Result->SetStringField(TEXT("rollback_strategy"), bSaved ? TEXT("file_backup_restore_and_package_reload") : TEXT("editor_transaction_undo"));
+		Result->SetStringField(TEXT("rollback_strategy"), bSaved ? TEXT("file_backup_restore_then_deferred_package_reload") : TEXT("editor_transaction_undo_with_deferred_package_recovery_on_failure"));
 
 		TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
 		Response->SetStringField(TEXT("id"), RequestId);
 		Response->SetBoolField(TEXT("ok"), bAllOk);
 		Response->SetObjectField(TEXT("result"), Result);
-		Response->SetArrayField(TEXT("diagnostics"), bAllOk ? (bValidationOk ? EmptyJsonArray() : DiagnosticsArray(TEXT("UEPI_EDIT_VALIDATE_FAILED"), TEXT("warning"), FailureMessage)) : DiagnosticsArray(TEXT("UEPI_EDIT_APPLY_FAILED"), TEXT("error"), FailureMessage));
+		Response->SetArrayField(TEXT("diagnostics"), bAllOk ? (bValidationOk ? EmptyJsonArray() : DiagnosticsArray(TEXT("UEPI_EDIT_VALIDATE_FAILED"), TEXT("warning"), FailureMessage)) : DiagnosticsArray(FailureCode.IsEmpty() ? TEXT("UEPI_EDIT_APPLY_FAILED") : FailureCode, TEXT("error"), FailureMessage));
 		return Response;
 	}
 
@@ -2409,6 +2801,12 @@ namespace UE::ProjectIntelligence
 		if (bLastAppliedSaved)
 		{
 			bFilesRestored = FUEPIBackupService::Restore(LastAppliedBackupFiles, LastAppliedAffectedAssets, RestoreError);
+			if (bFilesRestored)
+			{
+				PendingRecoveryTransactionId = TransactionId;
+				PendingRecoveryBackupFiles = LastAppliedBackupFiles;
+				PendingRecoveryAffectedAssets = LastAppliedAffectedAssets;
+			}
 		}
 		FString RefreshRequestPath;
 		FString RefreshRequestId;
@@ -2419,7 +2817,7 @@ namespace UE::ProjectIntelligence
 		}
 		FString JournalPath;
 		FString JournalError;
-		FUEPITransactionJournal::Write(TransactionId, (bUndone && bFilesRestored) ? TEXT("rolled_back") : TEXT("rollback_failed"), LastAppliedAffectedAssets, LastAppliedBackupFiles, false, RestoreError, JournalPath, JournalError);
+		FUEPITransactionJournal::Write(TransactionId, (bUndone && bFilesRestored) ? (bLastAppliedSaved ? TEXT("rollback_files_restored_reload_pending") : TEXT("rolled_back")) : TEXT("rollback_failed"), LastAppliedAffectedAssets, LastAppliedBackupFiles, false, RestoreError, JournalPath, JournalError);
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.bridge-edit-rollback.v1"));
 		Result->SetStringField(TEXT("transaction_id"), TransactionId);

@@ -137,7 +137,28 @@ namespace UE::ProjectIntelligence
 
 		UEdGraph* ResolveGraph(UBlueprint* Blueprint, const FJsonObject& Params, FString& OutError)
 		{
-			const FString Name = JsonString(Params, TEXT("graph"), JsonString(Params, TEXT("graph_name"))); UEdGraph* Graph = FindGraph(Blueprint, Name);
+			FString Name = JsonString(Params, TEXT("graph"), JsonString(Params, TEXT("graph_name")));
+			FString LockedGuid;
+			if (const TSharedPtr<FJsonObject> Locked = JsonObject(Params, TEXT("_uepi_locked_target")))
+			{
+				if (const TSharedPtr<FJsonObject> LockedGraph = JsonObject(*Locked, TEXT("graph")))
+				{
+					Name = JsonString(*LockedGraph, TEXT("name"), JsonString(*LockedGraph, TEXT("graph"), Name));
+					LockedGuid = JsonString(*LockedGraph, TEXT("graph_guid"));
+				}
+			}
+			UEdGraph* Graph = nullptr;
+			if (Blueprint && !LockedGuid.IsEmpty())
+			{
+				FGuid ExpectedGuid;
+				if (FGuid::Parse(LockedGuid, ExpectedGuid))
+				{
+					TArray<UEdGraph*> Graphs;
+					Blueprint->GetAllGraphs(Graphs);
+					for (UEdGraph* Candidate : Graphs) if (Candidate && Candidate->GraphGuid == ExpectedGuid) { Graph = Candidate; break; }
+				}
+			}
+			if (!Graph) Graph = FindGraph(Blueprint, Name);
 			if (!Graph) OutError = Name.IsEmpty() ? TEXT("Blueprint graph operation could not find a default graph.") : FString::Printf(TEXT("Blueprint graph not found: %s"), *Name); return Graph;
 		}
 
@@ -148,6 +169,30 @@ namespace UE::ProjectIntelligence
 			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>(); if (!Node) return Result;
 			Result->SetStringField(TEXT("node_guid"), GuidString(Node)); Result->SetStringField(TEXT("node_id"), GuidString(Node)); Result->SetStringField(TEXT("graph"), Graph ? Graph->GetName() : FString()); Result->SetStringField(TEXT("class"), Node->GetClass()->GetName()); Result->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString()); Result->SetNumberField(TEXT("x"), Node->NodePosX); Result->SetNumberField(TEXT("y"), Node->NodePosY);
 			TArray<TSharedPtr<FJsonValue>> Pins; for (const UEdGraphPin* Pin : Node->Pins) if (Pin) { TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>(); Item->SetStringField(TEXT("pin_id"), Pin->PinId.ToString(EGuidFormats::DigitsWithHyphens)); Item->SetStringField(TEXT("name"), Pin->PinName.ToString()); Item->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("input") : TEXT("output")); Item->SetStringField(TEXT("category"), Pin->PinType.PinCategory.ToString()); Item->SetStringField(TEXT("default_value"), Pin->DefaultValue); Pins.Add(MakeShared<FJsonValueObject>(Item)); } Result->SetArrayField(TEXT("pins"), Pins); return Result;
+		}
+
+		TSharedRef<FJsonObject> GraphJson(const UEdGraph* Graph)
+		{
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			if (!Graph) return Result;
+			Result->SetStringField(TEXT("name"), Graph->GetName());
+			Result->SetStringField(TEXT("path"), Graph->GetPathName());
+			Result->SetStringField(TEXT("graph_guid"), Graph->GraphGuid.ToString(EGuidFormats::DigitsWithHyphens));
+			return Result;
+		}
+
+		TSharedRef<FJsonObject> EndpointJson(const UEdGraphNode* Node, const UEdGraphPin* Pin, const UEdGraph* Graph)
+		{
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetObjectField(TEXT("node"), NodeJson(Node, Graph));
+			if (Pin)
+			{
+				Result->SetStringField(TEXT("pin_id"), Pin->PinId.ToString(EGuidFormats::DigitsWithHyphens));
+				Result->SetStringField(TEXT("pin_name"), Pin->PinName.ToString());
+				Result->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("input") : TEXT("output"));
+				Result->SetStringField(TEXT("category"), Pin->PinType.PinCategory.ToString());
+			}
+			return Result;
 		}
 
 		FString PinValue(const TSharedPtr<FJsonValue>& Value)
@@ -194,7 +239,26 @@ namespace UE::ProjectIntelligence
 
 		UEdGraphNode* ResolveNode(const FUEPIEditContext& Context, UEdGraph* Graph, const FJsonObject& Params, FString& OutError)
 		{
-			const FString Ref = NodeRef(Params); UEdGraphNode* Node = nullptr; if (!Ref.IsEmpty() && Context.ExecutionState) if (UObject* const* Found = Context.ExecutionState->ObjectRefs.Find(Ref)) Node = Cast<UEdGraphNode>(*Found); if (!Node) Node = FindNode(Graph, JsonString(Params, TEXT("node_guid"), JsonString(Params, TEXT("node_id")))); if (!Node || Node->GetGraph() != Graph) OutError = TEXT("Node reference was not found in the requested graph."); return Node;
+			const FString Ref = NodeRef(Params); UEdGraphNode* Node = nullptr; if (!Ref.IsEmpty() && Context.ExecutionState) if (UObject* const* Found = Context.ExecutionState->ObjectRefs.Find(Ref)) Node = Cast<UEdGraphNode>(*Found);
+			FString Guid = JsonString(Params, TEXT("node_guid"), JsonString(Params, TEXT("node_id")));
+			TSharedPtr<FJsonObject> LockedNode;
+			if (const TSharedPtr<FJsonObject> Locked = JsonObject(Params, TEXT("_uepi_locked_target"))) LockedNode = JsonObject(*Locked, TEXT("node"));
+			if (LockedNode.IsValid()) Guid = JsonString(*LockedNode, TEXT("node_guid"), JsonString(*LockedNode, TEXT("node_id"), Guid));
+			if (!Node) Node = FindNode(Graph, Guid);
+			if (!Node || Node->GetGraph() != Graph) { OutError = FString::Printf(TEXT("Node reference was not found in the locked graph: %s"), *Guid); return nullptr; }
+			if (LockedNode.IsValid())
+			{
+				const FString ExpectedClass = JsonString(*LockedNode, TEXT("class"));
+				const FString ExpectedTitle = JsonString(*LockedNode, TEXT("title"));
+				const FString ActualClass = Node->GetClass()->GetName();
+				const FString ActualTitle = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+				if ((!ExpectedClass.IsEmpty() && !ActualClass.Equals(ExpectedClass, ESearchCase::IgnoreCase)) || (!ExpectedTitle.IsEmpty() && !ActualTitle.Equals(ExpectedTitle, ESearchCase::CaseSensitive)))
+				{
+					OutError = FString::Printf(TEXT("Locked node identity changed for %s (class=%s title=%s)."), *Guid, *ActualClass, *ActualTitle);
+					return nullptr;
+				}
+			}
+			return Node;
 		}
 
 		bool IsPlannedRef(const FUEPIEditContext& Context, const FString& Ref)
@@ -207,6 +271,13 @@ namespace UE::ProjectIntelligence
 			OutNode = nullptr; const FString PrefixText(Prefix); TSharedPtr<FJsonObject> Endpoint = JsonObject(Params, Prefix); if (!Endpoint.IsValid()) Endpoint = JsonObject(Params, PrefixText == TEXT("source") ? TEXT("from") : TEXT("to"));
 			FString Guid = Endpoint.IsValid() ? JsonString(*Endpoint, TEXT("node_guid"), JsonString(*Endpoint, TEXT("node_id"))) : FString(); FString Ref = Endpoint.IsValid() ? JsonString(*Endpoint, TEXT("node_ref"), JsonString(*Endpoint, TEXT("ref"))) : FString(); FString Pin = Endpoint.IsValid() ? JsonString(*Endpoint, TEXT("pin_name"), JsonString(*Endpoint, TEXT("pin"), JsonString(*Endpoint, TEXT("pin_id")))) : FString();
 			if (Guid.IsEmpty()) Guid = JsonString(Params, *(PrefixText + TEXT("_node_guid")), JsonString(Params, *(PrefixText + TEXT("_node_id")))); if (Ref.IsEmpty()) Ref = JsonString(Params, *(PrefixText + TEXT("_node_ref")), JsonString(Params, *(PrefixText + TEXT("_ref")))); if (Pin.IsEmpty()) Pin = JsonString(Params, *(PrefixText + TEXT("_pin_name")), JsonString(Params, *(PrefixText + TEXT("_pin")), JsonString(Params, *(PrefixText + TEXT("_pin_id")))));
+			TSharedPtr<FJsonObject> LockedEndpoint;
+			if (const TSharedPtr<FJsonObject> Locked = JsonObject(Params, TEXT("_uepi_locked_target"))) LockedEndpoint = JsonObject(*Locked, Prefix);
+			if (LockedEndpoint.IsValid())
+			{
+				if (const TSharedPtr<FJsonObject> LockedNode = JsonObject(*LockedEndpoint, TEXT("node"))) Guid = JsonString(*LockedNode, TEXT("node_guid"), JsonString(*LockedNode, TEXT("node_id"), Guid));
+				Pin = JsonString(*LockedEndpoint, TEXT("pin_id"), JsonString(*LockedEndpoint, TEXT("pin_name"), Pin));
+			}
 			if (Ref.IsEmpty() && Guid.IsEmpty() || Pin.IsEmpty()) { OutError = FString::Printf(TEXT("%s endpoint requires a node and pin."), Prefix); return nullptr; }
 			if (!Ref.IsEmpty() && Context.ExecutionState) if (UObject* const* Found = Context.ExecutionState->ObjectRefs.Find(Ref)) OutNode = Cast<UEdGraphNode>(*Found); if (!OutNode) OutNode = FindNode(Graph, Guid); if (!OutNode || OutNode->GetGraph() != Graph) { OutError = FString::Printf(TEXT("%s node was not found in the requested graph."), Prefix); return nullptr; }
 			const FString Direction = Endpoint.IsValid() ? JsonString(*Endpoint, TEXT("direction"), DefaultDirection) : DefaultDirection; UEdGraphPin* Result = FindPin(OutNode, Pin, Direction); if (!Result) OutError = FString::Printf(TEXT("%s pin was not found: %s"), Prefix, *Pin); return Result;
@@ -363,7 +434,30 @@ namespace UE::ProjectIntelligence
 					FString Property = JsonString(Params, TEXT("property_path"), JsonString(Params, TEXT("property"))); FString Root = Property; int32 Separator = INDEX_NONE; if (Root.FindChar(TEXT('.'), Separator) || Root.FindChar(TEXT('['), Separator) || Root.FindChar(TEXT('{'), Separator)) Root = Root.Left(Separator); if (!NodeClass || Root.IsEmpty() || !NodeClass->FindPropertyByName(FName(*Root)) || !Params.TryGetField(TEXT("value")).IsValid()) return Failure(TEXT("UEPI_EDIT_PROPERTY_PREFLIGHT_FAILED"), FString::Printf(TEXT("AnimGraph node property is unavailable: %s"), *Property));
 				}
 				else if (Type == TEXT("blueprint.break_all_links") || Type == TEXT("blueprint.remove_node") || Type == TEXT("blueprint.move_node") || Type == TEXT("blueprint.set_node_comment")) { const FString Ref = NodeRef(Params); if (!IsPlannedRef(Context, Ref)) { FString NodeError; if (!ResolveNode(Context, Graph, Params, NodeError)) return Failure(TEXT("UEPI_EDIT_NODE_NOT_FOUND"), NodeError); } }
-				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>(); Detail->SetStringField(TEXT("asset"), Blueprint->GetPathName()); Detail->SetStringField(TEXT("operation"), Type); return Success(TEXT("Blueprint operation preflight passed."), Detail);
+				TSharedRef<FJsonObject> Detail = MakeShared<FJsonObject>();
+				Detail->SetStringField(TEXT("asset"), Blueprint->GetPathName());
+				Detail->SetStringField(TEXT("operation"), Type);
+				if (Graph) Detail->SetObjectField(TEXT("graph"), GraphJson(Graph));
+				if (Type == TEXT("blueprint.break_all_links") || Type == TEXT("blueprint.remove_node") || Type == TEXT("blueprint.move_node") || Type == TEXT("blueprint.set_node_comment") || Type == TEXT("animgraph.set_node_property"))
+				{
+					FString NodeError;
+					if (UEdGraphNode* Node = ResolveNode(Context, Graph, Params, NodeError)) Detail->SetObjectField(TEXT("node"), NodeJson(Node, Graph));
+				}
+				else if (Type == TEXT("blueprint.connect_pins"))
+				{
+					FString PinError;
+					UEdGraphNode* SourceNode = nullptr;
+					UEdGraphNode* TargetNode = nullptr;
+					if (UEdGraphPin* Source = ResolveEndpoint(Context, Graph, Params, TEXT("source"), TEXT("output"), SourceNode, PinError)) Detail->SetObjectField(TEXT("source"), EndpointJson(SourceNode, Source, Graph));
+					if (UEdGraphPin* Target = ResolveEndpoint(Context, Graph, Params, TEXT("target"), TEXT("input"), TargetNode, PinError)) Detail->SetObjectField(TEXT("target"), EndpointJson(TargetNode, Target, Graph));
+				}
+				else if (Type == TEXT("blueprint.set_pin_default") || Type == TEXT("blueprint.disconnect_pins"))
+				{
+					FString PinError;
+					UEdGraphNode* TargetNode = nullptr;
+					if (UEdGraphPin* Target = ResolveEndpoint(Context, Graph, Params, TEXT("target"), TEXT("input"), TargetNode, PinError)) Detail->SetObjectField(TEXT("target"), EndpointJson(TargetNode, Target, Graph));
+				}
+				return Success(TEXT("Blueprint operation preflight passed."), Detail);
 			}
 
 			virtual FUEPIEditResult Apply(const FUEPIEditContext& Context, const FJsonObject& Params) override
@@ -448,11 +542,47 @@ namespace UE::ProjectIntelligence
 				}
 				if (Type == TEXT("blueprint.set_pin_default") || Type == TEXT("blueprint.disconnect_pins"))
 				{
-					UEdGraphNode* Node = nullptr; UEdGraphPin* Pin = ResolveEndpoint(Context, Graph, Params, TEXT("target"), TEXT("input"), Node, Error); if (!Pin) return Failure(TEXT("UEPI_EDIT_APPLY_FAILED"), Error); Pin->Modify(); if (Type == TEXT("blueprint.set_pin_default")) { const TSharedPtr<FJsonValue> Value = Params.TryGetField(TEXT("value")); if (!Value.IsValid()) return Failure(TEXT("UEPI_EDIT_PIN_DEFAULT_FAILED"), TEXT("Pin default value is required.")); Graph->GetSchema()->TrySetDefaultValue(*Pin, PinValue(Value), true); Detail->SetObjectField(TEXT("node"), NodeJson(Node, Graph)); Detail->SetStringField(TEXT("pin"), Pin->PinName.ToString()); } else Pin->BreakAllPinLinks(true); FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint); return Success(Type == TEXT("blueprint.set_pin_default") ? TEXT("Pin default updated.") : TEXT("Pin links disconnected."), Detail);
+					UEdGraphNode* Node = nullptr;
+					UEdGraphPin* Pin = ResolveEndpoint(Context, Graph, Params, TEXT("target"), TEXT("input"), Node, Error);
+					if (!Pin) return Failure(TEXT("UEPI_EDIT_APPLY_FAILED"), Error);
+					Pin->Modify();
+					if (Type == TEXT("blueprint.set_pin_default"))
+					{
+						const TSharedPtr<FJsonValue> Value = Params.TryGetField(TEXT("value"));
+						if (!Value.IsValid()) return Failure(TEXT("UEPI_EDIT_PIN_DEFAULT_FAILED"), TEXT("Pin default value is required."));
+						Graph->GetSchema()->TrySetDefaultValue(*Pin, PinValue(Value), true);
+						Detail->SetObjectField(TEXT("node"), NodeJson(Node, Graph));
+						Detail->SetStringField(TEXT("pin"), Pin->PinName.ToString());
+					}
+					else
+					{
+						TArray<TSharedPtr<FJsonValue>> LinkChanges;
+						for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+						{
+							if (!LinkedPin || !LinkedPin->GetOwningNode()) continue;
+							UEdGraphPin* SourcePin = Pin->Direction == EGPD_Output ? Pin : LinkedPin;
+							UEdGraphPin* TargetPin = Pin->Direction == EGPD_Input ? Pin : LinkedPin;
+							TSharedRef<FJsonObject> Change = MakeShared<FJsonObject>();
+							Change->SetStringField(TEXT("change"), TEXT("disconnected"));
+							Change->SetStringField(TEXT("source_node_guid"), GuidString(SourcePin->GetOwningNode()));
+							Change->SetStringField(TEXT("source_pin_guid"), SourcePin->PinId.ToString(EGuidFormats::DigitsWithHyphens));
+							Change->SetStringField(TEXT("source_pin_name"), SourcePin->PinName.ToString());
+							Change->SetStringField(TEXT("target_node_guid"), GuidString(TargetPin->GetOwningNode()));
+							Change->SetStringField(TEXT("target_pin_guid"), TargetPin->PinId.ToString(EGuidFormats::DigitsWithHyphens));
+							Change->SetStringField(TEXT("target_pin_name"), TargetPin->PinName.ToString());
+							LinkChanges.Add(MakeShared<FJsonValueObject>(Change));
+						}
+						Detail->SetObjectField(TEXT("node"), NodeJson(Node, Graph));
+						Detail->SetStringField(TEXT("pin"), Pin->PinName.ToString());
+						Detail->SetArrayField(TEXT("link_changes"), LinkChanges);
+						Pin->BreakAllPinLinks(true);
+					}
+					FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+					return Success(Type == TEXT("blueprint.set_pin_default") ? TEXT("Pin default updated.") : TEXT("Pin links disconnected."), Detail);
 				}
 				if (Type == TEXT("blueprint.break_all_links") || Type == TEXT("blueprint.remove_node") || Type == TEXT("blueprint.move_node") || Type == TEXT("blueprint.set_node_comment"))
 				{
-					UEdGraphNode* Node = ResolveNode(Context, Graph, Params, Error); if (!Node) return Failure(TEXT("UEPI_EDIT_APPLY_FAILED"), Error); Graph->Modify(); Node->Modify();
+					UEdGraphNode* Node = ResolveNode(Context, Graph, Params, Error); if (!Node) return Failure(TEXT("UEPI_EDIT_APPLY_FAILED"), Error); Detail->SetObjectField(TEXT("node"), NodeJson(Node, Graph)); Graph->Modify(); Node->Modify();
 					if (Type == TEXT("blueprint.break_all_links")) { for (UEdGraphPin* Pin : Node->Pins) if (Pin) { Pin->Modify(); Pin->BreakAllPinLinks(true); } }
 					else if (Type == TEXT("blueprint.remove_node")) Graph->RemoveNode(Node);
 					else if (Type == TEXT("blueprint.move_node")) { const FVector2D Position = NodePosition(Params, Context.OperationIndex); Node->NodePosX = FMath::RoundToInt(Position.X); Node->NodePosY = FMath::RoundToInt(Position.Y); }

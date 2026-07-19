@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter, deque
 import json
 from pathlib import Path
+import time
 from typing import Any
 
 from .blueprint_semantics import summarize_blueprint_semantics
@@ -247,6 +248,34 @@ class UEPIQueryEngine:
         for relation in self.relations:
             self.outgoing.setdefault(str(relation.get("from_id") or ""), []).append(relation)
             self.incoming.setdefault(str(relation.get("to_id") or ""), []).append(relation)
+
+    def _reload_current_state(self) -> None:
+        self.close()
+        self.snapshot = SnapshotView.open(self.store)
+        self.state = self.snapshot.state
+        self._cache_sync_result = None
+        self._cache_sync_error = None
+        self._cache_status = cache_status(self.store, self.state)
+        if not self._cache_status.get("synced"):
+            try:
+                self._cache_sync_result = sync_cache(self.store, self.state)
+            except Exception as exc:
+                self._cache_sync_error = str(exc)
+        self.cache = SQLiteSnapshotCache.open_if_synced(self.store, self.state)
+        self._cache_status = cache_status(self.store, self.state)
+        self._scan = None
+        self.entities = []
+        self.relations = []
+        self.entity_by_id = {}
+        self.outgoing = {}
+        self.incoming = {}
+        self.counts = dict(self.state.counts)
+        if self.cache:
+            self.counts.update(self.cache.counts())
+        self.counts.setdefault("entities", 0)
+        self.counts.setdefault("relations", 0)
+        self.counts.setdefault("diagnostics", 0)
+        self.counts.setdefault("asset_entities", 0)
 
     def _envelope(
         self,
@@ -588,14 +617,49 @@ class UEPIQueryEngine:
         response = call_bridge(self.store, "asset.refresh_now", {"target_object_paths": [target], "data_mode": "live"}, timeout=2.0)
         if response.get("ok"):
             result = _as_dict(response.get("result"))
+            request_id = str(result.get("request_id") or "")
+            deadline = time.monotonic() + 30.0
+            completed: dict[str, Any] | None = None
+            while request_id and time.monotonic() < deadline:
+                for candidate in self.store.requests_dir.glob("*.json"):
+                    try:
+                        value = json.loads(candidate.read_text(encoding="utf-8-sig"))
+                    except (OSError, json.JSONDecodeError):
+                        continue
+                    if str(value.get("request_id") or "") != request_id:
+                        continue
+                    status = str(value.get("status") or "").casefold()
+                    if status in {"succeeded", "completed", "failed", "cancelled", "expired", "aborted"}:
+                        completed = {**value, "request_path": str(candidate)}
+                        break
+                if completed:
+                    break
+                time.sleep(0.1)
+            if completed and str(completed.get("status") or "").casefold() in {"succeeded", "completed"}:
+                previous_generation = self.state.generation
+                self._reload_current_state()
+                return "current", diagnostics + [
+                    {
+                        "severity": "info",
+                        "blocking": False,
+                        "code": "UEPI_REFRESH_COMPLETED",
+                        "message": "The forced Editor refresh completed and this query was retried against the published generation.",
+                        "target_object_path": target,
+                        "request_id": request_id,
+                        "request_path": completed.get("request_path"),
+                        "previous_generation": previous_generation,
+                        "view_generation": self.state.generation,
+                        "recoverable": True,
+                    }
+                ]
             return "refresh_requested", diagnostics + [
                 {
                     "severity": "info",
                     "code": "UEPI_REFRESH_REQUESTED",
-                    "message": "A live editor bridge refresh request was queued for this target.",
+                    "message": "A live editor bridge refresh request was queued but did not complete before the atomic refresh timeout.",
                     "target_object_path": target,
                     "request_path": result.get("request_path"),
-                    "request_id": result.get("request_id"),
+                    "request_id": request_id,
                     "request": result.get("request") or {},
                     "recoverable": True,
                     "recommended_user_action": "Keep the editor open and retry after UEPI processes the refresh request.",
@@ -943,6 +1007,95 @@ class UEPIQueryEngine:
             if semantic_set and semantic not in semantic_set:
                 return False
             return True
+
+        if node_guid and self.cache:
+            focused_nodes = [
+                item
+                for item in unfiltered_domain_entities
+                if item.get("kind") == "blueprint_node"
+                and str(_first_attribute_value(item, "node_guid", "guid") or "").casefold() == node_guid.casefold()
+                and blueprint_filter(item)
+            ]
+            if focused_nodes:
+                focused_node = focused_nodes[0]
+                focused_node_id = str(focused_node.get("id") or "")
+                direct_relations = self.cache.relations_for_entity(focused_node_id, limit=1000)
+                owned_pin_ids = {
+                    str(relation.get("to_id") or "")
+                    for relation in direct_relations
+                    if relation.get("type") == "has_pin" and relation.get("from_id") == focused_node_id
+                }
+                pin_relations = self.cache.relations_for_entities(owned_pin_ids, limit=2000)
+                linked_pin_ids = {
+                    str(relation.get(key) or "")
+                    for relation in pin_relations
+                    if relation.get("type") == "connects_to"
+                    for key in ("from_id", "to_id")
+                    if relation.get(key)
+                }
+                linked_relations = self.cache.relations_for_entities(linked_pin_ids - owned_pin_ids, limit=2000)
+                relation_by_id = {
+                    str(relation.get("id") or f"{relation.get('type')}:{relation.get('from_id')}:{relation.get('to_id')}"): relation
+                    for relation in [*direct_relations, *pin_relations, *linked_relations]
+                }
+                focus_relations = list(relation_by_id.values())
+                focus_entity_ids = {
+                    str(relation.get(key) or "")
+                    for relation in focus_relations
+                    for key in ("from_id", "to_id")
+                    if relation.get(key)
+                }
+                focus_entity_ids.add(focused_node_id)
+                focus_entities = self.cache.entities_by_ids(focus_entity_ids, limit=max(1, len(focus_entity_ids)), include_snapshot=True)
+
+                def focus_rank(item: dict[str, Any]) -> tuple[int, str]:
+                    item_id = str(item.get("id") or "")
+                    if item_id == focused_node_id:
+                        priority = 0
+                    elif item_id in owned_pin_ids:
+                        priority = 1
+                    elif item.get("kind") == "blueprint_pin":
+                        priority = 2
+                    elif item.get("kind") == "blueprint_node":
+                        priority = 3
+                    else:
+                        priority = 4
+                    return priority, str(item.get("canonical_key") or item_id).casefold()
+
+                focus_entities = sorted(focus_entities, key=focus_rank)[: max(1, min(limit, 1000))]
+                summarized_relations = [_relation_summary(relation) for relation in focus_relations[: max(1, min(limit * 4, 1000))]]
+                semantic_summary = summarize_blueprint_semantics(_short_entity(entity), focus_entities, summarized_relations, limit=max(20, min(limit, 120)))
+                return self._envelope(
+                    {
+                        "asset": _short_entity(entity, include_snapshot=False),
+                        "focus": {
+                            "node_guid": node_guid,
+                            "node": focused_node,
+                            "pins": [item for item in focus_entities if str(item.get("id") or "") in owned_pin_ids],
+                            "direct_links": [relation for relation in summarized_relations if relation.get("type") == "connects_to"],
+                        },
+                        "blueprint_entities": focus_entities,
+                        "relations": summarized_relations,
+                        "semantic_summary": semantic_summary,
+                        "call_graph": semantic_summary["call_graph"],
+                        "data_mutations": semantic_summary["data_mutations"],
+                        "resolution_candidates": candidates,
+                        "query_source": "sqlite_cache",
+                        "unfiltered_entity_count": len(unfiltered_domain_entities),
+                        "filters": {"graph": graph or None, "graph_role": graph_role or None, "node_guid": node_guid, "node_classes": node_classes or [], "semantic_kinds": semantic_kinds or []},
+                    },
+                    diagnostics=diagnostics,
+                    freshness=freshness,
+                    tool="uepi_blueprint",
+                    operation="focused_node_read",
+                    next_actions=[
+                        {
+                            "reason": "Trace outward from this exact node when the user asks what happens next.",
+                            "tool": "uepi_blueprint_trace",
+                            "arguments": {"asset": asset, "start": node_guid},
+                        }
+                    ],
+                )
 
         if filters_active:
             domain_entities = [item for item in domain_entities if blueprint_filter(item)]

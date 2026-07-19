@@ -71,6 +71,24 @@ def _identifier_matches_values(identifier: str, values: list[str]) -> bool:
     return False
 
 
+def _normalized_asset_identity(value: Any) -> str:
+    text = str(value or "").strip().replace("\\", "/")
+    if not text.startswith("/"):
+        return _fold(text)
+    if "::" in text:
+        text = text.split("::", 1)[0]
+    colon = text.find(":", text.rfind("/") + 1)
+    if colon >= 0:
+        text = text[:colon]
+    if "." not in text.rsplit("/", 1)[-1]:
+        asset_name = text.rsplit("/", 1)[-1]
+        text = f"{text}.{asset_name}"
+    package, object_name = text.rsplit(".", 1)
+    if object_name.endswith("_C"):
+        object_name = object_name[:-2]
+    return f"{package}.{object_name}".casefold()
+
+
 def _session_registry_dirs() -> list[Path]:
     candidates: list[Path] = []
     override = os.environ.get("UEPI_SESSION_REGISTRY_DIR")
@@ -179,6 +197,25 @@ def _entity_match_values(entity: dict[str, Any]) -> list[str]:
     return [value for value in values if value]
 
 
+def _entity_owner_identities(entity: dict[str, Any]) -> set[str]:
+    attributes = entity.get("attributes") if isinstance(entity.get("attributes"), dict) else {}
+    values = [
+        entity.get("canonical_key"),
+        attributes.get("object_path"),
+        attributes.get("asset_path"),
+        attributes.get("package_name"),
+        attributes.get("blueprint_path"),
+        attributes.get("owner_asset_path"),
+    ]
+    return {
+        identity
+        for value in values
+        if str(value or "").strip().startswith("/")
+        for identity in [_normalized_asset_identity(value)]
+        if identity
+    }
+
+
 def _tombstone_match_values(tombstone: dict[str, Any]) -> list[str]:
     keys = [
         "asset_id",
@@ -189,6 +226,23 @@ def _tombstone_match_values(tombstone: dict[str, Any]) -> list[str]:
         "new_object_path",
     ]
     return [str(tombstone.get(key) or "") for key in keys if tombstone.get(key)]
+
+
+def _tombstone_owner_identities(tombstone: dict[str, Any]) -> set[str]:
+    # A rename tombstone removes the old owner only. The new object path is an
+    # alias for the replacement fragment and must never delete that fragment.
+    values = [
+        tombstone.get("asset_key"),
+        tombstone.get("package_name"),
+        tombstone.get("old_object_path"),
+    ]
+    return {
+        identity
+        for value in values
+        if str(value or "").strip().startswith("/")
+        for identity in [_normalized_asset_identity(value)]
+        if identity
+    }
 
 
 def _is_asset_entity(entity: dict[str, Any]) -> bool:
@@ -357,15 +411,16 @@ class SnapshotStore:
         for scan in scans:
             if scan.get("schema_version") == "uepi.asset-tombstone.v2":
                 tombstones.append(scan)
-                tombstone_values = _tombstone_match_values(scan)
+                tombstone_asset_id = str(scan.get("asset_id") or "")
+                tombstone_owners = _tombstone_owner_identities(scan)
                 removed_ids = {
                     entity_id
                     for entity_id, entity in entity_by_id.items()
-                    if _identifier_matches_values(str(scan.get("asset_id") or ""), [entity_id])
-                    or any(_identifier_matches_values(value, _entity_match_values(entity)) for value in tombstone_values)
+                    if (tombstone_asset_id and entity_id == tombstone_asset_id)
+                    or bool(tombstone_owners.intersection(_entity_owner_identities(entity)))
                 }
-                if isinstance(scan.get("asset_id"), str) and scan.get("asset_id"):
-                    removed_ids.add(str(scan["asset_id"]))
+                if tombstone_asset_id:
+                    removed_ids.add(tombstone_asset_id)
                 frontier = list(removed_ids)
                 while frontier:
                     current = frontier.pop(0)

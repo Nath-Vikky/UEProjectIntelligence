@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +29,7 @@ from uepi.edit import _apply_timeout_seconds, _asset_values, _budget_diagnostics
 from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
 from uepi.projections import apply_response_options, enforce_response_budget  # noqa: E402
 from uepi.query import make_engine  # noqa: E402
-from uepi.runtime import _approved_subset, _matches_approved, _value_at_path  # noqa: E402
+from uepi.runtime import _approved_subset, _canonical_hash as runtime_plan_hash, _matches_approved, _ticket_from_plan, _value_at_path  # noqa: E402
 from uepi.result import envelope, tool_response  # noqa: E402
 from uepi.store import SnapshotStore, resolve_store_root  # noqa: E402
 from uepi.timing import attach_timing, begin_request, end_request, record  # noqa: E402
@@ -48,6 +50,8 @@ READ_TOOLS = {
     "uepi_world",
     "uepi_refresh",
     "uepi_schema",
+    "uepi_runtime_preview",
+    "uepi_runtime_approve",
     "uepi_runtime",
 }
 
@@ -121,6 +125,32 @@ def assert_edit_asset_scope_contract() -> None:
     diff = build_transaction_diff(plan, apply_result, [{"asset": destination, "exists": True}])
     assert diff["created_assets"] == [destination]
     assert diff["removed_assets"] == []
+
+    disconnected = build_transaction_diff(
+        {"transaction_id": "uepi-tx:disconnect", "affected_assets": [source], "operations": []},
+        {
+            "operations": [
+                {
+                    "operation_id": "disconnect",
+                    "type": "blueprint.disconnect_pins",
+                    "detail": {
+                        "link_changes": [
+                            {
+                                "change": "disconnected",
+                                "source_node_guid": "NODE-A",
+                                "source_pin_guid": "PIN-A",
+                                "target_node_guid": "NODE-B",
+                                "target_pin_guid": "PIN-B",
+                            }
+                        ]
+                    },
+                }
+            ]
+        },
+        [],
+    )
+    assert disconnected["link_changes"][0]["change"] == "disconnected"
+    assert disconnected["link_changes"][0]["source_pin_guid"] == "PIN-A"
 
 
 def assert_edit_transaction_budget_contract() -> None:
@@ -442,6 +472,45 @@ def assert_runtime_ticket_contract() -> None:
     observed = {"outputs": {"return_value": {"fields": {"bPlaying": {"value": True}}}}}
     assert _value_at_path(observed, "outputs.return_value.fields.bPlaying.value") is True
     assert _value_at_path(observed, "outputs.return_value.fields.Missing.value") is None
+    with tempfile.TemporaryDirectory(prefix="uepi_runtime_ticket_") as temp_dir:
+        store = SnapshotStore.from_paths(store=Path(temp_dir))
+        engine = SimpleNamespace(store=store, identity={"project_binding_id": "sha256:runtime", "project_file": "C:/Test/Test.uproject"})
+        plan = {
+            "schema_version": "uepi.runtime-plan.v1",
+            "runtime_plan_id": "uepi-runtime-plan:test",
+            "project_binding_id": "sha256:runtime",
+            "editor_session_id": "session-runtime",
+            "map": "/Game/Maps/TestMap",
+            "steps": [
+                {"action": "start", "wait_until_running": True},
+                {
+                    "action": "input",
+                    "delivery": "enhanced_input_action",
+                    "input_action": "/Game/Input/IA_Test.IA_Test",
+                    "value": True,
+                    "event": "pressed",
+                },
+                {"action": "delay", "seconds": 0.1},
+                {"action": "assert", "target": {"class": "/Script/Test.MotionComponent"}, "property": "bPlaying", "equals": True},
+                {"action": "stop"},
+            ],
+            "timeout_seconds": 30,
+        }
+        plan["plan_hash"] = runtime_plan_hash(plan)
+        ticket = _ticket_from_plan(engine, plan)
+        assert "transaction_id" not in ticket
+        assert ticket["runtime_plan_id"] == plan["runtime_plan_id"]
+        assert ticket["allowed_deliveries"] == ["enhanced_input_action"]
+        assert ticket["allowed_inputs"] == [
+            {
+                "event": "pressed",
+                "delivery": "enhanced_input_action",
+                "input_action": "/Game/Input/IA_Test.IA_Test",
+                "value": True,
+            }
+        ]
+        assert {"start", "input", "delay", "assert", "stop"}.issubset(set(ticket["allowed_actions"]))
+        assert Path(temp_dir, "store", "runtime", ticket["ticket_id"].replace(":", "-") + ".json").is_file()
 
 
 def send_message(process: subprocess.Popen[bytes], message: dict[str, Any]) -> None:
@@ -578,6 +647,8 @@ def write_fixture(root: Path) -> None:
 
     fragment_node_id = "node-asset-fragment"
     typed_slot_node_id = "node-typed-slot"
+    begin_pin_id = "pin-beginplay-then"
+    fragment_pin_id = "pin-fragment-execute"
     asset_fragment = {
         "schema_version": "uepi.asset-fragment.v2",
         "project_id": "project-fixture",
@@ -626,6 +697,28 @@ def write_fixture(root: Path) -> None:
                 "diagnostics": [],
                 "evidence": [],
             },
+            {
+                "id": begin_pin_id,
+                "kind": "blueprint_pin",
+                "canonical_key": "/Game/BP_Hero.BP_Hero::EventGraph::BeginPlay:pin:Then",
+                "display_name": "Then",
+                "source_layer": "editor_source_graph",
+                "attributes": {"pin_id": "BEGIN-PIN-GUID", "pin_name": "Then", "direction": "output", "pin_category": "exec", "pin_container_type": "none"},
+                "completeness": {"state": "complete", "covered": ["pin_metadata", "pin_links"], "omitted": [], "warnings": []},
+                "diagnostics": [],
+                "evidence": [],
+            },
+            {
+                "id": fragment_pin_id,
+                "kind": "blueprint_pin",
+                "canonical_key": "/Game/BP_Hero.BP_Hero::EventGraph::FragmentNode:pin:execute",
+                "display_name": "execute",
+                "source_layer": "editor_source_graph",
+                "attributes": {"pin_id": "FRAGMENT-PIN-GUID", "pin_name": "execute", "direction": "input", "pin_category": "exec", "pin_container_type": "none"},
+                "completeness": {"state": "complete", "covered": ["pin_metadata", "pin_links"], "omitted": [], "warnings": []},
+                "diagnostics": [],
+                "evidence": [],
+            },
         ],
         "relations": [
             contains_node_relation,
@@ -651,6 +744,9 @@ def write_fixture(root: Path) -> None:
                 "attributes": {},
                 "evidence": [],
             },
+            {"id": "rel-begin-pin", "type": "has_pin", "from_id": node_id, "to_id": begin_pin_id, "source_layer": "editor_source_graph", "derived": False, "confidence": 1.0, "attributes": {}, "evidence": []},
+            {"id": "rel-fragment-pin", "type": "has_pin", "from_id": fragment_node_id, "to_id": fragment_pin_id, "source_layer": "editor_source_graph", "derived": False, "confidence": 1.0, "attributes": {}, "evidence": []},
+            {"id": "rel-begin-fragment-pins", "type": "connects_to", "from_id": begin_pin_id, "to_id": fragment_pin_id, "source_layer": "editor_source_graph", "derived": False, "confidence": 1.0, "attributes": {"edge_kind": "canonical_pin_link"}, "evidence": []},
         ],
         "diagnostics": [],
     }
@@ -1047,6 +1143,70 @@ def write_fixture(root: Path) -> None:
     animation_fragment_path = objects / "aaanimationfragment.json"
     animation_fragment_path.write_text(json.dumps(animation_fragment, ensure_ascii=False), encoding="utf-8")
 
+    character_asset_id = "asset-third-person-character"
+    npc_asset_id = "asset-llmnpc-manny"
+    character_path = "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter"
+    npc_path = "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny.BP_LLMNPC_Manny"
+
+    def gameplay_entity(entity_id: str, kind: str, asset_path: str, suffix: str, title: str, attributes: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "id": entity_id,
+            "kind": kind,
+            "canonical_key": f"{asset_path}::{suffix}" if suffix else asset_path,
+            "display_name": title,
+            "source_layer": "editor_source_graph" if kind != "asset" else "asset_registry",
+            "attributes": {"object_path": asset_path, "asset_path": asset_path, "node_title": title, **(attributes or {})},
+            "completeness": {"state": "complete", "covered": ["gameplay_fixture"], "omitted": [], "warnings": []},
+            "diagnostics": [],
+            "evidence": [],
+        }
+
+    character_entities = [
+        gameplay_entity(character_asset_id, "asset", character_path, "", "BP_ThirdPersonCharacter", {"asset_name": "BP_ThirdPersonCharacter"}),
+        gameplay_entity("node-character-three", "blueprint_node", character_path, "EventGraph::Three", "Three", {"node_guid": "CHAR-THREE", "node_class": "/Script/BlueprintGraph.K2Node_InputKey", "semantic_kind": "input_key", "input_key": "Three"}),
+        gameplay_entity("node-get-all-manny", "blueprint_node", character_path, "EventGraph::GetAllActorsOfClass", "Get All Actors Of Class", {"node_guid": "GET-ALL", "semantic_kind": "call_function", "semantic_function": "/Script/Engine.GameplayStatics:GetAllActorsOfClass"}),
+        gameplay_entity("node-call-manny-333", "blueprint_node", character_path, "EventGraph::Call333", "333", {"node_guid": "CALL-333", "semantic_kind": "call_function", "semantic_function": "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny.SKEL_BP_LLMNPC_Manny_C:333"}),
+        gameplay_entity("pin-get-all-outactors", "blueprint_pin", character_path, "EventGraph::GetAllActorsOfClass:pin:OutActors", "OutActors", {"pin_id": "PIN-OUT-ACTORS", "pin_name": "OutActors", "direction": "output", "pin_category": "object", "pin_subcategory_object": "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny.BP_LLMNPC_Manny_C", "pin_container_type": "array"}),
+        gameplay_entity("pin-call-333-self", "blueprint_pin", character_path, "EventGraph::Call333:pin:self", "self", {"pin_id": "PIN-CALL-SELF", "pin_name": "self", "direction": "input", "pin_category": "object", "pin_subcategory_object": "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny.BP_LLMNPC_Manny_C", "pin_container_type": "none"}),
+    ]
+    character_relations = [
+        {"id": "rel-character-three-getall", "type": "exec_flows_to", "from_id": "node-character-three", "to_id": "node-get-all-manny", "source_layer": "editor_source_graph", "derived": True, "confidence": 1.0, "attributes": {}, "evidence": []},
+        {"id": "rel-character-getall-call", "type": "exec_flows_to", "from_id": "node-get-all-manny", "to_id": "node-call-manny-333", "source_layer": "editor_source_graph", "derived": True, "confidence": 1.0, "attributes": {}, "evidence": []},
+        {"id": "rel-getall-pin", "type": "has_pin", "from_id": "node-get-all-manny", "to_id": "pin-get-all-outactors", "source_layer": "editor_source_graph", "derived": False, "confidence": 1.0, "attributes": {}, "evidence": []},
+        {"id": "rel-call-self-pin", "type": "has_pin", "from_id": "node-call-manny-333", "to_id": "pin-call-333-self", "source_layer": "editor_source_graph", "derived": False, "confidence": 1.0, "attributes": {}, "evidence": []},
+        {"id": "rel-raw-array-to-scalar", "type": "connects_to", "from_id": "pin-get-all-outactors", "to_id": "pin-call-333-self", "source_layer": "editor_source_graph", "derived": False, "confidence": 1.0, "attributes": {"projection_complete": False, "diagnostic_code": "UEPI_PIN_PROJECTION_INCOMPLETE"}, "evidence": []},
+    ]
+    character_fragment = {
+        "schema_version": "uepi.asset-fragment.v2", "project_id": "project-fixture", "project_name": "FixtureProject", "project_file": str(root / "FixtureProject.uproject"), "engine_version": "5.3.2", "source_scan_finished_at_utc": "2026-06-26T00:00:01Z",
+        "asset": {"id": character_asset_id, "canonical_key": character_path, "display_name": "BP_ThirdPersonCharacter", "kind": "asset"}, "entities": character_entities, "relations": character_relations, "diagnostics": [],
+    }
+    character_fragment_path = objects / "aacharactergameplayfragment.json"
+    character_fragment_path.write_text(json.dumps(character_fragment, ensure_ascii=False), encoding="utf-8")
+
+    npc_entities = [
+        gameplay_entity(npc_asset_id, "asset", npc_path, "", "BP_LLMNPC_Manny", {"asset_name": "BP_LLMNPC_Manny"}),
+        gameplay_entity("node-npc-three", "blueprint_node", npc_path, "EventGraph::Three", "Three", {"node_guid": "NPC-THREE", "node_class": "/Script/BlueprintGraph.K2Node_InputKey", "semantic_kind": "input_key", "input_key": "Three"}),
+        gameplay_entity("node-npc-enable-input", "blueprint_node", npc_path, "EventGraph::EnableInput", "Enable Input", {"node_guid": "NPC-ENABLE", "semantic_kind": "call_function", "semantic_function": "/Script/Engine.Actor:EnableInput"}),
+        gameplay_entity("node-npc-event-333", "blueprint_node", npc_path, "EventGraph::Event333", "333", {"node_guid": "EVENT-333", "node_class": "/Script/BlueprintGraph.K2Node_CustomEvent", "semantic_kind": "event", "semantic_event": "333", "event_name": "333", "semantic_id": f"{npc_path}:event:333"}),
+        gameplay_entity("node-submit-template", "blueprint_node", npc_path, "EventGraph::SubmitPublishedTemplate", "Submit Published Template", {"node_guid": "SUBMIT-TEMPLATE", "semantic_kind": "call_function", "semantic_function": "/Script/LLMNPCActionLayer.LLMNPCMotionComponent:SubmitPublishedTemplate"}),
+        gameplay_entity("node-dynamic-montage", "blueprint_node", npc_path, "EventGraph::DynamicMontage", "Play Slot Animation as Dynamic Montage", {"node_guid": "DYNAMIC-MONTAGE", "semantic_kind": "call_function", "semantic_function": "/Script/Engine.AnimInstance:PlaySlotAnimationAsDynamicMontage"}),
+        gameplay_entity("pin-template-id", "blueprint_pin", npc_path, "EventGraph::SubmitPublishedTemplate:pin:TemplateId", "TemplateId", {"pin_id": "PIN-TEMPLATE-ID", "pin_name": "TemplateId", "direction": "input", "pin_category": "name", "pin_container_type": "none", "default_value": "gesture.wave.asset.manny.v1"}),
+        gameplay_entity("pin-waving", "blueprint_pin", npc_path, "EventGraph::DynamicMontage:pin:Asset", "Asset", {"pin_id": "PIN-WAVING", "pin_name": "Asset", "direction": "input", "pin_category": "object", "pin_container_type": "none", "default_object": "/Game/Animations/Waving.Waving"}),
+    ]
+    npc_relations = [
+        {"id": "rel-npc-local-three-submit", "type": "exec_flows_to", "from_id": "node-npc-three", "to_id": "node-submit-template", "source_layer": "editor_source_graph", "derived": True, "confidence": 1.0, "attributes": {}, "evidence": []},
+        {"id": "rel-npc-event-submit", "type": "exec_flows_to", "from_id": "node-npc-event-333", "to_id": "node-submit-template", "source_layer": "editor_source_graph", "derived": True, "confidence": 1.0, "attributes": {}, "evidence": []},
+        {"id": "rel-npc-submit-montage", "type": "exec_flows_to", "from_id": "node-submit-template", "to_id": "node-dynamic-montage", "source_layer": "editor_source_graph", "derived": True, "confidence": 1.0, "attributes": {}, "evidence": []},
+        {"id": "rel-submit-template-pin", "type": "has_pin", "from_id": "node-submit-template", "to_id": "pin-template-id", "source_layer": "editor_source_graph", "derived": False, "confidence": 1.0, "attributes": {}, "evidence": []},
+        {"id": "rel-dynamic-waving-pin", "type": "has_pin", "from_id": "node-dynamic-montage", "to_id": "pin-waving", "source_layer": "editor_source_graph", "derived": False, "confidence": 1.0, "attributes": {}, "evidence": []},
+    ]
+    npc_fragment = {
+        "schema_version": "uepi.asset-fragment.v2", "project_id": "project-fixture", "project_name": "FixtureProject", "project_file": str(root / "FixtureProject.uproject"), "engine_version": "5.3.2", "source_scan_finished_at_utc": "2026-06-26T00:00:01Z",
+        "asset": {"id": npc_asset_id, "canonical_key": npc_path, "display_name": "BP_LLMNPC_Manny", "kind": "asset"}, "entities": npc_entities, "relations": npc_relations, "diagnostics": [],
+    }
+    npc_fragment_path = objects / "aanpcgameplayfragment.json"
+    npc_fragment_path.write_text(json.dumps(npc_fragment, ensure_ascii=False), encoding="utf-8")
+
     manifest = {
         "schema_version": "uepi.snapshot-manifest.v2",
         "data_mode": "saved",
@@ -1058,11 +1218,13 @@ def write_fixture(root: Path) -> None:
         "counts": {"entities": 4, "relations": 2, "diagnostics": 0, "asset_entities": 2},
         "source": {},
         "completeness": {"state": "partial", "covered": ["blueprint_graphs"], "omitted": [], "warnings": []},
-        "asset_entity_ids": [asset_id, animation_asset_id],
+        "asset_entity_ids": [asset_id, animation_asset_id, character_asset_id, npc_asset_id],
         "fragments": [
             {"kind": "project_fragment", "schema_version": "uepi.project-fragment.v2", "hash": "aaprojectfragment", "path": str(project_fragment_path)},
             {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aaassetfragment", "path": str(asset_fragment_path), "asset_id": asset_id},
             {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aaanimationfragment", "path": str(animation_fragment_path), "asset_id": animation_asset_id},
+            {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aacharactergameplayfragment", "path": str(character_fragment_path), "asset_id": character_asset_id},
+            {"kind": "asset_fragment", "schema_version": "uepi.asset-fragment.v2", "hash": "aanpcgameplayfragment", "path": str(npc_fragment_path), "asset_id": npc_asset_id},
         ],
     }
     (manifests / "saved.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
@@ -1520,6 +1682,12 @@ def main() -> int:
             runtime_actions = runtime_tool["inputSchema"]["properties"]["action"]["enum"]
             assert "automation" not in runtime_actions
             assert "job_status" not in runtime_actions
+            runtime_preview_tool = next(tool for tool in tools if tool["name"] == "uepi_runtime_preview")
+            assert runtime_preview_tool["inputSchema"]["properties"]["steps"]["items"]["oneOf"]
+            edit_preview_tool = next(tool for tool in tools if tool["name"] == "uepi_edit_preview")
+            operation_variants = edit_preview_tool["inputSchema"]["properties"]["operations"]["items"]["oneOf"]
+            assert operation_variants
+            assert all({"type", "params"}.issubset(set(item["required"])) for item in operation_variants)
             world_tool = next(tool for tool in tools if tool["name"] == "uepi_world")
             assert world_tool["inputSchema"]["properties"]["filters"]["additionalProperties"] is False
             assert {"actor", "component", "property_names"}.issubset(world_tool["inputSchema"]["properties"])
@@ -1638,6 +1806,57 @@ def main() -> int:
             assert package_scoped_context["ok"] is True
             assert package_scoped_context["result"]["matches"]
 
+            gameplay_started = time.perf_counter()
+            gameplay_context = request(
+                process,
+                73,
+                "tools/call",
+                {
+                    "name": "uepi_context",
+                    "arguments": {
+                        "question": "Trace key Three from the player to the Waving gameplay effect",
+                        "route": "gameplay_input_to_effect",
+                        "hard_scope": [
+                            "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter",
+                            "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny.BP_LLMNPC_Manny",
+                            "/Game/Animations/Waving.Waving",
+                        ],
+                        "max_items": 40,
+                        "max_payload_bytes": 30000,
+                    },
+                },
+            )["structuredContent"]
+            gameplay_elapsed = time.perf_counter() - gameplay_started
+            assert_envelope(gameplay_context)
+            gameplay_sections = gameplay_context["result"]["sections"]
+            assert gameplay_context["result"]["query_source"] == "sqlite_cache"
+            assert gameplay_sections["input_owner"]["asset"].endswith("BP_ThirdPersonCharacter.BP_ThirdPersonCharacter")
+            assert gameplay_sections["input_owner"]["owner_confidence"] > 0.5
+            assert any(any(step.get("kind") == "cross_asset_call" and step.get("function_or_event") == "333" for step in path["steps"]) for path in gameplay_sections["cross_asset_paths"])
+            assert any(any(pin.get("value") == "gesture.wave.asset.manny.v1" for pin in terminal.get("pin_defaults") or []) for terminal in gameplay_sections["terminal_effects"])
+            assert any(item.get("diagnostic_code") == "UEPI_DUPLICATE_GAMEPLAY_INPUT_PATH" for item in gameplay_sections["duplicate_paths"])
+            assert gameplay_elapsed < 2.0
+            assert len(json.dumps(gameplay_context, ensure_ascii=False).encode("utf-8")) < 30000
+
+            gameplay_blueprint = request(
+                process,
+                74,
+                "tools/call",
+                {
+                    "name": "uepi_blueprint",
+                    "arguments": {
+                        "asset": "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter",
+                        "node_guid": "GET-ALL",
+                        "limit": 100,
+                    },
+                },
+            )["structuredContent"]
+            out_actors = next(item for item in gameplay_blueprint["result"]["blueprint_entities"] if item.get("id") == "pin-get-all-outactors")
+            assert out_actors["attributes"]["pin_container_type"] == "array"
+            raw_link = next(item for item in gameplay_blueprint["result"]["relations"] if item.get("id") == "rel-raw-array-to-scalar")
+            assert raw_link["type"] == "connects_to"
+            assert raw_link["attributes"]["diagnostic_code"] == "UEPI_PIN_PROJECTION_INCOMPLETE"
+
             animation_scope = [
                 "/Game/Animations/ABP_Manny",
                 "/Game/Animations/Waving",
@@ -1658,6 +1877,7 @@ def main() -> int:
                 },
             )["structuredContent"]
             assert_envelope(scoped_animation)
+            assert scoped_animation["result"]["query_source"] == "sqlite_cache"
             summary = scoped_animation["result"]["sections"]["animation_summary"]
             assert summary["asset"]["canonical_key"] == "/Game/Animations/Waving.Waving"
             assert summary["motion_summary"] is not None
@@ -1687,6 +1907,33 @@ def main() -> int:
                 },
             )["structuredContent"]
             assert reversed_animation["result"]["sections"]["animation_summary"]["asset"]["canonical_key"] == "/Game/Animations/Waving.Waving"
+            assert reversed_animation["result"]["query_source"] == "sqlite_cache"
+
+            scoped_page = request(
+                process,
+                72,
+                "tools/call",
+                {
+                    "name": "uepi_context",
+                    "arguments": {
+                        "question": "Analyze the Waving animation sequence",
+                        "route": "animation_playback",
+                        "hard_scope": animation_scope,
+                        "fields": [
+                            "hard_scope",
+                            "matches",
+                            "sections.animation_summary",
+                        ],
+                        "page_size": 1,
+                        "max_payload_bytes": 30000,
+                    },
+                },
+            )["structuredContent"]
+            assert scoped_page["result"]["hard_scope"] == animation_scope
+            if scoped_page["continuation"]["cursor"]:
+                encoded_cursor = scoped_page["continuation"]["cursor"]
+                cursor_payload = json.loads(base64.urlsafe_b64decode(encoded_cursor + "=" * (-len(encoded_cursor) % 4)))
+                assert cursor_payload["sort_key"] == "matches"
 
             first_page = request(
                 process,
@@ -1847,6 +2094,18 @@ def main() -> int:
                 )["structuredContent"]
                 assert filtered["ok"] is True
                 assert "node-beginplay" in {item["id"] for item in filtered["result"]["blueprint_entities"]}
+
+            focused = request(
+                process,
+                86,
+                "tools/call",
+                {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_Hero.BP_Hero", "graph": "EventGraph", "node_guid": "BEGIN-GUID"}},
+            )["structuredContent"]
+            assert focused["operation"] == "focused_node_read"
+            assert focused["result"]["focus"]["node"]["id"] == "node-beginplay"
+            assert {item["id"] for item in focused["result"]["focus"]["pins"]} == {"pin-beginplay-then"}
+            assert focused["result"]["focus"]["direct_links"][0]["type"] == "connects_to"
+            assert focused["result"]["asset"].get("snapshot") is None
 
             requests_before_no_match = {path.name for path in (root / "store" / "requests").glob("*.json")}
             no_match = request(

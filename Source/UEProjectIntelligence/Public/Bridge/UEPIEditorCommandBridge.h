@@ -51,6 +51,7 @@ namespace UE::ProjectIntelligence
 		TSharedRef<FJsonObject> EditRollbackResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params);
 		TSharedRef<FJsonObject> MakeSessionObject(const FString& State) const;
 		bool WriteSessionObject(const FString& State, FString& OutError) const;
+		void ProcessDeferredRecovery();
 
 		FString SessionId;
 		FString SessionPath;
@@ -61,6 +62,9 @@ namespace UE::ProjectIntelligence
 		TMap<FString, FString> LastAppliedBackupFiles;
 		TArray<FString> LastAppliedAffectedAssets;
 		bool bLastAppliedSaved = false;
+		FString PendingRecoveryTransactionId;
+		TMap<FString, FString> PendingRecoveryBackupFiles;
+		TArray<FString> PendingRecoveryAffectedAssets;
 		FString OwnedRuntimeSessionId;
 		bool bOwnsPIESession = false;
 		int32 Port = 0;

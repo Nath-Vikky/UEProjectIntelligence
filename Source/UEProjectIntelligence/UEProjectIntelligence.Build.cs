@@ -34,6 +34,7 @@ public class UEProjectIntelligence : ModuleRules
 				"CoreUObject",
 				"EditorSubsystem",
 				"Engine",
+				"EngineSettings",
 				"InputCore",
 				"LevelEditor",
 				"LevelSequence",

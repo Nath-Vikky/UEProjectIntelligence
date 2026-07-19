@@ -52,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--viewport-width", type=int, default=640)
     parser.add_argument("--viewport-height", type=int, default=360)
     parser.add_argument("--warm-read-p95-ms", type=float, default=2000.0)
+    parser.add_argument("--hard-scope-p95-ms", type=float, default=2000.0)
+    parser.add_argument("--focused-node-p95-ms", type=float, default=500.0)
     parser.add_argument("--llmnpc-regression", action="store_true")
     args = parser.parse_args(argv)
 
@@ -223,6 +225,27 @@ def main(argv: list[str] | None = None) -> int:
         slot_nodes = slot["result"]["blueprint_entities"]
         assert any("AnimGraphNode_Slot_0" in str(item.get("canonical_key") or "") for item in slot_nodes), slot_nodes
         assert any(str(_attribute(item, "slot_name") or "") == "DefaultSlot" for item in slot_nodes)
+        slot_node_guid = next((str(_attribute(item, "node_guid") or "") for item in slot_nodes if _attribute(item, "node_guid")), "")
+        focused_timings: list[float] = []
+        if slot_node_guid:
+            for _ in range(20):
+                focused = _value(
+                    server,
+                    "uepi_blueprint",
+                    {
+                        **guard,
+                        "asset": "/Game/LLMNPC/Animation/ABP_Manny1.ABP_Manny1",
+                        "node_guid": slot_node_guid,
+                        "max_payload_bytes": 30000,
+                    },
+                )
+                assert focused["result"]["focus"]["node_guid"] == slot_node_guid
+                assert focused["payload_bytes"] < 30000
+                focused_timings.append(float(focused["timing"]["total_ms"]))
+            focused_p95_ms = sorted(focused_timings)[max(0, math.ceil(len(focused_timings) * 0.95) - 1)]
+            assert focused_p95_ms < args.focused_node_p95_ms, focused_timings
+        else:
+            focused_p95_ms = None
 
         no_match = _value(
             server,
@@ -238,28 +261,37 @@ def main(argv: list[str] | None = None) -> int:
         assert any(item.get("code") == "UEPI_BLUEPRINT_FILTER_NO_MATCH" for item in no_match["diagnostics"])
         assert not any(item.get("code") == "UEPI_REFRESH_REQUESTED" for item in no_match["diagnostics"])
 
-        animation_context = _value(
-            server,
-            "uepi_context",
-            {
-                **guard,
-                "question": "Analyze the Waving animation sequence",
-                "route": "animation_playback",
-                "hard_scope": [
-                    "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny",
-                    "/Game/LLMNPC/Animation/Waving",
-                    "/Game/LLMNPC/Animation/ABP_Manny1",
-                ],
-                "max_items": 12,
-                "fields": [
-                    "sections.animation_summary.asset",
-                    "sections.animation_summary.motion_summary",
-                    "sections.animation_summary.sequence.sequence_path",
-                    "sections.animation_summary.sequence.play_length_seconds",
-                ],
-                "max_payload_bytes": 131072,
-            },
-        )
+        hard_scope = [
+            "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny",
+            "/Game/LLMNPC/Animation/Waving",
+            "/Game/LLMNPC/Animation/ABP_Manny1",
+        ]
+        animation_arguments = {
+            **guard,
+            "question": "Analyze the Waving animation sequence",
+            "route": "animation_playback",
+            "hard_scope": hard_scope,
+            "max_items": 12,
+            "fields": [
+                "sections.animation_summary.asset",
+                "sections.animation_summary.motion_summary",
+                "sections.animation_summary.sequence.sequence_path",
+                "sections.animation_summary.sequence.play_length_seconds",
+            ],
+            "max_payload_bytes": 131072,
+        }
+        hard_scope_timings: list[float] = []
+        animation_context: dict[str, Any] | None = None
+        for index in range(20):
+            rotated = hard_scope[index % len(hard_scope) :] + hard_scope[: index % len(hard_scope)]
+            animation_context = _value(server, "uepi_context", {**animation_arguments, "hard_scope": rotated})
+            assert animation_context["result"]["query_source"] == "sqlite_cache"
+            assert not any(item.get("code") == "UEPI_SLOW_OPERATION" for item in animation_context["diagnostics"])
+            assert animation_context["result"]["sections"]["animation_summary"]["asset"]["canonical_key"] == "/Game/LLMNPC/Animation/Waving.Waving"
+            hard_scope_timings.append(float(animation_context["timing"]["snapshot_query_ms"]))
+        assert animation_context is not None
+        hard_scope_p95_ms = sorted(hard_scope_timings)[max(0, math.ceil(len(hard_scope_timings) * 0.95) - 1)]
+        assert hard_scope_p95_ms < args.hard_scope_p95_ms, hard_scope_timings
         animation_summary = animation_context["result"]["sections"]["animation_summary"]
         assert animation_summary["asset"]["canonical_key"] == "/Game/LLMNPC/Animation/Waving.Waving"
         assert animation_summary["motion_summary"] is not None
@@ -267,6 +299,8 @@ def main(argv: list[str] | None = None) -> int:
         llmnpc = {
             "slot_node_count": len(slot_nodes),
             "animation_asset": animation_summary["asset"]["canonical_key"],
+            "hard_scope_p95_ms": hard_scope_p95_ms,
+            "focused_node_p95_ms": focused_p95_ms,
         }
 
     summary = {

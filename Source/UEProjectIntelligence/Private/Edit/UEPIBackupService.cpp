@@ -1,11 +1,8 @@
 #include "Edit/UEPIBackupService.h"
 
-#include "AssetRegistry/AssetRegistryModule.h"
 #include "HAL/FileManager.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
-#include "PackageTools.h"
-#include "UObject/Package.h"
 
 namespace UE::ProjectIntelligence
 {
@@ -48,49 +45,6 @@ namespace UE::ProjectIntelligence
 			else if (IFileManager::Get().Copy(*Pair.Key, *Pair.Value, true, true) != COPY_OK)
 			{
 				bOk = false;
-			}
-		}
-		TArray<UPackage*> PackagesToUnload;
-		TArray<UPackage*> PackagesToReload;
-		for (const FString& AssetPath : AffectedAssets)
-		{
-			if (!AssetPath.StartsWith(TEXT("/"))) continue;
-			const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
-			if (UPackage* Package = FindPackage(nullptr, *PackageName))
-			{
-				Package->SetDirtyFlag(false);
-				const FString PackageFile = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
-				const FString* BackupFile = BackupFiles.Find(PackageFile);
-				if (BackupFile && BackupFile->IsEmpty())
-				{
-					if (UObject* NewAsset = FindObject<UObject>(nullptr, *AssetPath))
-					{
-						FAssetRegistryModule::AssetDeleted(NewAsset);
-					}
-					PackagesToUnload.AddUnique(Package);
-				}
-				else
-				{
-					PackagesToReload.AddUnique(Package);
-				}
-			}
-		}
-		if (PackagesToUnload.Num() > 0)
-		{
-			FText UnloadError;
-			if (!UPackageTools::UnloadPackages(PackagesToUnload, UnloadError, true))
-			{
-				bOk = false;
-				OutError = UnloadError.ToString();
-			}
-		}
-		if (PackagesToReload.Num() > 0)
-		{
-			FText ReloadError;
-			if (!UPackageTools::ReloadPackages(PackagesToReload, ReloadError, EReloadPackagesInteractionMode::AssumePositive))
-			{
-				bOk = false;
-				OutError = ReloadError.ToString();
 			}
 		}
 		if (bOk) OutError.Reset(); else if (OutError.IsEmpty()) OutError = TEXT("One or more package files could not be restored.");

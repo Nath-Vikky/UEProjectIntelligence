@@ -31,6 +31,7 @@ namespace UE::ProjectIntelligence
 	{
 		TArray<FString> Capabilities = {
 			TEXT("edit.discover"),
+			TEXT("edit.preflight"),
 			TEXT("edit.apply"),
 			TEXT("edit.validate"),
 			TEXT("edit.rollback")

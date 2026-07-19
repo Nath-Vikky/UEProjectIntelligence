@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 import time
 from typing import Any
+from uuid import uuid4
 
 from .bridge_client import call_bridge
 
 
 MUTATING_ACTIONS = {"start", "stop", "input", "invoke"}
+RUNTIME_ACTIONS = {"start", "stop", "input", "invoke", "read", "wait", "assert", "delay"}
+INPUT_DELIVERIES = {"player_controller", "possessed_pawn_input_stack", "game_viewport", "enhanced_input_action"}
 
 
 def _approved_subset(arguments: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
@@ -31,6 +35,145 @@ def _value_at_path(value: Any, path: str) -> Any:
 
 def _ticket_path(store: Any, ticket_id: str) -> Path:
     return store.store_dir / "runtime" / f"{ticket_id.replace(':', '-')}.json"
+
+
+def _plan_path(store: Any, plan_id: str) -> Path:
+    return store.store_dir / "runtime" / f"{plan_id.replace(':', '-')}.plan.json"
+
+
+def _canonical_hash(value: dict[str, Any]) -> str:
+    payload = {key: child for key, child in value.items() if key != "plan_hash"}
+    return "sha256:" + hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _write_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _ticket_from_plan(engine: Any, plan: dict[str, Any]) -> dict[str, Any]:
+    steps = [item for item in plan.get("steps") or [] if isinstance(item, dict)]
+    allowed_actions = sorted(({"stop"} | {str(item.get("action") or "") for item in steps}) & RUNTIME_ACTIONS)
+    allowed_functions = sorted({str(item.get("function")) for item in steps if item.get("function")} | {str(item) for item in plan.get("allowed_functions") or [] if isinstance(item, str)})
+    allowed_keys = sorted({str(item.get("key")) for item in steps if item.get("action") == "input" and item.get("key")} | {str(item) for item in plan.get("allowed_keys") or [] if isinstance(item, str)})
+    allowed_deliveries = sorted({str(item.get("delivery") or "possessed_pawn_input_stack") for item in steps if item.get("action") == "input"} | {str(item) for item in plan.get("allowed_deliveries") or [] if isinstance(item, str)})
+    allowed_inputs = [
+        _approved_subset(item, ("key", "event", "delivery", "input_action", "value"))
+        for item in steps
+        if item.get("action") == "input"
+    ]
+    allowed_reads = [item for item in plan.get("allowed_reads") or [] if isinstance(item, dict)]
+    allowed_reads.extend({_key: item[_key] for _key in ("object_path", "target", "property", "function", "field", "arguments", "equals") if _key in item} for item in steps if item.get("action") in {"read", "wait", "assert"} and (item.get("object_path") or item.get("target")))
+    allowed_invocations = [{key: item[key] for key in ("object_path", "target", "function", "arguments") if key in item} for item in steps if item.get("action") == "invoke"]
+    ticket_id = f"uepi-runtime-ticket:{uuid4().hex}"
+    ticket = {
+        "schema_version": "uepi.runtime-ticket.v1",
+        "ticket_id": ticket_id,
+        "runtime_plan_id": plan.get("runtime_plan_id"),
+        "plan_hash": plan.get("plan_hash"),
+        "project_binding_id": plan.get("project_binding_id"),
+        "editor_session_id": plan.get("editor_session_id"),
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=20)).isoformat().replace("+00:00", "Z"),
+        "map": plan.get("map"),
+        "timeout_seconds": min(120.0, max(1.0, float(plan.get("timeout_seconds") or 60.0))),
+        "allowed_actions": allowed_actions,
+        "allowed_functions": allowed_functions,
+        "allowed_invocations": allowed_invocations,
+        "allowed_keys": allowed_keys,
+        "allowed_deliveries": allowed_deliveries,
+        "allowed_inputs": allowed_inputs,
+        "allowed_reads": allowed_reads,
+        "steps": steps,
+    }
+    _write_json(_ticket_path(engine.store, ticket_id), ticket)
+    return ticket
+
+
+def preview(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    status = call_bridge(engine.store, "editor.get_status", timeout=2.0, expected_identity=engine.identity, expected_editor_session_id=str(arguments.get("expected_editor_session_id") or "") or None)
+    if not status.get("ok"):
+        diagnostics = [item for item in status.get("diagnostics") or [] if isinstance(item, dict)]
+        code = str(next((item.get("code") for item in diagnostics), "UEPI_EDITOR_SESSION_REQUIRED"))
+        return engine._error(code, "Runtime Preview requires the exact live Editor session.", diagnostics=diagnostics, tool="uepi_runtime_preview", operation="preview")
+    editor = status.get("result") if isinstance(status.get("result"), dict) else {}
+    session_id = str(editor.get("editor_session_id") or editor.get("session_id") or "")
+    steps = [item for item in arguments.get("steps") or [] if isinstance(item, dict)]
+    diagnostics: list[dict[str, Any]] = []
+    map_path = str(arguments.get("map") or editor.get("active_map") or "")
+    if not map_path.startswith("/Game/"):
+        diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_MAP_NOT_APPROVED", "message": "Runtime Preview requires an exact /Game map package."})
+    if not steps:
+        diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_PLAN_EMPTY", "message": "Runtime Preview requires at least one verification step."})
+    for index, step in enumerate(steps):
+        action = str(step.get("action") or "")
+        if action not in RUNTIME_ACTIONS:
+            diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_ACTION_NOT_APPROVED", "message": f"Unsupported runtime step {index}: {action}"})
+        if action == "input":
+            delivery = str(step.get("delivery") or "possessed_pawn_input_stack")
+            has_identity = bool(step.get("input_action")) if delivery == "enhanced_input_action" else bool(step.get("key"))
+            if not has_identity or delivery not in INPUT_DELIVERIES:
+                diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_INPUT_NOT_APPROVED", "message": f"Input step {index} requires an exact key, or an exact input_action for Enhanced Input, and a supported delivery."})
+        if action == "delay":
+            try:
+                seconds = float(step.get("seconds", step.get("timeout_seconds", 0.0)))
+            except (TypeError, ValueError):
+                seconds = 0.0
+            if seconds <= 0.0 or seconds > 120.0:
+                diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_DELAY_INVALID", "message": f"Delay step {index} requires seconds in the range (0, 120]."})
+    if diagnostics:
+        return engine._error(str(diagnostics[0]["code"]), "Runtime Preview is blocked.", diagnostics=diagnostics, tool="uepi_runtime_preview", operation="preview")
+    plan_id = f"uepi-runtime-plan:{uuid4().hex}"
+    now = datetime.now(timezone.utc)
+    nonce = uuid4().hex
+    plan = {
+        "schema_version": "uepi.runtime-plan.v1",
+        "runtime_plan_id": plan_id,
+        "intent": str(arguments.get("intent") or "Runtime verification"),
+        "project_binding_id": engine.identity.get("project_binding_id"),
+        "project_file": engine.identity.get("project_file"),
+        "editor_session_id": session_id,
+        "map": map_path,
+        "steps": steps,
+        "allowed_functions": [str(item) for item in arguments.get("allowed_functions") or []],
+        "allowed_keys": [str(item) for item in arguments.get("allowed_keys") or []],
+        "allowed_deliveries": [str(item) for item in arguments.get("allowed_deliveries") or []],
+        "allowed_reads": [item for item in arguments.get("allowed_reads") or [] if isinstance(item, dict)],
+        "timeout_seconds": min(120.0, max(1.0, float(arguments.get("timeout_seconds") or 60.0))),
+        "approval_nonce": nonce,
+        "created_at": now.isoformat().replace("+00:00", "Z"),
+        "expires_at": (now + timedelta(minutes=10)).isoformat().replace("+00:00", "Z"),
+    }
+    plan["plan_hash"] = _canonical_hash(plan)
+    _write_json(_plan_path(engine.store, plan_id), plan)
+    return engine._envelope(
+        {"plan": plan, "approval_required": True},
+        next_actions=[{"reason": "After one explicit user approval, issue the session-bound runtime ticket.", "tool": "uepi_runtime_approve", "arguments": {"runtime_plan_id": plan_id, "plan_hash": plan["plan_hash"], "approval_nonce": nonce, "approved": True}}],
+        tool="uepi_runtime_preview",
+        operation="preview",
+    )
+
+
+def approve(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    plan_id = str(arguments.get("runtime_plan_id") or "")
+    try:
+        plan = json.loads(_plan_path(engine.store, plan_id).read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return engine._error("UEPI_RUNTIME_PLAN_NOT_FOUND", "Runtime verification plan was not found.", tool="uepi_runtime_approve", operation="approve")
+    if not arguments.get("approved") or arguments.get("plan_hash") != plan.get("plan_hash") or arguments.get("approval_nonce") != plan.get("approval_nonce") or _canonical_hash(plan) != plan.get("plan_hash"):
+        return engine._error("UEPI_RUNTIME_APPROVAL_MISMATCH", "Runtime approval does not match the immutable Preview plan.", tool="uepi_runtime_approve", operation="approve")
+    expires = datetime.fromisoformat(str(plan.get("expires_at")).replace("Z", "+00:00"))
+    if expires < datetime.now(timezone.utc):
+        return engine._error("UEPI_RUNTIME_PLAN_EXPIRED", "Runtime verification plan expired; preview it again.", tool="uepi_runtime_approve", operation="approve")
+    status = call_bridge(engine.store, "editor.get_status", timeout=2.0, expected_identity=engine.identity, expected_editor_session_id=str(plan.get("editor_session_id") or ""))
+    if not status.get("ok"):
+        return engine._error("UEPI_EDITOR_SESSION_MISMATCH", "The Editor session changed after Runtime Preview; create a new plan for the current session.", diagnostics=status.get("diagnostics") or [], tool="uepi_runtime_approve", operation="approve")
+    ticket = _ticket_from_plan(engine, plan)
+    first_step = next((item for item in ticket.get("steps") or [] if isinstance(item, dict)), None)
+    next_actions = []
+    if first_step:
+        next_actions.append({"reason": "Execute the first approved runtime verification step.", "tool": "uepi_runtime", "arguments": {"ticket_id": ticket["ticket_id"], **first_step}})
+    return engine._envelope({"ticket": ticket}, next_actions=next_actions, tool="uepi_runtime_approve", operation="approve")
 
 
 def load_ticket(engine: Any, ticket_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -85,14 +228,33 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             requested_invoke = _approved_subset(arguments, ("object_path", "target", "function", "arguments"))
             if not _matches_approved(requested_invoke, ticket.get("allowed_invocations") or []):
                 return engine._error("UEPI_RUNTIME_INVOCATION_NOT_APPROVED", "Runtime target, function, or arguments differ from the approved verification plan.", tool="uepi_runtime", operation=action)
-        if action == "input" and str(arguments.get("key") or "") not in set(ticket.get("allowed_keys") or []):
+        if action == "input" and str(arguments.get("delivery") or "possessed_pawn_input_stack") != "enhanced_input_action" and str(arguments.get("key") or "") not in set(ticket.get("allowed_keys") or []):
             return engine._error("UEPI_RUNTIME_INPUT_NOT_APPROVED", "Runtime key is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
+        if action == "input" and str(arguments.get("delivery") or "possessed_pawn_input_stack") not in set(ticket.get("allowed_deliveries") or []):
+            return engine._error("UEPI_RUNTIME_INPUT_DELIVERY_NOT_APPROVED", "Runtime input delivery is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
+        if action == "input":
+            requested_input = _approved_subset(arguments, ("key", "event", "delivery", "input_action", "value"))
+            requested_input.setdefault("event", "pressed")
+            requested_input.setdefault("delivery", "possessed_pawn_input_stack")
+            approved_inputs = []
+            for item in ticket.get("allowed_inputs") or []:
+                if not isinstance(item, dict):
+                    continue
+                normalized = dict(item)
+                normalized.setdefault("event", "pressed")
+                normalized.setdefault("delivery", "possessed_pawn_input_stack")
+                approved_inputs.append(normalized)
+            if not _matches_approved(requested_input, approved_inputs):
+                return engine._error("UEPI_RUNTIME_INPUT_NOT_APPROVED", "Runtime input identity, event, delivery, or value differs from the approved verification plan.", tool="uepi_runtime", operation=action)
         if action in {"read", "wait", "assert"}:
-            requested_read = _approved_subset(arguments, ("object_path", "target", "property", "function", "field", "arguments", "equals"))
-            if not _matches_approved(requested_read, ticket.get("allowed_reads") or []):
-                return engine._error("UEPI_RUNTIME_READ_NOT_APPROVED", "Runtime object/property is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
-            if arguments.get("function") and str(arguments.get("function")) not in set(ticket.get("allowed_functions") or []):
-                return engine._error("UEPI_RUNTIME_FUNCTION_NOT_APPROVED", "Runtime observation function is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
+            if action == "wait" and not (arguments.get("object_path") or arguments.get("target") or arguments.get("property") or arguments.get("function")):
+                action = "delay"
+            else:
+                requested_read = _approved_subset(arguments, ("object_path", "target", "property", "function", "field", "arguments", "equals"))
+                if not _matches_approved(requested_read, ticket.get("allowed_reads") or []):
+                    return engine._error("UEPI_RUNTIME_READ_NOT_APPROVED", "Runtime object/property is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
+                if arguments.get("function") and str(arguments.get("function")) not in set(ticket.get("allowed_functions") or []):
+                    return engine._error("UEPI_RUNTIME_FUNCTION_NOT_APPROVED", "Runtime observation function is not listed in the approved verification plan.", tool="uepi_runtime", operation=action)
 
     if action in {"status", "start", "stop", "input", "invoke", "read"}:
         response = _bridge(engine, action, arguments, ticket)
@@ -102,7 +264,30 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             error = response.get("error") if isinstance(response.get("error"), dict) else {}
             code = str(error.get("code") or next((item.get("code") for item in response.get("diagnostics") or [] if isinstance(item, dict)), "UEPI_RUNTIME_ACTION_FAILED"))
             return engine._error(code, str(error.get("message") or f"Runtime action failed: {action}"), diagnostics=response.get("diagnostics") if isinstance(response.get("diagnostics"), list) else [], tool="uepi_runtime", operation=action)
-        return engine._envelope(response.get("result") if isinstance(response.get("result"), dict) else {}, diagnostics=response.get("diagnostics") or [], tool="uepi_runtime", operation=action)
+        result = response.get("result") if isinstance(response.get("result"), dict) else {}
+        if action == "start" and bool(arguments.get("wait_until_running", True)):
+            deadline = time.monotonic() + max(1.0, min(float(arguments.get("timeout_seconds") or 30.0), 120.0))
+            while time.monotonic() <= deadline:
+                status = _bridge(engine, "status", {}, ticket)
+                status_result = status.get("result") if isinstance(status.get("result"), dict) else {}
+                if status.get("ok") and status_result.get("state") == "running":
+                    result = {**result, "state": "running", "runtime_status": status_result}
+                    break
+                time.sleep(0.1)
+            else:
+                _cleanup_owned_pie(engine, ticket)
+                return engine._error("UEPI_RUNTIME_START_TIMEOUT", "PIE did not reach running state before the approved timeout.", tool="uepi_runtime", operation=action)
+        return engine._envelope(result, diagnostics=response.get("diagnostics") or [], tool="uepi_runtime", operation=action)
+
+    if action == "delay":
+        try:
+            seconds = float(arguments.get("seconds", arguments.get("timeout_seconds", 0.0)))
+        except (TypeError, ValueError):
+            seconds = 0.0
+        if seconds <= 0.0 or seconds > 120.0:
+            return engine._error("UEPI_RUNTIME_DELAY_INVALID", "Runtime delay requires seconds in the range (0, 120].", tool="uepi_runtime", operation=action)
+        time.sleep(seconds)
+        return engine._envelope({"delayed": True, "seconds": seconds}, tool="uepi_runtime", operation=action)
 
     if action in {"wait", "assert"}:
         timeout = max(0.0, min(float(arguments.get("timeout_seconds") or 10.0), 120.0))

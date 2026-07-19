@@ -664,6 +664,22 @@ class SQLiteSnapshotCache:
         ).fetchall()
         return [relation for row in rows if (relation := self._relation_from_row(row))]
 
+    def relations_for_entities(self, entity_ids: set[str] | list[str], limit: int = 1000) -> list[dict[str, Any]]:
+        ids = [item for item in entity_ids if isinstance(item, str) and item]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.connection.execute(
+            f"""
+            SELECT * FROM relations
+            WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (*ids, *ids, max(0, int(limit))),
+        ).fetchall()
+        return [relation for row in rows if (relation := self._relation_from_row(row))]
+
     def outgoing_relations(self, entity_id: str, relation_types: set[str] | None = None, limit: int = 500) -> list[dict[str, Any]]:
         parameters: list[Any] = [entity_id]
         relation_filter = ""
@@ -732,19 +748,23 @@ class SQLiteSnapshotCache:
     def scoped_entities_for_asset(
         self,
         asset_key: str,
-        domain_kinds: set[str],
+        domain_kinds: set[str] | None = None,
         limit: int = 5000,
     ) -> list[dict[str, Any]]:
-        if not asset_key or not domain_kinds:
+        if not asset_key:
             return []
-        kind_placeholders = ",".join("?" for _ in domain_kinds)
         canonical_prefix = asset_key.rstrip(":") + ":%"
         attribute_match = f"%{asset_key}%"
+        kind_filter = ""
+        parameters: list[Any] = []
+        if domain_kinds:
+            kind_placeholders = ",".join("?" for _ in domain_kinds)
+            kind_filter = f"kind IN ({kind_placeholders}) AND"
+            parameters.extend(sorted(domain_kinds))
         rows = self.connection.execute(
             f"""
             SELECT * FROM entities
-            WHERE kind IN ({kind_placeholders})
-              AND (
+            WHERE {kind_filter} (
                     lower(canonical_key) = lower(?)
                  OR lower(canonical_key) LIKE lower(?)
                  OR attributes_json LIKE ?
@@ -752,6 +772,6 @@ class SQLiteSnapshotCache:
             ORDER BY canonical_key ASC, kind ASC, id ASC
             LIMIT ?
             """,
-            (*sorted(domain_kinds), asset_key, canonical_prefix, attribute_match, max(1, int(limit))),
+            (*parameters, asset_key, canonical_prefix, attribute_match, max(1, int(limit))),
         ).fetchall()
         return [entity for row in rows if (entity := self._entity_from_row(row, include_snapshot=True))]

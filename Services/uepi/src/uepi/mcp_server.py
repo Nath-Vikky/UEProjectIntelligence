@@ -71,6 +71,95 @@ def guarded_edit_schema(properties: dict[str, Any], required: list[str] | None =
     )
 
 
+def edit_operation_item_schema() -> dict[str, Any]:
+    path = Path(__file__).resolve().parents[4] / "Schemas" / "edit-operation-contracts.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    contracts = payload.get("operations") if isinstance(payload.get("operations"), dict) else {}
+    variants: list[dict[str, Any]] = []
+    for operation_type, contract in sorted(contracts.items()):
+        full_params = contract.get("input_schema") if isinstance(contract, dict) and isinstance(contract.get("input_schema"), dict) else {"type": "object"}
+        full_properties = full_params.get("properties") if isinstance(full_params.get("properties"), dict) else {}
+        required_params = [str(item) for item in full_params.get("required") or [] if isinstance(item, str)]
+        # tools/list must stay small enough for reliable Codex injection. The
+        # discriminated wrapper carries each operation's required typed fields;
+        # uepi_schema returns the complete authoritative optional contract.
+        params_schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {name: full_properties.get(name, {}) for name in required_params},
+            "additionalProperties": True,
+        }
+        if required_params:
+            params_schema["required"] = required_params
+        variants.append(
+            {
+                "type": "object",
+                "properties": {
+                    "operation_id": {"type": "string"},
+                    "type": {"type": "string", "const": operation_type},
+                    "params": params_schema,
+                    "depends_on": {"type": "array", "items": {"type": "string"}},
+                    "if_exists": {"type": "string", "enum": ["fail", "skip", "reuse"]},
+                },
+                "required": ["type", "params"],
+            }
+        )
+    return {"oneOf": variants} if variants else {"type": "object", "required": ["type", "params"], "properties": {"type": {"type": "string"}, "params": {"type": "object"}}}
+
+
+EDIT_OPERATION_ITEM_SCHEMA = edit_operation_item_schema()
+
+
+def runtime_step_schema() -> dict[str, Any]:
+    base_properties = {
+        "map": {"type": "string"},
+        "object_path": {"type": "string"},
+        "target": {"type": "object"},
+        "property": {"type": "string"},
+        "function": {"type": "string"},
+        "arguments": {"type": "object"},
+        "field": {"type": "string"},
+        "equals": {},
+        "timeout_seconds": {"type": "number", "minimum": 0, "maximum": 120},
+        "poll_interval_ms": {"type": "integer", "minimum": 50, "maximum": 2000},
+    }
+
+    def step(action: str, properties: dict[str, Any] | None = None, required: list[str] | None = None) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {"action": {"type": "string", "const": action}, **base_properties, **(properties or {})},
+            "required": ["action", *(required or [])],
+        }
+
+    return {
+        "oneOf": [
+            step("start", {"wait_until_running": {"type": "boolean", "default": True}}),
+            step("stop"),
+            step(
+                "input",
+                {
+                    "key": {"type": "string"},
+                    "input_action": {"type": "string"},
+                    "value": {},
+                    "event": {"type": "string", "enum": ["pressed", "released"]},
+                    "delivery": {"type": "string", "enum": ["player_controller", "possessed_pawn_input_stack", "game_viewport", "enhanced_input_action"]},
+                },
+                ["delivery"],
+            ),
+            step("invoke", required=["function"]),
+            step("read"),
+            step("delay", {"seconds": {"type": "number", "minimum": 0.01, "maximum": 120}}, ["seconds"]),
+            step("wait"),
+            step("assert"),
+        ]
+    }
+
+
+RUNTIME_STEP_SCHEMA = runtime_step_schema()
+
+
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "uepi_status",
@@ -273,11 +362,41 @@ TOOLS: list[dict[str, Any]] = [
         ),
     },
     {
-        "name": "uepi_runtime",
-        "description": "Run transaction-bound, UEPI-owned PIE verification with guarded read, input, invoke, wait, and assert actions.",
+        "name": "uepi_runtime_preview",
+        "description": "Create an immutable, session-bound PIE verification plan without editing an Unreal asset.",
         "inputSchema": read_schema(
             {
-                "action": {"type": "string", "enum": ["status", "start", "stop", "input", "invoke", "read", "wait", "assert"]},
+                "intent": {"type": "string"},
+                "map": {"type": "string"},
+                "steps": {"type": "array", "items": RUNTIME_STEP_SCHEMA, "minItems": 1},
+                "allowed_functions": {"type": "array", "items": {"type": "string"}},
+                "allowed_keys": {"type": "array", "items": {"type": "string"}},
+                "allowed_deliveries": {"type": "array", "items": {"type": "string", "enum": ["player_controller", "possessed_pawn_input_stack", "game_viewport", "enhanced_input_action"]}},
+                "allowed_reads": {"type": "array", "items": {"type": "object"}},
+                "timeout_seconds": {"type": "number", "minimum": 1, "maximum": 120},
+            },
+            ["steps"],
+        ),
+    },
+    {
+        "name": "uepi_runtime_approve",
+        "description": "Issue a restricted Runtime Ticket after explicit approval of an immutable Runtime Preview.",
+        "inputSchema": read_schema(
+            {
+                "runtime_plan_id": {"type": "string"},
+                "plan_hash": {"type": "string"},
+                "approval_nonce": {"type": "string"},
+                "approved": {"type": "boolean"},
+            },
+            ["runtime_plan_id", "plan_hash", "approval_nonce", "approved"],
+        ),
+    },
+    {
+        "name": "uepi_runtime",
+        "description": "Run ticket-bound, UEPI-owned PIE verification with guarded read, routed input, invoke, delay, wait, and assert actions.",
+        "inputSchema": read_schema(
+            {
+                "action": {"type": "string", "enum": ["status", "start", "stop", "input", "invoke", "read", "delay", "wait", "assert"]},
                 "ticket_id": {"type": "string"},
                 "map": {"type": "string"},
                 "object_path": {"type": "string"},
@@ -287,7 +406,12 @@ TOOLS: list[dict[str, Any]] = [
                 "arguments": {"type": "object"},
                 "field": {"type": "string"},
                 "key": {"type": "string"},
+                "input_action": {"type": "string", "description": "Exact /Game/... InputAction object path used with enhanced_input_action delivery."},
+                "value": {"description": "Approved Enhanced Input value: boolean, number, or {x,y,z}."},
                 "event": {"type": "string", "enum": ["pressed", "released"]},
+                "delivery": {"type": "string", "enum": ["player_controller", "possessed_pawn_input_stack", "game_viewport", "enhanced_input_action"]},
+                "wait_until_running": {"type": "boolean", "default": True},
+                "seconds": {"type": "number", "minimum": 0.01, "maximum": 120},
                 "equals": {},
                 "timeout_seconds": {"type": "number"},
                 "poll_interval_ms": {"type": "integer"},
@@ -319,7 +443,7 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
         "inputSchema": guarded_edit_schema(
             {
                 "intent": {"type": "string"},
-                "operations": {"type": "array", "items": {"type": "object"}},
+                "operations": {"type": "array", "items": EDIT_OPERATION_ITEM_SCHEMA},
                 "evidence": {"type": "array", "items": {"type": "object"}},
                 "verification_plan": {"type": "object"},
             }
@@ -353,10 +477,12 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
 SERVER_INSTRUCTIONS = """UEPI is a project-local Unreal Engine 5.3.2 MCP. Always call uepi_status before other tools. Prefer uepi_context to build bounded evidence before answering project questions. Treat Blueprint pin links and evidence as the source of truth. Distinguish live, saved, stale, and refresh_requested data. The Codex profile exposes read and edit tools together so the agent can choose. Edit apply may be available when the editor bridge is online, but it must never run without edit_preview and explicit user approval. Once the user explicitly approves the unchanged immutable Preview, immediately call uepi_edit_apply with its next-action arguments and continue validation, touched-only save, refresh, diff, and approved runtime verification without asking for manual tool invocation or repeated phase confirmations. Never infer approval from the original edit request. Never guess Blueprint pin names; use returned pins and GUIDs.
 
 Use uepi_search or uepi_context to identify the minimum set of assets needed for the user's question.
-uepi_context supports routes such as auto, project_overview, input_to_gameplay, blueprint_behavior, animation_playback, ui_flow, asset_dependency_impact, data_driven_behavior, gas_ability_flow, ai_behavior_flow, and network_replication_flow.
+uepi_context supports routes such as auto, project_overview, gameplay_input_to_effect, input_to_gameplay, blueprint_behavior, animation_playback, ui_flow, asset_dependency_impact, data_driven_behavior, gas_ability_flow, ai_behavior_flow, and network_replication_flow. Prefer gameplay_input_to_effect when a question starts at a key/InputAction and must cross Blueprint assets to a terminal effect; use its input_owner evidence and duplicate-path diagnostics instead of assuming every discovered input node owns player input.
 Then call the narrow domain tool: uepi_asset for local context, uepi_blueprint for Blueprint graph/node/pin semantic summaries, uepi_blueprint_trace for static flow paths, uepi_animation for animation/skeleton/track summaries and include=["bone_motion_profile"] when the user asks how bones move over time. For procedural animation recreation, call uepi_animation with include=["reconstruction_profile"] or include=["driver_track_curves"]; use include=["full_pose_artifact"] only when high-fidelity all-bone pose samples are needed. In animation bone-motion profiles, start from driver_bones and motion_intent_groups for procedural generation decisions, then use changed_bones as sampled evidence. Use uepi_impact for dependency impact.
 Reads never require the Unreal Editor when the snapshot/cache is current. If a read response includes diagnostic code UEPI_REFRESH_REQUESTED, a targeted editor refresh request has been queued under the Snapshot Store; retry the same read after the editor processes it. If UEPI_SNAPSHOT_STALE appears, ask the user to open the editor/plugin before expecting realtime data.
 Treat uepi_diff as a generation-level saved snapshot comparison, not a live editor diff.
+
+Runtime-only verification does not require a dummy asset edit. Call uepi_runtime_preview with the exact map and ordered verification steps, obtain one explicit user approval, call uepi_runtime_approve with the unchanged hash/nonce, then use the returned ticket with uepi_runtime. Prefer delivery=possessed_pawn_input_stack for legacy Pawn input, delivery=game_viewport for mapped-key delivery, and delivery=enhanced_input_action with an exact input_action path and typed value for direct Enhanced Input injection. A successful injection proves delivery only; finish with an approved read/wait/assert of gameplay state.
 
 For Blueprint writes, choose the design before choosing operations. Prefer compact, idiomatic Blueprint graphs that use state variables, loops, timers, custom events, or helper functions for repeated behavior. Avoid unrolling repeated gameplay logic into many duplicate nodes unless the user explicitly asks for that visual shape. Include the considered alternatives and chosen design rationale in edit_preview evidence; if the current operation catalog cannot express the better design, say so before falling back to a larger graph."""
 
@@ -424,9 +550,13 @@ class UEPIMCPServer:
                 value.setdefault("diagnostics", []).extend(diagnostics)
                 blocking = next((item for item in diagnostics if item.get("blocking")), None)
                 if blocking:
+                    current_session_id = str(blocking.get("current_editor_session_id") or "")
                     value["ok"] = False
-                    value["error"] = {"code": blocking.get("code"), "message": blocking.get("message"), "retryable": bool(blocking.get("retryable")), "candidates": []}
+                    value["error"] = {"code": blocking.get("code"), "message": blocking.get("message"), "retryable": bool(blocking.get("retryable")), "candidates": ([{"editor_session_id": current_session_id}] if current_session_id else [])}
                     value["result"] = None
+                    if current_session_id:
+                        retry_arguments = {**arguments, "expected_editor_session_id": current_session_id}
+                        value.setdefault("next_actions", []).append({"reason": "Rebind this request to the current exact Editor session.", "tool": str(value.get("tool") or "uepi_status"), "arguments": retry_arguments})
         attach_timing(value)
         bounded = apply_response_options(value, arguments)
         response = tool_response(bounded, arguments)
@@ -464,9 +594,11 @@ class UEPIMCPServer:
         response = engine._error(
             str(blocking.get("code") or "UEPI_EDIT_GUARD_FAILED"),
             str(blocking.get("message") or "The edit request failed its project/session guard."),
+            candidates=([{"editor_session_id": str(blocking.get("current_editor_session_id"))}] if blocking.get("current_editor_session_id") else []),
             diagnostics=diagnostics,
             tool=name,
             operation="guard",
+            next_actions=([{"reason": "Rebind the guarded edit request to the current Editor session.", "tool": name, "arguments": {**arguments, "expected_editor_session_id": str(blocking.get("current_editor_session_id"))}}] if blocking.get("current_editor_session_id") else []),
         )
         return response
 
@@ -592,6 +724,10 @@ class UEPIMCPServer:
                 return self._read_result(refresh.execute(engine, arguments), arguments)
             if name == "uepi_schema":
                 return self._read_result(schema_service.execute(engine, arguments), arguments)
+            if name == "uepi_runtime_preview":
+                return self._read_result(runtime.preview(engine, arguments), arguments)
+            if name == "uepi_runtime_approve":
+                return self._read_result(runtime.approve(engine, arguments), arguments)
             if name == "uepi_runtime":
                 return self._read_result(runtime.execute(engine, arguments), arguments)
             if profile_includes_edit_tools(self.args.tool_profile):

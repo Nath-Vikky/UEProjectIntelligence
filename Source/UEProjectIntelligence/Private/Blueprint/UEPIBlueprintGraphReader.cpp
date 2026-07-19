@@ -33,6 +33,7 @@
 #include "K2Node_DynamicCast.h"
 #include "K2Node_Event.h"
 #include "K2Node_ExecutionSequence.h"
+#include "K2Node_FunctionEntry.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_LoadAsset.h"
 #include "K2Node_MacroInstance.h"
@@ -156,19 +157,76 @@ FString PinKey(const FString& NodeId, const UEdGraphPin& Pin, int32 PinIndex)
 	return NodeId + TEXT(":pin:") + Pin.PinName.ToString() + TEXT(":") + FString::FromInt(PinIndex);
 }
 
+FString PinContainerTypeString(const EPinContainerType ContainerType)
+{
+	switch (ContainerType)
+	{
+	case EPinContainerType::Array:
+		return TEXT("array");
+	case EPinContainerType::Set:
+		return TEXT("set");
+	case EPinContainerType::Map:
+		return TEXT("map");
+	default:
+		return TEXT("none");
+	}
+}
+
+void SetPinTypeObjectFields(TSharedRef<FJsonObject> Object, const FName Category, const TWeakObjectPtr<UObject>& TypeObject)
+{
+	const UObject* ResolvedObject = TypeObject.Get();
+	const FString ObjectPath = ResolvedObject ? ResolvedObject->GetPathName() : FString();
+	Object->SetStringField(TEXT("subcategory_object"), ObjectPath);
+	Object->SetStringField(TEXT("object_class"), Category == TEXT("object") || Category == TEXT("softobject") ? ObjectPath : FString());
+	Object->SetStringField(TEXT("subclass"), Category == TEXT("class") || Category == TEXT("softclass") ? ObjectPath : FString());
+	Object->SetStringField(TEXT("struct_path"), Cast<UScriptStruct>(ResolvedObject) ? ObjectPath : FString());
+}
+
+TSharedRef<FJsonObject> TerminalTypeToJson(const FEdGraphTerminalType& TerminalType)
+{
+	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetStringField(TEXT("category"), TerminalType.TerminalCategory.ToString());
+	Object->SetStringField(TEXT("subcategory"), TerminalType.TerminalSubCategory.ToString());
+	SetPinTypeObjectFields(Object, TerminalType.TerminalCategory, TerminalType.TerminalSubCategoryObject);
+	Object->SetBoolField(TEXT("is_const"), TerminalType.bTerminalIsConst);
+	Object->SetBoolField(TEXT("is_weak_pointer"), TerminalType.bTerminalIsWeakPointer);
+	Object->SetBoolField(TEXT("is_uobject_wrapper"), TerminalType.bTerminalIsUObjectWrapper);
+	Object->SetBoolField(TEXT("is_wildcard"), TerminalType.TerminalCategory == TEXT("wildcard"));
+	return Object;
+}
+
 TSharedRef<FJsonObject> PinTypeToJson(const FEdGraphPinType& PinType)
 {
 	TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
 	Object->SetStringField(TEXT("category"), PinType.PinCategory.ToString());
 	Object->SetStringField(TEXT("subcategory"), PinType.PinSubCategory.ToString());
-	Object->SetStringField(
-		TEXT("subcategory_object"),
-		PinType.PinSubCategoryObject.IsValid() ? PinType.PinSubCategoryObject->GetPathName() : FString());
+	SetPinTypeObjectFields(Object, PinType.PinCategory, PinType.PinSubCategoryObject);
+	Object->SetStringField(TEXT("container_type"), PinContainerTypeString(PinType.ContainerType));
 	Object->SetBoolField(TEXT("is_array"), PinType.IsArray());
 	Object->SetBoolField(TEXT("is_set"), PinType.IsSet());
 	Object->SetBoolField(TEXT("is_map"), PinType.IsMap());
 	Object->SetBoolField(TEXT("is_reference"), PinType.bIsReference);
 	Object->SetBoolField(TEXT("is_const"), PinType.bIsConst);
+	Object->SetBoolField(TEXT("is_weak_pointer"), PinType.bIsWeakPointer);
+	Object->SetBoolField(TEXT("is_uobject_wrapper"), PinType.bIsUObjectWrapper);
+	Object->SetBoolField(TEXT("is_wildcard"), PinType.PinCategory == TEXT("wildcard"));
+	if (PinType.IsArray() || PinType.IsSet())
+	{
+		TSharedRef<FJsonObject> ElementType = MakeShared<FJsonObject>();
+		ElementType->SetStringField(TEXT("category"), PinType.PinCategory.ToString());
+		ElementType->SetStringField(TEXT("subcategory"), PinType.PinSubCategory.ToString());
+		SetPinTypeObjectFields(ElementType, PinType.PinCategory, PinType.PinSubCategoryObject);
+		Object->SetObjectField(TEXT("element_type"), ElementType);
+	}
+	if (PinType.IsMap())
+	{
+		TSharedRef<FJsonObject> KeyType = MakeShared<FJsonObject>();
+		KeyType->SetStringField(TEXT("category"), PinType.PinCategory.ToString());
+		KeyType->SetStringField(TEXT("subcategory"), PinType.PinSubCategory.ToString());
+		SetPinTypeObjectFields(KeyType, PinType.PinCategory, PinType.PinSubCategoryObject);
+		Object->SetObjectField(TEXT("key_type"), KeyType);
+		Object->SetObjectField(TEXT("value_type"), TerminalTypeToJson(PinType.PinValueType));
+	}
 	return Object;
 }
 
@@ -258,13 +316,23 @@ TMap<FString, FString> MakePinLinkAttributes(
 	Attributes.Add(TEXT("source_pin_name"), SourcePin.PinName.ToString());
 	Attributes.Add(TEXT("source_pin_category"), SourcePin.PinType.PinCategory.ToString());
 	Attributes.Add(TEXT("source_pin_subcategory"), SourcePin.PinType.PinSubCategory.ToString());
+	Attributes.Add(TEXT("source_pin_subcategory_object"), SourcePin.PinType.PinSubCategoryObject.IsValid() ? SourcePin.PinType.PinSubCategoryObject->GetPathName() : FString());
+	Attributes.Add(TEXT("source_pin_container_type"), PinContainerTypeString(SourcePin.PinType.ContainerType));
 	Attributes.Add(TEXT("source_pin_direction"), PinDirectionString(SourcePin.Direction));
 	Attributes.Add(TEXT("target_node_class"), TargetNode.GetClass()->GetPathName());
 	Attributes.Add(TEXT("target_pin_id"), TargetPinId);
 	Attributes.Add(TEXT("target_pin_name"), TargetPin.PinName.ToString());
 	Attributes.Add(TEXT("target_pin_category"), TargetPin.PinType.PinCategory.ToString());
 	Attributes.Add(TEXT("target_pin_subcategory"), TargetPin.PinType.PinSubCategory.ToString());
+	Attributes.Add(TEXT("target_pin_subcategory_object"), TargetPin.PinType.PinSubCategoryObject.IsValid() ? TargetPin.PinType.PinSubCategoryObject->GetPathName() : FString());
+	Attributes.Add(TEXT("target_pin_container_type"), PinContainerTypeString(TargetPin.PinType.ContainerType));
 	Attributes.Add(TEXT("target_pin_direction"), PinDirectionString(TargetPin.Direction));
+	const bool bContainerProjectionCompatible = SourcePin.PinType.ContainerType == TargetPin.PinType.ContainerType;
+	Attributes.Add(TEXT("projection_complete"), bContainerProjectionCompatible ? TEXT("true") : TEXT("false"));
+	if (!bContainerProjectionCompatible)
+	{
+		Attributes.Add(TEXT("projection_diagnostic"), TEXT("UEPI_PIN_PROJECTION_INCOMPLETE"));
+	}
 
 	if (IsPinCategory(SourcePin, TEXT("exec")))
 	{
@@ -1939,6 +2007,32 @@ TSharedPtr<FJsonObject> AnnotateNodeSemantics(
 		return SemanticObject;
 	}
 
+	if (const UK2Node_FunctionEntry* FunctionEntry = Cast<UK2Node_FunctionEntry>(&Node))
+	{
+		const FString FunctionName = FunctionEntry->CustomGeneratedFunctionName.IsNone()
+			? (Node.GetGraph() ? Node.GetGraph()->GetName() : Node.GetName())
+			: FunctionEntry->CustomGeneratedFunctionName.ToString();
+		const FString SemanticId = Blueprint.GetPathName() + TEXT(":function:") + FunctionName;
+
+		TMap<FString, FString> Attributes;
+		Attributes.Add(TEXT("function_name"), FunctionName);
+		Attributes.Add(TEXT("blueprint_path"), Blueprint.GetPathName());
+		Attributes.Add(TEXT("semantic_id"), SemanticId);
+		const FString FunctionId = AddSemanticEntity(ProjectId, TEXT("blueprint_function_entry"), SemanticId, FunctionName, Attributes, Node.GetPathName(), OutEntities);
+		AddRelation(ProjectId, TEXT("declares_function_entry"), NodeId, FunctionId, Node.GetPathName(), TEXT("UK2Node_FunctionEntry stable function identity."), OutRelations);
+
+		NodeEntity.Attributes.Add(TEXT("semantic_kind"), TEXT("function_entry"));
+		NodeEntity.Attributes.Add(TEXT("semantic_function"), FunctionName);
+		NodeEntity.Attributes.Add(TEXT("semantic_id"), SemanticId);
+		NodeEntity.Completeness.Covered.AddUnique(TEXT("node_semantic_function_entry"));
+
+		SemanticObject = MakeShared<FJsonObject>();
+		SemanticObject->SetStringField(TEXT("kind"), TEXT("function_entry"));
+		SemanticObject->SetStringField(TEXT("function_name"), FunctionName);
+		SemanticObject->SetStringField(TEXT("semantic_id"), SemanticId);
+		return SemanticObject;
+	}
+
 	if (const UK2Node_Event* EventNode = Cast<UK2Node_Event>(&Node))
 	{
 		const FString EventName = EventNode->GetFunctionName().ToString();
@@ -1947,6 +2041,7 @@ TSharedPtr<FJsonObject> AnnotateNodeSemantics(
 		TMap<FString, FString> Attributes;
 		Attributes.Add(TEXT("event_name"), EventName);
 		Attributes.Add(TEXT("blueprint_path"), Blueprint.GetPathName());
+		Attributes.Add(TEXT("semantic_id"), EventKey);
 		Attributes.Add(TEXT("is_override"), EventNode->bOverrideFunction ? TEXT("true") : TEXT("false"));
 
 		const FString EventId = AddSemanticEntity(ProjectId, TEXT("blueprint_event"), EventKey, EventName, Attributes, Node.GetPathName(), OutEntities);
@@ -1954,11 +2049,13 @@ TSharedPtr<FJsonObject> AnnotateNodeSemantics(
 
 		NodeEntity.Attributes.Add(TEXT("semantic_kind"), TEXT("event"));
 		NodeEntity.Attributes.Add(TEXT("semantic_event"), EventName);
+		NodeEntity.Attributes.Add(TEXT("semantic_id"), EventKey);
 		NodeEntity.Completeness.Covered.AddUnique(TEXT("node_semantic_event"));
 
 		SemanticObject = MakeShared<FJsonObject>();
 		SemanticObject->SetStringField(TEXT("kind"), TEXT("event"));
 		SemanticObject->SetStringField(TEXT("event_name"), EventName);
+		SemanticObject->SetStringField(TEXT("semantic_id"), EventKey);
 		SemanticObject->SetBoolField(TEXT("is_override"), EventNode->bOverrideFunction);
 		return SemanticObject;
 	}
@@ -2248,6 +2345,18 @@ FEntityRecord MakePinEntity(const FString& ProjectId, const FString& PinId, cons
 	Entity.Attributes.Add(TEXT("direction"), PinDirectionString(Pin.Direction));
 	Entity.Attributes.Add(TEXT("pin_category"), Pin.PinType.PinCategory.ToString());
 	Entity.Attributes.Add(TEXT("pin_subcategory"), Pin.PinType.PinSubCategory.ToString());
+	Entity.Attributes.Add(TEXT("pin_subcategory_object"), Pin.PinType.PinSubCategoryObject.IsValid() ? Pin.PinType.PinSubCategoryObject->GetPathName() : FString());
+	Entity.Attributes.Add(TEXT("pin_container_type"), PinContainerTypeString(Pin.PinType.ContainerType));
+	Entity.Attributes.Add(TEXT("pin_is_reference"), BpBool(Pin.PinType.bIsReference));
+	Entity.Attributes.Add(TEXT("pin_is_const"), BpBool(Pin.PinType.bIsConst));
+	Entity.Attributes.Add(TEXT("pin_is_weak_pointer"), BpBool(Pin.PinType.bIsWeakPointer));
+	Entity.Attributes.Add(TEXT("pin_is_wildcard"), BpBool(Pin.PinType.PinCategory == TEXT("wildcard")));
+	if (Pin.PinType.IsMap())
+	{
+		Entity.Attributes.Add(TEXT("map_value_category"), Pin.PinType.PinValueType.TerminalCategory.ToString());
+		Entity.Attributes.Add(TEXT("map_value_subcategory"), Pin.PinType.PinValueType.TerminalSubCategory.ToString());
+		Entity.Attributes.Add(TEXT("map_value_subcategory_object"), Pin.PinType.PinValueType.TerminalSubCategoryObject.IsValid() ? Pin.PinType.PinValueType.TerminalSubCategoryObject->GetPathName() : FString());
+	}
 	Entity.Attributes.Add(TEXT("default_value"), Pin.DefaultValue);
 	Entity.Attributes.Add(TEXT("default_object"), Pin.DefaultObject ? Pin.DefaultObject->GetPathName() : FString());
 	Entity.Attributes.Add(TEXT("parent_pin_id"), Pin.ParentPin ? GuidString(Pin.ParentPin->PinId) : FString());
@@ -2832,6 +2941,7 @@ void FBlueprintGraphReader::AppendBlueprintGraph(
 				PinObject->SetStringField(TEXT("name"), Pin->PinName.ToString());
 				PinObject->SetStringField(TEXT("direction"), PinDirectionString(Pin->Direction));
 				PinObject->SetObjectField(TEXT("type"), PinTypeToJson(Pin->PinType));
+				PinObject->SetStringField(TEXT("projection_origin"), TEXT("editor_source_graph_pin"));
 				PinObject->SetStringField(TEXT("default_value"), Pin->DefaultValue);
 				PinObject->SetStringField(TEXT("default_object"), Pin->DefaultObject ? Pin->DefaultObject->GetPathName() : FString());
 				PinObject->SetStringField(TEXT("parent_pin_id"), Pin->ParentPin ? GuidString(Pin->ParentPin->PinId) : FString());
@@ -2875,7 +2985,7 @@ void FBlueprintGraphReader::AppendBlueprintGraph(
 							OutRelations,
 							false,
 							PinLinkAttributes);
-						if (LinkedNode != Node)
+						if (LinkedNode != Node && PinLinkAttributes.FindRef(TEXT("projection_complete")) != TEXT("false"))
 						{
 							const FString FlowRelationType = ProjectedFlowRelationType(*Pin);
 							TMap<FString, FString> FlowAttributes = PinLinkAttributes;

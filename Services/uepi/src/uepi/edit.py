@@ -244,9 +244,15 @@ def _runtime_ticket(store: SnapshotStore, plan: dict[str, Any]) -> dict[str, Any
         return None
     steps = [item for item in verification.get("steps") or [] if isinstance(item, dict)]
     requested_actions = {str(item.get("action") or "") for item in steps}
-    allowed_actions = sorted(({"start", "stop"} | requested_actions) & {"start", "stop", "input", "invoke", "read", "wait", "assert"})
+    allowed_actions = sorted(({"stop"} | requested_actions) & {"start", "stop", "input", "invoke", "read", "wait", "assert", "delay"})
     allowed_functions = sorted({str(item.get("function")) for item in steps if item.get("action") in {"invoke", "wait", "assert"} and item.get("function")} | {str(item) for item in verification.get("allowed_functions") or [] if isinstance(item, str)})
     allowed_keys = sorted({str(item.get("key")) for item in steps if item.get("action") == "input" and item.get("key")} | {str(item) for item in verification.get("allowed_keys") or [] if isinstance(item, str)})
+    allowed_deliveries = sorted({str(item.get("delivery") or "possessed_pawn_input_stack") for item in steps if item.get("action") == "input"} | {str(item) for item in verification.get("allowed_deliveries") or [] if isinstance(item, str)})
+    allowed_inputs = [
+        {key: item[key] for key in ("key", "event", "delivery", "input_action", "value") if key in item}
+        for item in steps
+        if item.get("action") == "input"
+    ]
     allowed_reads = [item for item in verification.get("allowed_reads") or [] if isinstance(item, dict)]
     allowed_reads.extend({key: item[key] for key in ("object_path", "target", "property", "function", "field", "arguments", "equals") if key in item} for item in steps if item.get("action") in {"read", "wait", "assert"})
     allowed_invocations = [{key: item[key] for key in ("object_path", "target", "function", "arguments") if key in item} for item in steps if item.get("action") == "invoke"]
@@ -266,6 +272,8 @@ def _runtime_ticket(store: SnapshotStore, plan: dict[str, Any]) -> dict[str, Any
         "allowed_functions": allowed_functions,
         "allowed_invocations": allowed_invocations,
         "allowed_keys": allowed_keys,
+        "allowed_deliveries": allowed_deliveries,
+        "allowed_inputs": allowed_inputs,
         "allowed_reads": allowed_reads,
     }
     directory = store.store_dir / "runtime"
@@ -326,6 +334,9 @@ def preview(
     operation_assets: dict[str, str] = {}
     seen_ids: set[str] = set()
     for index, raw in enumerate(operations or []):
+        if not isinstance(raw, dict) or not isinstance(raw.get("type"), str) or not raw.get("type") or not isinstance(raw.get("params"), dict):
+            diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_EDIT_OPERATION_WRAPPER_INVALID", "message": "operations item requires type and params.", "phase": "preview", "operation_index": index, "operation_id": str(raw.get("operation_id") or raw.get("id") or f"op:{index + 1}") if isinstance(raw, dict) else f"op:{index + 1}", "retryable": False, "recoverable": True})
+            continue
         op_id, op_type, params, depends_on = _operation_parts(raw, index)
         descriptor = descriptors.get(op_type)
         if not descriptor or not descriptor.get("apply_supported"):
@@ -356,7 +367,7 @@ def preview(
 
     diagnostics.extend(_quality_diagnostics(normalized))
     if verification_plan:
-        supported_runtime_actions = {"start", "stop", "input", "invoke", "read", "wait", "assert"}
+        supported_runtime_actions = {"start", "stop", "input", "invoke", "read", "wait", "assert", "delay"}
         map_path = verification_plan.get("map")
         if map_path is not None and (not isinstance(map_path, str) or not map_path.startswith("/Game/")):
             diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_MAP_NOT_APPROVED", "message": "verification_plan.map must be an exact /Game package path.", "phase": "preview", "retryable": False, "recoverable": True})
@@ -366,9 +377,18 @@ def preview(
                 diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_ACTION_NOT_APPROVED", "message": f"Unsupported verification action at step {step_index}: {action}", "phase": "preview", "retryable": False, "recoverable": True})
             elif action == "invoke" and not step.get("function"):
                 diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_FUNCTION_NOT_APPROVED", "message": f"Invoke step {step_index} requires an exact function name.", "phase": "preview", "retryable": False, "recoverable": True})
-            elif action == "input" and not step.get("key"):
-                diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_INPUT_NOT_APPROVED", "message": f"Input step {step_index} requires an exact key.", "phase": "preview", "retryable": False, "recoverable": True})
+            elif action == "input" and not (step.get("input_action") if step.get("delivery") == "enhanced_input_action" else step.get("key")):
+                diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_INPUT_NOT_APPROVED", "message": f"Input step {step_index} requires an exact key, or an exact input_action for Enhanced Input.", "phase": "preview", "retryable": False, "recoverable": True})
+            elif action == "delay":
+                try:
+                    delay_seconds = float(step.get("seconds", step.get("timeout_seconds", 0.0)))
+                except (TypeError, ValueError):
+                    delay_seconds = 0.0
+                if delay_seconds <= 0.0 or delay_seconds > 120.0:
+                    diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_DELAY_INVALID", "message": f"Delay step {step_index} requires seconds in the range (0, 120].", "phase": "preview", "retryable": False, "recoverable": True})
             elif action in {"read", "wait", "assert"}:
+                if action == "wait" and not (step.get("object_path") or isinstance(step.get("target"), dict) or step.get("property") or step.get("function")):
+                    continue
                 has_target = bool(step.get("object_path") or isinstance(step.get("target"), dict))
                 has_observation = bool(step.get("property") or step.get("function"))
                 if not has_target or not has_observation:
@@ -445,6 +465,53 @@ def preview(
     }
     plan["plan_hash"] = canonical_plan_hash(plan)
     plan["approval"]["plan_hash"] = plan["plan_hash"]
+    preflight_response = call_bridge(
+        store,
+        "edit.preflight",
+        {
+            "transaction_id": transaction_id,
+            "plan_hash": plan["plan_hash"],
+            "approval_nonce": nonce,
+            "plan": plan,
+        },
+        timeout=_apply_timeout_seconds(plan),
+        expected_identity=identity,
+        expected_editor_session_id=session_id,
+    )
+    preflight_result = preflight_response.get("result") if isinstance(preflight_response.get("result"), dict) else {}
+    if not preflight_response.get("ok"):
+        preflight_diagnostics = [item for item in preflight_response.get("diagnostics") or [] if isinstance(item, dict)]
+        code = str(preflight_result.get("failure_code") or next((item.get("code") for item in preflight_diagnostics), "UEPI_EDIT_PRECHECK_FAILED"))
+        audit_path = _audit(store, {"event": "preview_failed", "transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "result": preflight_result})
+        return _response(
+            store,
+            tool="uepi_edit_preview",
+            operation="preview",
+            result={"preflight": preflight_result, "audit_path": audit_path},
+            error={"code": code, "message": str(preflight_result.get("failure_message") or "Editor preflight rejected the edit plan; no asset was modified."), "retryable": False, "candidates": preflight_result.get("operations") or []},
+            diagnostics=diagnostics + preflight_diagnostics,
+        )
+
+    preflight_operations = [item for item in preflight_result.get("operations") or [] if isinstance(item, dict)]
+    resolved_targets: list[dict[str, Any]] = []
+    for item in preflight_operations:
+        try:
+            operation_index = int(item.get("index"))
+        except (TypeError, ValueError):
+            continue
+        detail = item.get("detail") if isinstance(item.get("detail"), dict) else None
+        if detail is None or operation_index < 0 or operation_index >= len(normalized):
+            continue
+        normalized[operation_index]["params"]["_uepi_locked_target"] = detail
+        resolved_targets.append({"operation_index": operation_index, "operation_id": normalized[operation_index].get("operation_id"), **detail})
+    plan["editor_preflight"] = {
+        "schema_version": str(preflight_result.get("schema_version") or "uepi.bridge-edit-preflight.v1"),
+        "editor_session_id": session_id,
+        "atomicity_state": "not_modified",
+        "resolved_targets": resolved_targets,
+    }
+    plan["plan_hash"] = canonical_plan_hash(plan)
+    plan["approval"]["plan_hash"] = plan["plan_hash"]
     path = _plan_path(store, transaction_id.replace(":", "-"))
     path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     audit_path = _audit(store, {"event": "preview", "transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "affected_assets": affected, "dependency_assets": dependencies})
@@ -502,7 +569,28 @@ def apply(store: SnapshotStore, transaction_id: str = "", approved: bool = False
     if not response.get("ok"):
         code = str((response.get("error") or {}).get("code") or next((item.get("code") for item in response.get("diagnostics") or [] if isinstance(item, dict)), "UEPI_EDIT_APPLY_FAILED"))
         failed_result = response.get("result") if isinstance(response.get("result"), dict) else {}
-        return _response(store, tool="uepi_edit_apply", operation="apply", result={"apply": failed_result, "atomicity_restored": bool(failed_result.get("atomicity_restored")), "audit_path": _audit(store, {"event": "apply_failed", "transaction_id": transaction_id, "plan_hash": plan_hash, "result": failed_result})}, error={"code": code, "message": str((response.get("error") or {}).get("message") or failed_result.get("failure_message") or "Editor Apply failed during preflight or execution."), "retryable": False, "candidates": []}, diagnostics=diagnostics + list(response.get("diagnostics") or []))
+        if not failed_result.get("operations"):
+            failed_result["operations"] = [
+                {
+                    "index": index,
+                    "operation_id": item.get("operation_id"),
+                    "type": item.get("type"),
+                    "ok": False if index == failed_result.get("failure_operation_index") else None,
+                    "planned_target": item.get("params", {}).get("_uepi_locked_target") if isinstance(item.get("params"), dict) else None,
+                }
+                for index, item in enumerate(plan.get("operations") or [])
+                if isinstance(item, dict)
+            ]
+        if not failed_result.get("atomicity_state"):
+            if failed_result.get("compensation_attempted"):
+                failed_result["atomicity_state"] = "compensated" if failed_result.get("compensation_ok") else "compensation_failed"
+            elif failed_result.get("failure_operation_index") is not None:
+                failed_result["atomicity_state"] = "not_modified"
+            else:
+                failed_result["atomicity_state"] = "unknown_recovery_required"
+        failed_result["atomicity_restored"] = failed_result["atomicity_state"] in {"not_modified", "compensated"}
+        audit_path = _audit(store, {"event": "apply_failed", "transaction_id": transaction_id, "plan_hash": plan_hash, "error_code": code, "result": failed_result})
+        return _response(store, tool="uepi_edit_apply", operation="apply", result={"apply": failed_result, "atomicity_state": failed_result["atomicity_state"], "atomicity_restored": bool(failed_result.get("atomicity_restored")), "audit_path": audit_path}, error={"code": code, "message": str((response.get("error") or {}).get("message") or failed_result.get("failure_message") or "Editor Apply failed during preflight or execution."), "retryable": False, "candidates": failed_result.get("operations") or []}, diagnostics=diagnostics + list(response.get("diagnostics") or []))
     result = response.get("result") if isinstance(response.get("result"), dict) else {}
     refresh_result = _wait_refresh(store, str(result.get("refresh_request_path") or ""), timeout_seconds=_refresh_timeout_seconds(plan)) if result.get("refresh_request_path") else None
     after_fingerprints = [_fingerprint(store, asset) for asset in plan.get("affected_assets") or []]

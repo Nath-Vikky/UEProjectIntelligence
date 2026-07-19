@@ -32,6 +32,16 @@ PAGE_ROOTS_BY_TOOL: dict[str, tuple[str, ...]] = {
     "uepi_edit_discover": ("operations",),
 }
 
+NON_PAGEABLE_METADATA_ROOTS = {
+    "hard_scope",
+    "scope",
+    "ranking_hints",
+    "include",
+    "filters",
+    "terms",
+    "available_routes",
+}
+
 ARTIFACT_PAYLOAD_MANIFESTS = {
     "bone_motion_profile": "bone_motion_profile_manifest",
     "reconstruction_profile": "reconstruction_profile_manifest",
@@ -172,11 +182,18 @@ def _list_paths(value: Any, prefix: str = "") -> list[str]:
 
 
 def _page_root(result: dict[str, Any], tool: str, fields: list[str]) -> tuple[str | None, list[Any] | None]:
-    available = [path for path in _list_paths(result) if isinstance(_path_value(result, path), list)]
+    available = [
+        path
+        for path in _list_paths(result)
+        if isinstance(_path_value(result, path), list)
+        and path.split(".", 1)[0] not in NON_PAGEABLE_METADATA_ROOTS
+    ]
     if not available:
         return None, None
     requested_roots = [field.removeprefix("result.") for field in fields]
     for requested in requested_roots:
+        if requested.split(".", 1)[0] in NON_PAGEABLE_METADATA_ROOTS:
+            continue
         for path in available:
             if requested == path or requested.startswith(path + "."):
                 return path, _path_value(result, path)

@@ -10,7 +10,13 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     action = str(arguments.get("action") or "class_property")
     if action == "edit_operation":
         catalog, diagnostics, _ = load_catalog(engine.store, engine.identity, refresh=True)
-        query = str(arguments.get("query") or "")
+        query_value = str(arguments.get("query") or "")
+        kind_value = str(arguments.get("kind") or "")
+        if query_value and kind_value and query_value != kind_value:
+            return engine._error("UEPI_SCHEMA_OPERATION_QUERY_CONFLICT", "For action=edit_operation, query and kind must match when both are supplied.", diagnostics=diagnostics, tool="uepi_schema", operation=action)
+        query = query_value or kind_value
+        if not query:
+            return engine._error("UEPI_SCHEMA_OPERATION_QUERY_REQUIRED", "For action=edit_operation, provide the operation name in query or kind.", diagnostics=diagnostics, tool="uepi_schema", operation=action)
         descriptor = operation_map(catalog).get(query)
         if not descriptor:
             return engine._error("UEPI_SCHEMA_OPERATION_NOT_FOUND", f"Operation descriptor was not found: {query}", diagnostics=diagnostics, tool="uepi_schema", operation=action)

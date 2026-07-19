@@ -521,6 +521,43 @@ bool FSnapshotStore::CommitProjectScan(
 		{
 			return false;
 		}
+		if (Options.bMergeWithExisting && ExistingManifest.IsValid())
+		{
+			FSnapshotTombstoneOptions RefreshTombstone;
+			RefreshTombstone.ProjectId = ScanResult.ProjectId;
+			RefreshTombstone.ProjectName = ScanResult.ProjectName;
+			RefreshTombstone.ProjectFile = ScanResult.ProjectFile;
+			RefreshTombstone.EngineVersion = ScanResult.EngineVersion;
+			RefreshTombstone.DataMode = Options.DataMode;
+			RefreshTombstone.WriterMode = Options.WriterMode;
+			RefreshTombstone.SessionId = Options.SessionId;
+			RefreshTombstone.AssetKey = Entity.CanonicalKey;
+			RefreshTombstone.AssetName = Entity.DisplayName;
+			RefreshTombstone.AssetId = Entity.Id;
+			RefreshTombstone.PackageName = FPackageName::ObjectPathToPackageName(Entity.CanonicalKey);
+			RefreshTombstone.ClassPath = Entity.Attributes.FindRef(TEXT("asset_class_path"));
+			RefreshTombstone.Reason = TEXT("targeted_refresh_replace");
+			RefreshTombstone.EventType = TEXT("asset_refreshed");
+			RefreshTombstone.OldObjectPath = Entity.CanonicalKey;
+			RefreshTombstone.NewObjectPath = Entity.CanonicalKey;
+			const TSharedRef<FJsonObject> TombstoneObject = MakeTombstoneObject(RefreshTombstone);
+			FString TombstoneHash;
+			FString TombstonePath;
+			if (!SaveStoreObject(Paths, ScanResult.ProjectId, TEXT("asset_tombstone"), TombstoneObject, TombstoneHash, TombstonePath, OutError))
+			{
+				return false;
+			}
+			TSharedRef<FJsonObject> TombstoneRef = MakeShared<FJsonObject>();
+			TombstoneRef->SetStringField(TEXT("kind"), TEXT("asset_tombstone"));
+			TombstoneRef->SetStringField(TEXT("schema_version"), TEXT("uepi.asset-tombstone.v2"));
+			TombstoneRef->SetStringField(TEXT("hash"), TombstoneHash);
+			TombstoneRef->SetStringField(TEXT("path"), TombstonePath);
+			TombstoneRef->SetStringField(TEXT("asset_id"), Entity.Id);
+			TombstoneRef->SetStringField(TEXT("asset_key"), Entity.CanonicalKey);
+			TombstoneRef->SetStringField(TEXT("asset_name"), Entity.DisplayName);
+			TombstoneRef->SetStringField(TEXT("reason"), TEXT("targeted_refresh_replace"));
+			FragmentValues.Add(MakeShared<FJsonValueObject>(TombstoneRef));
+		}
 
 		TSharedRef<FJsonObject> AssetFragmentRef = MakeShared<FJsonObject>();
 		AssetFragmentRef->SetStringField(TEXT("kind"), TEXT("asset_fragment"));

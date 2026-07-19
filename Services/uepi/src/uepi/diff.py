@@ -38,6 +38,7 @@ def build_transaction_diff(plan: dict[str, Any], apply_result: dict[str, Any], a
         for actor in detail.get("actors") or []:
             if isinstance(actor, dict):
                 properties.extend({**child, "object": actor.get("actor")} for child in actor.get("property_diff") or [] if isinstance(child, dict))
+        links.extend(child for child in detail.get("link_changes") or [] if isinstance(child, dict))
         op_type = str(item.get("type") or operation_types.get(f"op:{index + 1}") or "")
         if isinstance(detail.get("node"), dict):
             change = "removed" if "remove_node" in op_type else ("updated" if any(token in op_type for token in ("move_node", "set_node_comment", "set_node_property")) else "added")

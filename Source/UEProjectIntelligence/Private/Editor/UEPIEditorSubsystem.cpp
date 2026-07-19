@@ -2,6 +2,7 @@
 
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Editor.h"
@@ -103,6 +104,23 @@ namespace
 		return EventType.Equals(TEXT("blueprint_compiled"), ESearchCase::IgnoreCase) ||
 			EventType.Equals(TEXT("asset_renamed"), ESearchCase::IgnoreCase) ||
 			EventType.Equals(TEXT("package_saved"), ESearchCase::IgnoreCase);
+	}
+
+	bool UEPIAssetRegistryReady(FString& OutError)
+	{
+		if (!FModuleManager::Get().IsModuleLoaded(TEXT("AssetRegistry")))
+		{
+			OutError = TEXT("UEPI_DEPENDENCY_MODULE_NOT_READY: Asset Registry module is not loaded.");
+			return false;
+		}
+		IAssetRegistry& AssetRegistry = FModuleManager::GetModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+		if (AssetRegistry.IsLoadingAssets())
+		{
+			OutError = TEXT("UEPI_DEPENDENCY_MODULE_NOT_READY: Asset Registry discovery is still in progress.");
+			return false;
+		}
+		OutError.Reset();
+		return true;
 	}
 
 	FString UEPIInvalidationKey(const FUEPIIncrementalEvent& Event)
@@ -284,6 +302,7 @@ void UUEPIEditorSubsystem::Deinitialize()
 
 bool UUEPIEditorSubsystem::RunMetadataScan(FString OutputPath, FString& OutReportPath, FString& OutError)
 {
+	if (!UEPIAssetRegistryReady(OutError)) { OutReportPath.Reset(); return false; }
 	UE::ProjectIntelligence::FScanOptions Options = UE::ProjectIntelligence::FAssetRegistryScanner::MakeOptionsFromSettings();
 	if (OutputPath.IsEmpty())
 	{
@@ -322,6 +341,7 @@ bool UUEPIEditorSubsystem::RunMetadataScan(FString OutputPath, FString& OutRepor
 
 bool UUEPIEditorSubsystem::RunTargetedSnapshotScan(const TArray<FString>& TargetObjectPaths, const FString& DataMode, FString& OutReportPath, FString& OutError)
 {
+	if (!UEPIAssetRegistryReady(OutError)) { OutReportPath.Reset(); LastCollectorError = OutError; return false; }
 	TArray<FString> CleanTargets;
 	for (FString Target : TargetObjectPaths)
 	{
@@ -557,6 +577,8 @@ void UUEPIEditorSubsystem::ProcessInvalidationQueue()
 	{
 		return;
 	}
+	FString ReadinessError;
+	if (!UEPIAssetRegistryReady(ReadinessError)) { LastCollectorError = ReadinessError; return; }
 
 	const double Now = FPlatformTime::Seconds();
 	TArray<FString> ReadyKeys;
@@ -633,6 +655,8 @@ void UUEPIEditorSubsystem::ProcessInvalidationQueue()
 
 void UUEPIEditorSubsystem::ProcessRefreshRequests()
 {
+	FString ReadinessError;
+	if (!UEPIAssetRegistryReady(ReadinessError)) { LastCollectorError = ReadinessError; return; }
 	const FString RequestsDir = UEPIRequestsDirectory();
 	IFileManager::Get().MakeDirectory(*RequestsDir, true);
 

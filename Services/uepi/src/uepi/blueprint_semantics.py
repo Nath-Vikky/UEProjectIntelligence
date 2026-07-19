@@ -94,6 +94,23 @@ def summarize_blueprint_semantics(
     reads = [_edge(relation, by_id) for relation in relations if relation.get("type") == "reads_variable"][:limit]
     writes = [_edge(relation, by_id) for relation in relations if relation.get("type") == "writes_variable"][:limit]
     class_interactions = [_edge(relation, by_id) for relation in relations if relation.get("type") in CLASS_RELATIONS][:limit]
+    call_nodes = [entity for entity in node_entities if _node_semantic_kind(entity) in {"call_function", "macro", "composite", "async_action"}]
+    class_reference_nodes = [
+        entity
+        for entity in node_entities
+        if _node_semantic_kind(entity) in {"dynamic_cast", "spawn_actor", "load_asset"}
+        or bool(_as_dict(entity.get("attributes")).get("semantic_owner_class"))
+    ]
+    call_graph_explanation = (
+        "indexed_call_relations_present"
+        if call_graph
+        else ("call_nodes_present_but_target_relations_missing_from_this_snapshot_scope" if call_nodes else "no_supported_call_nodes_in_this_snapshot_scope")
+    )
+    class_interactions_explanation = (
+        "indexed_class_relations_present"
+        if class_interactions
+        else ("class_reference_nodes_present_but_target_relations_missing_from_this_snapshot_scope" if class_reference_nodes else "no_supported_class_reference_nodes_in_this_snapshot_scope")
+    )
 
     side_effects = []
     for edge in call_graph + class_interactions + writes:
@@ -122,8 +139,10 @@ def summarize_blueprint_semantics(
         "relation_counts": dict(relation_counts),
         "entrypoints": entrypoints,
         "call_graph": call_graph,
+        "call_graph_explanation": call_graph_explanation,
         "data_mutations": {"reads": reads, "writes": writes},
         "class_interactions": class_interactions,
+        "class_interactions_explanation": class_interactions_explanation,
         "side_effects": side_effects[:limit],
         "flow_edges": flow_edges,
         "confidence_basis": "snapshot_exact_relations_with_python_semantic_grouping",

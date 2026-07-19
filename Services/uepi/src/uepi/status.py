@@ -82,6 +82,9 @@ def resolve_status(
                 "phase": "session_guard",
                 "retryable": False,
                 "recoverable": True,
+                "expected_editor_session_id": expected_editor_session_id,
+                "current_editor_session_id": session_id or None,
+                "recommended_agent_action": {"action": "retry", "expected_editor_session_id": session_id} if session_id else {"tool": "uepi_status"},
             }
         )
     if matched and not fresh:
@@ -134,6 +137,10 @@ def resolve_status(
         "simulating": bool(probe_result.get("simulating", False)),
         "pie_owned_by_uepi": bool(probe_result.get("pie_owned_by_uepi", False)),
         "runtime_session_id": probe_result.get("runtime_session_id") or None,
+        "gameplay_context": probe_result.get("gameplay_context") if isinstance(probe_result.get("gameplay_context"), dict) else {},
+        "recovery_required": bool(probe_result.get("recovery_required", False)),
+        "pending_recovery_transaction_id": probe_result.get("pending_recovery_transaction_id") or None,
+        "recovery_markers": probe_result.get("recovery_markers") if isinstance(probe_result.get("recovery_markers"), list) else [],
         "catalog_hash": live_catalog_hash or None,
         "plugin_version": plugin_version or None,
         "plugin_build_id": plugin_build_id or None,
