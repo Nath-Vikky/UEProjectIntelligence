@@ -16,7 +16,15 @@ PYTHON_SOURCE = ROOT / "Services" / "uepi" / "src"
 if str(PYTHON_SOURCE) not in sys.path:
     sys.path.insert(0, str(PYTHON_SOURCE))
 
-from uepi import __version__  # noqa: E402
+from uepi import (  # noqa: E402
+    __version__,
+    SERVICE_BUILD_ID,
+    SERVICE_MODULE_PATH,
+    SERVICE_PROCESS_ID,
+    SERVICE_PROCESS_START_TIME,
+    SERVICE_SOURCE_HASH,
+    compute_service_source_hash,
+)
 from uepi.bridge_client import bridge_session_path, call_bridge, read_bridge_session  # noqa: E402
 from uepi.identity import project_identity, session_matches_identity  # noqa: E402
 from uepi.store import SnapshotStore, SnapshotStoreError, _parse_utc  # noqa: E402
@@ -237,6 +245,12 @@ def run_doctor(project: Path, *, require_editor: bool = False) -> dict[str, Any]
             "plugin_build_id": str((version_session or {}).get("plugin_build_id") or (f"uepi-{plugin_version}" if plugin_version else "")) or None,
             "catalog_hash": str(catalog_result.get("catalog_hash") or (version_session or {}).get("catalog_hash") or "") or None,
             "service_version": __version__,
+            "service_build_id": SERVICE_BUILD_ID,
+            "service_source_hash": SERVICE_SOURCE_HASH,
+            "service_disk_source_hash": compute_service_source_hash(),
+            "service_process_start_time": SERVICE_PROCESS_START_TIME,
+            "service_process_id": SERVICE_PROCESS_ID,
+            "service_loaded_module_path": SERVICE_MODULE_PATH,
         },
         "editor_required": require_editor,
         "checks": checks,

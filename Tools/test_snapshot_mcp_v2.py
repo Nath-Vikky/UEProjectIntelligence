@@ -25,11 +25,12 @@ from uepi.bridge_client import _read_token  # noqa: E402
 from uepi.cache import cache_status, sync_cache  # noqa: E402
 from uepi.context_routes import _best_domain_asset, _input_resolution, _normalized_asset_identity  # noqa: E402
 from uepi.diff import build_transaction_diff  # noqa: E402
-from uepi.edit import _apply_timeout_seconds, _asset_values, _budget_diagnostics, _refresh_timeout_seconds, _transaction_budgets  # noqa: E402
+from uepi.edit import _apply_timeout_seconds, _asset_values, _authorization_decision, _budget_diagnostics, _refresh_timeout_seconds, _transaction_budgets, _transaction_report  # noqa: E402
 from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
 from uepi.projections import apply_response_options, enforce_response_budget  # noqa: E402
 from uepi.query import make_engine  # noqa: E402
-from uepi.runtime import _approved_subset, _canonical_hash as runtime_plan_hash, _matches_approved, _ticket_from_plan, _value_at_path  # noqa: E402
+from uepi.recovery import inspect_recovery  # noqa: E402
+from uepi.runtime import _approved_subset, _canonical_hash as runtime_plan_hash, _matches_approved, _ticket_from_plan, _unwrap_typed_value, _value_at_path  # noqa: E402
 from uepi.result import envelope, tool_response  # noqa: E402
 from uepi.store import SnapshotStore, resolve_store_root  # noqa: E402
 from uepi.timing import attach_timing, begin_request, end_request, record  # noqa: E402
@@ -53,6 +54,7 @@ READ_TOOLS = {
     "uepi_runtime_preview",
     "uepi_runtime_approve",
     "uepi_runtime",
+    "uepi_recovery_inspect",
 }
 
 EDIT_TOOLS = {
@@ -61,6 +63,8 @@ EDIT_TOOLS = {
     "uepi_edit_apply",
     "uepi_edit_validate",
     "uepi_edit_rollback",
+    "uepi_recovery_finalize",
+    "uepi_recovery_rollback",
 }
 
 EXPECTED_TOOLS = READ_TOOLS | EDIT_TOOLS
@@ -185,6 +189,129 @@ def assert_edit_transaction_budget_contract() -> None:
     assert _apply_timeout_seconds(small_plan) == 31.0
     assert _apply_timeout_seconds(large_plan) > _apply_timeout_seconds(small_plan)
     assert _refresh_timeout_seconds(large_plan) > _refresh_timeout_seconds(small_plan)
+
+
+def assert_authorization_policy_contract() -> None:
+    binding_id = "sha256:project"
+    catalog = {
+        "settings": {
+            "write_authorization": {
+                "mode": "TrustedProject",
+                "trusted_project_binding_id": binding_id,
+                "allowed_asset_roots": ["/Game/LLMNPC", "/Game/ThirdPerson"],
+                "allowed_operation_domains": ["blueprint", "animation"],
+                "maximum_risk_level": "high",
+                "allow_asset_delete": False,
+                "allow_asset_rename": True,
+                "allow_runtime_control": True,
+                "maximum_assets_per_transaction": 4,
+                "always_create_backup": True,
+                "always_report_after_apply": True,
+            }
+        }
+    }
+    operations = [{"type": "blueprint.add_node", "params": {}}]
+    descriptors = {"blueprint.add_node": {"domain": "blueprint", "risk": "medium"}}
+    decision, diagnostics = _authorization_decision(
+        catalog,
+        {"project_binding_id": binding_id},
+        "editor-session",
+        operations,
+        ["/Game/LLMNPC/BP_Test.BP_Test"],
+        descriptors,
+        "medium",
+    )
+    assert diagnostics == []
+    assert decision["automatically_authorized"] is True
+    rejected, rejected_diagnostics = _authorization_decision(
+        catalog,
+        {"project_binding_id": binding_id},
+        "editor-session",
+        operations,
+        ["/Game/Outside/BP_Test.BP_Test"],
+        descriptors,
+        "medium",
+    )
+    assert rejected["policy_decision"] == "rejected"
+    assert rejected_diagnostics[0]["code"] == "UEPI_EDIT_TRUST_POLICY_REJECTED"
+    assert _unwrap_typed_value({"type": "bool", "value": False}) is False
+
+
+def assert_post_action_report_contract() -> None:
+    plan = {
+        "transaction_id": "uepi-tx:report",
+        "intent": "Update one Blueprint safely",
+        "operations": [{"operation_id": "compile", "type": "blueprint.compile", "params": {"asset": "/Game/BP_Test.BP_Test"}}],
+        "affected_assets": ["/Game/BP_Test.BP_Test"],
+        "before_fingerprints": [{"asset": "/Game/BP_Test.BP_Test", "sha256": "sha256:before"}],
+        "verification_plan": {"verification_mode": "hybrid"},
+    }
+    result = {
+        "operations": [{"operation_id": "compile", "type": "blueprint.compile", "ok": True}],
+        "compile": [{"asset": "/Game/BP_Test.BP_Test", "ok": True}],
+        "validation_ok": True,
+        "saved": True,
+        "saved_file_hashes": [{"file": "Content/BP_Test.uasset", "md5": "after"}],
+        "backup_directory": "Saved/UEProjectIntelligence/backups/report",
+        "journal_path": "Saved/UEProjectIntelligence/transactions/report.applied.json",
+        "atomicity_state": "applied",
+        "affected_assets": ["/Game/BP_Test.BP_Test"],
+    }
+    runtime_ticket = {
+        "ticket_id": "uepi-runtime-ticket:report",
+        "verification_mode": "hybrid",
+        "technical_verification": "agent_objective",
+        "visual_acceptance": "human_required",
+        "visual_status": "unreviewed",
+        "visual_reviewer": "user",
+        "human_test_steps": ["Observe the action in PIE."],
+    }
+    semantic_diff = {"changed_assets": ["/Game/BP_Test.BP_Test"]}
+    report = _transaction_report(plan, result, {"mode": "TrustedProject"}, transaction_diff=semantic_diff, runtime_ticket=runtime_ticket)
+    required = {
+        "transaction_id", "intent", "operations", "affected_assets", "compiled_assets", "validation_result",
+        "saved_assets", "semantic_diff", "backup_path", "rollback_available", "runtime_verification_result",
+        "human_visual_verification_required",
+    }
+    assert required <= set(report)
+    assert report["compiled_assets"] == ["/Game/BP_Test.BP_Test"]
+    assert report["saved_assets"] == ["/Game/BP_Test.BP_Test"]
+    assert report["semantic_diff"] == semantic_diff
+    assert report["rollback_available"] is True
+    assert report["human_visual_verification_required"] is True
+    assert report["runtime_verification_result"]["visual_reviewer"] == "user"
+
+
+def assert_recovery_inspection_contract() -> None:
+    with tempfile.TemporaryDirectory(prefix="uepi_recovery_") as temp_dir:
+        store_dir = Path(temp_dir) / "store"
+        transactions = store_dir / "transactions"
+        transactions.mkdir(parents=True)
+        package = Path(temp_dir) / "Content" / "BP_Test.uasset"
+        backup = Path(temp_dir) / "backups" / "BP_Test.uasset"
+        package.parent.mkdir(parents=True)
+        backup.parent.mkdir(parents=True)
+        package.write_bytes(b"changed")
+        backup.write_bytes(b"before")
+        marker = transactions / "tx.prepared.json"
+        marker.write_text(
+            json.dumps(
+                {
+                    "transaction_id": "uepi-tx:test",
+                    "phase": "prepared",
+                    "affected_assets": ["/Game/BP_Test.BP_Test"],
+                    "backups": [{"package_file": str(package), "backup_file": str(backup)}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        store = SimpleNamespace(store_dir=store_dir)
+        inspection = inspect_recovery(store)
+        assert inspection[0]["recommended_action"] == "rollback"
+        package.write_bytes(backup.read_bytes())
+        assert inspect_recovery(store)[0]["recommended_action"] == "finalize"
+        (transactions / "tx.recovery_finalized.json").write_text("{}", encoding="utf-8")
+        assert inspect_recovery(store) == []
 
 
 def assert_envelope(value: dict[str, Any]) -> None:
@@ -1689,6 +1816,9 @@ def main() -> int:
     assert_doctor_contract()
     assert_edit_asset_scope_contract()
     assert_edit_transaction_budget_contract()
+    assert_authorization_policy_contract()
+    assert_post_action_report_contract()
+    assert_recovery_inspection_contract()
     assert_plan_v2_contract()
     assert_runtime_ticket_contract()
     assert_response_budget_contract()
@@ -1766,6 +1896,10 @@ def main() -> int:
             assert status["result"]["doctor"]["project_bound"] is True
             assert status["result"]["doctor"]["catalog_current"] is False
             assert status["result"]["doctor"]["catalog_cache_current"] is False
+            assert status["result"]["service_build_id"].startswith("uepi-service-")
+            assert status["result"]["service_source_hash"].startswith("sha256:")
+            assert status["result"]["service_process_start_time"]
+            assert status["result"]["service_loaded_module_path"].endswith("__init__.py")
             assert status["result"]["editor"]["active_map"] is None
             assert status["result"]["editor"]["pie_state"] == "stopped"
             assert status["result"]["snapshot"]["generation_comparable"] is False
@@ -1887,6 +2021,9 @@ def main() -> int:
             assert_envelope(gameplay_context)
             gameplay_sections = gameplay_context["result"]["sections"]
             assert gameplay_context["result"]["query_source"] == "sqlite_cache"
+            assert gameplay_sections["requested_input"] == "three"
+            assert gameplay_sections["resolved_input"] == "Three"
+            assert gameplay_sections["match_mode"] == "stable_key_exact"
             assert gameplay_sections["input_owner"]["asset"].endswith("BP_ThirdPersonCharacter.BP_ThirdPersonCharacter")
             assert gameplay_sections["input_owner"]["owner_confidence"] > 0.5
             assert any(any(step.get("kind") == "cross_asset_call" and step.get("function_or_event") == "333" for step in path["steps"]) for path in gameplay_sections["cross_asset_paths"])
@@ -2163,6 +2300,16 @@ def main() -> int:
             assert {item["id"] for item in focused["result"]["focus"]["pins"]} == {"pin-beginplay-then"}
             assert focused["result"]["focus"]["direct_links"][0]["type"] == "connects_to"
             assert focused["result"]["asset"].get("snapshot") is None
+
+            focused_projected = request(
+                process,
+                106,
+                "tools/call",
+                {"name": "uepi_blueprint", "arguments": {"asset": "/Game/BP_Hero.BP_Hero", "node_guid": "BEGIN-GUID", "fields": ["blueprint_entities.id"]}},
+            )["structuredContent"]
+            assert focused_projected["result"]["focus"]["node"]["id"] == "node-beginplay"
+            assert {item["id"] for item in focused_projected["result"]["focus"]["pins"]} == {"pin-beginplay-then"}
+            assert focused_projected["result"]["query_source"] == "sqlite_cache"
 
             requests_before_no_match = {path.name for path in (root / "store" / "requests").glob("*.json")}
             no_match = request(

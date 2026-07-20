@@ -629,8 +629,11 @@ class UEPIQueryEngine:
         previous_generation = self.state.generation
         summary: dict[str, Any] = {
             "requested_targets": clean_targets,
+            "requested_assets": clean_targets,
             "refreshed_targets": [],
+            "refreshed_assets": [],
             "failed_targets": [],
+            "failed_assets": [],
             "previous_generation": previous_generation,
             "new_generation": previous_generation,
             "atomic": True,
@@ -665,6 +668,7 @@ class UEPIQueryEngine:
                         "request_id": request_id,
                         "request_path": completed.get("request_path"),
                         "refreshed_targets": clean_targets,
+                        "refreshed_assets": clean_targets,
                         "new_generation": self.state.generation,
                         "status": str(completed.get("status") or "succeeded"),
                     }
@@ -688,6 +692,7 @@ class UEPIQueryEngine:
                     "request_id": request_id,
                     "request_path": (completed or {}).get("request_path") or result.get("request_path"),
                     "failed_targets": clean_targets,
+                    "failed_assets": clean_targets,
                     "status": str((completed or {}).get("status") or "wait_timeout"),
                     "error": (completed or {}).get("error"),
                 }
@@ -711,7 +716,7 @@ class UEPIQueryEngine:
                 }
             ], summary
         error = _as_dict(response.get("error"))
-        summary.update({"failed_targets": clean_targets, "status": "bridge_unavailable", "error": error.get("message")})
+        summary.update({"failed_targets": clean_targets, "failed_assets": clean_targets, "status": "bridge_unavailable", "error": error.get("message")})
         return freshness, diagnostics + [
             {
                 "severity": "warning",
@@ -793,6 +798,15 @@ class UEPIQueryEngine:
         )
         guard_diagnostics = project_guard_diagnostics(self.identity, expected_project_file=expected_project_file)
         status_state = {**self.state.envelope_state(), "freshness": resolved["snapshot"]["freshness"]}
+        recovery_next_actions = []
+        if resolved["editor"].get("recovery_required"):
+            recovery_next_actions.append(
+                {
+                    "reason": "Inspect unresolved transaction markers and disk/backup fingerprints before any new mutation.",
+                    "tool": "uepi_recovery_inspect",
+                    "arguments": {},
+                }
+            )
         return make_envelope(
             tool="uepi_status",
             operation="status",
@@ -811,6 +825,13 @@ class UEPIQueryEngine:
                 "plugin_build_id": resolved["doctor"].get("plugin_build_id"),
                 "catalog_hash": resolved["doctor"].get("catalog_hash"),
                 "service_version": resolved["doctor"].get("service_version"),
+                "service_build_id": resolved["doctor"].get("service_build_id"),
+                "service_source_hash": resolved["doctor"].get("service_source_hash"),
+                "service_disk_source_hash": resolved["doctor"].get("service_disk_source_hash"),
+                "service_restart_required": resolved["doctor"].get("service_restart_required"),
+                "service_process_start_time": resolved["doctor"].get("service_process_start_time"),
+                "service_process_id": resolved["doctor"].get("service_process_id"),
+                "service_loaded_module_path": resolved["doctor"].get("service_loaded_module_path"),
                 "counts": self.counts,
                 "manifest_counts": self.state.counts,
                 "manifest_counts_scope": self.state.manifest.get("counts_scope") or "manifest",
@@ -846,6 +867,7 @@ class UEPIQueryEngine:
                 "snapshot": resolved["snapshot"],
             },
             next_actions=[
+                *recovery_next_actions,
                 {
                     "reason": "Build a bounded evidence pack before answering project-specific questions.",
                     "tool": "uepi_context",
@@ -1674,7 +1696,7 @@ class UEPIQueryEngine:
                 return self._error(
                     "UEPI_MULTI_ASSET_REFRESH_UNSUPPORTED",
                     "uepi_context refresh=force requires exact hard_scope asset paths so the refresh can be published atomically.",
-                    result={"refresh": {"requested_targets": [], "refreshed_targets": [], "failed_targets": [], "atomic": True}},
+                    result={"refresh": {"requested_targets": [], "requested_assets": [], "refreshed_targets": [], "refreshed_assets": [], "failed_targets": [], "failed_assets": [], "atomic": True}},
                     tool="uepi_context",
                     operation="context_refresh",
                 )

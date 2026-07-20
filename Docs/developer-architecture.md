@@ -34,7 +34,7 @@ AI client
 - Unreal code is the only layer that loads assets.
 - MCP never directly loads or mutates Unreal UObjects.
 - MCP may write only UEPI-owned artifacts under `Saved/UEProjectIntelligence`, such as refresh requests, edit plans, backups, and audit logs.
-- Approved asset edits are executed only by the Unreal Editor live bridge on the editor side, behind preview plans, explicit user approval, validation, and rollback/diff reporting.
+- Authorized asset edits are executed only by the Unreal Editor live bridge, behind immutable preview plans, project/session policy, validation, recovery, diff, and post-action reporting.
 - SQLite is a rebuildable query cache for MCP routing, not a fact source.
 - Daemon, HTTP, Web UI, worker queue, and extension SDK code are not part of the default product.
 

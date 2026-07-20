@@ -20,6 +20,23 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         descriptor = operation_map(catalog).get(query)
         if not descriptor:
             return engine._error("UEPI_SCHEMA_OPERATION_NOT_FOUND", f"Operation descriptor was not found: {query}", diagnostics=diagnostics, tool="uepi_schema", operation=action)
+        descriptor = dict(descriptor)
+        examples = [item for item in descriptor.get("examples") or [] if isinstance(item, dict)]
+        descriptor["examples"] = [
+            item if item.get("type") == query and isinstance(item.get("params"), dict) else {"type": query, "params": item}
+            for item in examples
+        ]
+        descriptor["operation_wrapper_schema"] = {
+            "type": "object",
+            "properties": {
+                "operation_id": {"type": "string"},
+                "type": {"type": "string", "const": query},
+                "params": descriptor.get("input_schema") if isinstance(descriptor.get("input_schema"), dict) else {"type": "object"},
+                "depends_on": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["type", "params"],
+            "additionalProperties": False,
+        }
         return engine._envelope({"operation": descriptor, "catalog_hash": (catalog or {}).get("catalog_hash")}, diagnostics=diagnostics, tool="uepi_schema", operation=action)
     if action not in {"asset_property", "class_property", "blueprint_node", "runtime_function"}:
         return engine._error("UEPI_SCHEMA_ACTION_UNSUPPORTED", f"Unsupported schema action: {action}", tool="uepi_schema", operation=action)

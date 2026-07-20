@@ -14,6 +14,7 @@ from .bridge_client import call_bridge
 MUTATING_ACTIONS = {"start", "stop", "input", "invoke"}
 RUNTIME_ACTIONS = {"start", "stop", "input", "invoke", "read", "wait", "assert", "delay"}
 INPUT_DELIVERIES = {"player_controller", "possessed_pawn_input_stack", "game_viewport", "enhanced_input_action"}
+VERIFICATION_MODES = {"agent_objective", "human_pie", "hybrid"}
 
 
 def _approved_subset(arguments: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
@@ -31,6 +32,43 @@ def _value_at_path(value: Any, path: str) -> Any:
             return None
         current = current[segment]
     return current
+
+
+def _unwrap_typed_value(value: Any) -> Any:
+    if isinstance(value, dict) and "value" in value and isinstance(value.get("type"), str):
+        return value["value"]
+    return value
+
+
+def _human_test_steps(steps: list[dict[str, Any]]) -> list[str]:
+    result: list[str] = []
+    for step in steps:
+        action = str(step.get("action") or "")
+        if action == "start":
+            result.append(f"Start PIE on {step.get('map') or 'the approved map'}.")
+        elif action == "input":
+            identity = step.get("input_action") or step.get("key") or "the approved input"
+            result.append(f"Trigger {identity} using {step.get('delivery') or 'the possessed Pawn input stack'}.")
+        elif action in {"wait", "assert", "read"}:
+            observation = step.get("function") or step.get("property") or "the approved debug state"
+            result.append(f"Verify {observation} matches the approved expected value.")
+        elif action == "delay":
+            result.append(f"Wait {step.get('seconds', step.get('timeout_seconds'))} seconds for the gameplay response.")
+        elif action == "stop":
+            result.append("Stop the UEPI-owned PIE session.")
+    return list(dict.fromkeys(result))
+
+
+def _verification_contract(mode: str, steps: list[dict[str, Any]], human_steps: list[str] | None = None) -> dict[str, Any]:
+    human_required = mode in {"human_pie", "hybrid"}
+    return {
+        "verification_mode": mode,
+        "technical_verification": "agent_objective" if mode != "human_pie" else "not_requested",
+        "visual_acceptance": "human_required" if human_required else "not_required",
+        "visual_status": "unreviewed" if human_required else "not_applicable",
+        "visual_reviewer": "user" if human_required else "agent",
+        "human_test_steps": human_steps or _human_test_steps(steps),
+    }
 
 
 def _ticket_path(store: Any, ticket_id: str) -> Path:
@@ -53,7 +91,9 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
 
 def _ticket_from_plan(engine: Any, plan: dict[str, Any]) -> dict[str, Any]:
     steps = [item for item in plan.get("steps") or [] if isinstance(item, dict)]
-    allowed_actions = sorted(({"stop"} | {str(item.get("action") or "") for item in steps}) & RUNTIME_ACTIONS)
+    verification_mode = str(plan.get("verification_mode") or "hybrid")
+    implicit_actions = set() if verification_mode == "human_pie" else {"stop"}
+    allowed_actions = sorted((implicit_actions | {str(item.get("action") or "") for item in steps}) & RUNTIME_ACTIONS)
     allowed_functions = sorted({str(item.get("function")) for item in steps if item.get("function")} | {str(item) for item in plan.get("allowed_functions") or [] if isinstance(item, str)})
     allowed_keys = sorted({str(item.get("key")) for item in steps if item.get("action") == "input" and item.get("key")} | {str(item) for item in plan.get("allowed_keys") or [] if isinstance(item, str)})
     allowed_deliveries = sorted({str(item.get("delivery") or "possessed_pawn_input_stack") for item in steps if item.get("action") == "input"} | {str(item) for item in plan.get("allowed_deliveries") or [] if isinstance(item, str)})
@@ -85,6 +125,11 @@ def _ticket_from_plan(engine: Any, plan: dict[str, Any]) -> dict[str, Any]:
         "allowed_inputs": allowed_inputs,
         "allowed_reads": allowed_reads,
         "steps": steps,
+        **_verification_contract(
+            verification_mode,
+            steps,
+            [str(item) for item in plan.get("human_test_steps") or [] if str(item).strip()],
+        ),
     }
     _write_json(_ticket_path(engine.store, ticket_id), ticket)
     return ticket
@@ -98,9 +143,25 @@ def preview(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         return engine._error(code, "Runtime Preview requires the exact live Editor session.", diagnostics=diagnostics, tool="uepi_runtime_preview", operation="preview")
     editor = status.get("result") if isinstance(status.get("result"), dict) else {}
     session_id = str(editor.get("editor_session_id") or editor.get("session_id") or "")
+    authorization_settings = editor.get("write_authorization") if isinstance(editor.get("write_authorization"), dict) else {}
+    authorization_mode = str(authorization_settings.get("mode") or "ReviewEachPlan")
+    if not bool(authorization_settings.get("allow_runtime_control", False)):
+        return engine._error("UEPI_RUNTIME_POLICY_REJECTED", "Runtime control is disabled by the active project authorization policy.", tool="uepi_runtime_preview", operation="preview")
+    automatically_authorized = authorization_mode in {"TrustedSession", "TrustedProject"} and bool(authorization_settings.get("allow_runtime_control", False))
+    if authorization_mode == "TrustedProject":
+        automatically_authorized = automatically_authorized and str(authorization_settings.get("trusted_project_binding_id") or "") == str(engine.identity.get("project_binding_id") or "")
+    if authorization_mode in {"TrustedSession", "TrustedProject"} and not automatically_authorized:
+        return engine._error("UEPI_RUNTIME_TRUST_POLICY_REJECTED", "Runtime control is outside the active trusted authorization policy.", tool="uepi_runtime_preview", operation="preview")
     steps = [item for item in arguments.get("steps") or [] if isinstance(item, dict)]
     diagnostics: list[dict[str, Any]] = []
     map_path = str(arguments.get("map") or editor.get("active_map") or "")
+    verification_mode = str(arguments.get("verification_mode") or "hybrid")
+    if verification_mode not in VERIFICATION_MODES:
+        diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_VERIFICATION_MODE_INVALID", "message": "verification_mode must be agent_objective, human_pie, or hybrid."})
+    if verification_mode == "human_pie":
+        disallowed = [str(step.get("action") or "") for step in steps if str(step.get("action") or "") in MUTATING_ACTIONS]
+        if disallowed:
+            diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_HUMAN_PIE_OBSERVATION_ONLY", "message": f"human_pie plans are observation-only; remove actions: {', '.join(disallowed)}"})
     if not map_path.startswith("/Game/"):
         diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_MAP_NOT_APPROVED", "message": "Runtime Preview requires an exact /Game map package."})
     if not steps:
@@ -140,15 +201,25 @@ def preview(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         "allowed_deliveries": [str(item) for item in arguments.get("allowed_deliveries") or []],
         "allowed_reads": [item for item in arguments.get("allowed_reads") or [] if isinstance(item, dict)],
         "timeout_seconds": min(120.0, max(1.0, float(arguments.get("timeout_seconds") or 60.0))),
+        "verification_mode": verification_mode,
+        "human_test_steps": [str(item) for item in arguments.get("human_test_steps") or [] if str(item).strip()],
+        "authorization": {
+            "mode": authorization_mode,
+            "policy_decision": "authorized" if automatically_authorized else "review_required",
+            "automatically_authorized": automatically_authorized,
+            "project_binding_id": engine.identity.get("project_binding_id"),
+            "editor_session_id": session_id,
+        },
         "approval_nonce": nonce,
         "created_at": now.isoformat().replace("+00:00", "Z"),
         "expires_at": (now + timedelta(minutes=10)).isoformat().replace("+00:00", "Z"),
     }
     plan["plan_hash"] = _canonical_hash(plan)
     _write_json(_plan_path(engine.store, plan_id), plan)
+    approval_required = not automatically_authorized
     return engine._envelope(
-        {"plan": plan, "approval_required": True},
-        next_actions=[{"reason": "After one explicit user approval, issue the session-bound runtime ticket.", "tool": "uepi_runtime_approve", "arguments": {"runtime_plan_id": plan_id, "plan_hash": plan["plan_hash"], "approval_nonce": nonce, "approved": True}}],
+        {"plan": plan, "approval_required": approval_required, "authorization": plan["authorization"], "verification": _verification_contract(verification_mode, steps, plan["human_test_steps"])},
+        next_actions=[{"reason": "Issue the trusted-policy runtime ticket immediately." if automatically_authorized else "After one explicit user approval, issue the session-bound runtime ticket.", "tool": "uepi_runtime_approve", "arguments": {"runtime_plan_id": plan_id, "plan_hash": plan["plan_hash"], "approval_nonce": nonce, "approved": approval_required}}],
         tool="uepi_runtime_preview",
         operation="preview",
     )
@@ -160,7 +231,9 @@ def approve(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         plan = json.loads(_plan_path(engine.store, plan_id).read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         return engine._error("UEPI_RUNTIME_PLAN_NOT_FOUND", "Runtime verification plan was not found.", tool="uepi_runtime_approve", operation="approve")
-    if not arguments.get("approved") or arguments.get("plan_hash") != plan.get("plan_hash") or arguments.get("approval_nonce") != plan.get("approval_nonce") or _canonical_hash(plan) != plan.get("plan_hash"):
+    authorization = plan.get("authorization") if isinstance(plan.get("authorization"), dict) else {}
+    automatically_authorized = bool(authorization.get("automatically_authorized") and authorization.get("policy_decision") == "authorized")
+    if (not arguments.get("approved") and not automatically_authorized) or arguments.get("plan_hash") != plan.get("plan_hash") or arguments.get("approval_nonce") != plan.get("approval_nonce") or _canonical_hash(plan) != plan.get("plan_hash"):
         return engine._error("UEPI_RUNTIME_APPROVAL_MISMATCH", "Runtime approval does not match the immutable Preview plan.", tool="uepi_runtime_approve", operation="approve")
     expires = datetime.fromisoformat(str(plan.get("expires_at")).replace("Z", "+00:00"))
     if expires < datetime.now(timezone.utc):
@@ -168,6 +241,15 @@ def approve(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     status = call_bridge(engine.store, "editor.get_status", timeout=2.0, expected_identity=engine.identity, expected_editor_session_id=str(plan.get("editor_session_id") or ""))
     if not status.get("ok"):
         return engine._error("UEPI_EDITOR_SESSION_MISMATCH", "The Editor session changed after Runtime Preview; create a new plan for the current session.", diagnostics=status.get("diagnostics") or [], tool="uepi_runtime_approve", operation="approve")
+    editor = status.get("result") if isinstance(status.get("result"), dict) else {}
+    current_policy = editor.get("write_authorization") if isinstance(editor.get("write_authorization"), dict) else {}
+    current_mode = str(current_policy.get("mode") or "ReviewEachPlan")
+    if current_mode != str(authorization.get("mode") or "ReviewEachPlan"):
+        return engine._error("UEPI_RUNTIME_TRUST_POLICY_REJECTED", "Runtime authorization mode changed after Preview; create a new plan.", tool="uepi_runtime_approve", operation="approve")
+    if not bool(current_policy.get("allow_runtime_control", False)):
+        return engine._error("UEPI_RUNTIME_POLICY_REJECTED", "Runtime control was disabled after Preview.", tool="uepi_runtime_approve", operation="approve")
+    if automatically_authorized and current_mode == "TrustedProject" and str(current_policy.get("trusted_project_binding_id") or "") != str(engine.identity.get("project_binding_id") or ""):
+        return engine._error("UEPI_RUNTIME_TRUST_POLICY_REJECTED", "TrustedProject binding changed after Preview; create a new plan.", tool="uepi_runtime_approve", operation="approve")
     ticket = _ticket_from_plan(engine, plan)
     first_step = next((item for item in ticket.get("steps") or [] if isinstance(item, dict)), None)
     next_actions = []
@@ -193,7 +275,9 @@ def load_ticket(engine: Any, ticket_id: str) -> tuple[dict[str, Any] | None, dic
 
 def _bridge(engine: Any, action: str, arguments: dict[str, Any], ticket: dict[str, Any] | None) -> dict[str, Any]:
     params = dict(arguments)
-    params["action"] = action
+    params["action"] = "observe" if action == "read" and arguments.get("function") else action
+    if ticket:
+        params["verification_mode"] = ticket.get("verification_mode") or "hybrid"
     return call_bridge(
         engine.store,
         "runtime.control",
@@ -205,7 +289,7 @@ def _bridge(engine: Any, action: str, arguments: dict[str, Any], ticket: dict[st
 
 
 def _cleanup_owned_pie(engine: Any, ticket: dict[str, Any] | None) -> None:
-    if ticket:
+    if ticket and ticket.get("verification_mode") != "human_pie":
         _bridge(engine, "stop", {}, ticket)
 
 
@@ -277,6 +361,8 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             else:
                 _cleanup_owned_pie(engine, ticket)
                 return engine._error("UEPI_RUNTIME_START_TIMEOUT", "PIE did not reach running state before the approved timeout.", tool="uepi_runtime", operation=action)
+        if ticket:
+            result = {**result, "verification": {key: ticket.get(key) for key in ("verification_mode", "technical_verification", "visual_acceptance", "visual_status", "visual_reviewer", "human_test_steps")}}
         return engine._envelope(result, diagnostics=response.get("diagnostics") or [], tool="uepi_runtime", operation=action)
 
     if action == "delay":
@@ -292,16 +378,16 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     if action in {"wait", "assert"}:
         timeout = max(0.0, min(float(arguments.get("timeout_seconds") or 10.0), 120.0))
         interval = max(0.05, min(float(arguments.get("poll_interval_ms") or 100) / 1000.0, 2.0))
-        expected = arguments.get("equals")
+        expected = _unwrap_typed_value(arguments.get("equals"))
         deadline = time.monotonic() + timeout
         last: dict[str, Any] = {}
         observed: Any = None
         while time.monotonic() <= deadline:
-            bridge_action = "invoke" if arguments.get("function") else "read"
+            bridge_action = "read"
             response = _bridge(engine, bridge_action, arguments, ticket)
             if response.get("ok") and isinstance(response.get("result"), dict):
                 last = response["result"]
-                observed = _value_at_path(last, str(arguments.get("field") or "value"))
+                observed = _unwrap_typed_value(_value_at_path(last, str(arguments.get("field") or "value")))
                 if observed == expected:
                     return engine._envelope({"matched": True, "assertion": action == "assert", "observed": last, "observed_value": observed}, tool="uepi_runtime", operation=action)
             time.sleep(interval)

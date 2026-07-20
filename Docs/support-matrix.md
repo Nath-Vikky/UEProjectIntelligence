@@ -21,7 +21,7 @@
 
 ## Guarded Write Beta
 
-- Every write requires exact project/session routing, an immutable Preview, one explicit user approval, repeated preflight, typed validation, touched-only save, targeted refresh, and transaction diff.
+- Every write requires exact project/session routing, an immutable Preview, an explicit ReviewEachPlan approval or trusted-policy authorization, repeated preflight, typed validation, touched-only save, targeted refresh, transaction diff, and a post-action report.
 - Reflected DataAsset creation and nested scalar/enum/name/text/object/soft-object/struct/array/set/map property writes are supported.
 - Blueprint graph operations cover variables, components, functions, registered node kinds, real-pin defaults/connections/disconnections, node removal/layout/comments, compile, save, and rollback.
 - AnimGraph operations cover Slot registration, Slot node creation, pose links, compile, save, and rollback on UE5.3.2.

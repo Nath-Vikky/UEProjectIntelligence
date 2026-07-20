@@ -8,7 +8,7 @@ Generate or update a UEPI Snapshot
   -> Codex starts the UEPI stdio MCP server
   -> The agent chooses only the tools needed for the user's question
   -> Tool results are cached for offline analysis
-  -> If the user asks for edits, the agent previews, asks approval, applies through the live editor bridge, validates, and reports diff evidence
+  -> If the user asks for edits, the agent previews, evaluates authorization, applies through the live editor bridge, validates, and reports diff evidence
 ```
 
 No daemon, HTTP server, Web UI, worker queue, or global proxy exception is required.
@@ -81,7 +81,7 @@ __PROJECT_ROOT__/__PROJECT_NAME__.uproject
 codex
 ```
 
-This single profile exposes read tools and guarded edit tools together. You do not need a separate write profile. Edit apply is available when the editor live bridge is online, and it still requires a preview plan plus explicit user approval.
+This single profile exposes read tools and guarded edit tools together. You do not need a separate write profile. Edit apply is available when the editor live bridge is online. It always requires Preview and policy checks; explicit approval is required only in the default `ReviewEachPlan` mode.
 
 After replacing or rebuilding UEPI, restart Codex once. The stdio MCP process loads its Python modules and tool contract when Codex starts; reopening only the Unreal Editor reloads the C++ Bridge but does not replace an already running Codex MCP process.
 
@@ -112,7 +112,7 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 3. Call the narrow read tool needed by the question.
    For a player key/InputAction that crosses Blueprint assets, use `uepi_context` with `route="gameplay_input_to_effect"`; follow `input_owner` and its reasons instead of assuming every Actor with an input node owns player input.
 4. If the user asks for a project change, call `uepi_edit_discover`, compare compact and expanded Blueprint designs when relevant, then create one complete `uepi_edit_preview` plan for the intended edit.
-5. Ask for explicit approval once. After the user approves the unchanged Preview, the Agent calls `uepi_edit_apply` itself and completes validation, touched-only save, refresh/read, `uepi_diff`, and approved Runtime verification without asking the user to invoke Apply or reconfirm phases.
+5. Evaluate the returned authorization. In `ReviewEachPlan`, ask once; in an authorized `TrustedSession` or `TrustedProject`, call `uepi_edit_apply` immediately. Complete validation, touched-only save, refresh/read, `uepi_diff`, reporting, and Runtime verification without reconfirming unchanged phases.
 6. For `refresh="force"`, the read tool requests, waits, reloads the resulting generation, and retries internally. It returns `UEPI_REFRESH_REQUESTED` with a request ID only when the bounded wait expires.
 7. If diagnostics include `UEPI_SNAPSHOT_STALE`, open the editor/plugin for realtime refresh or run a commandlet scan.
 
@@ -133,7 +133,7 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 - `uepi_refresh`: request, inspect, or wait for targeted refresh work.
 - `uepi_schema`: authoritative property, operation, Blueprint node, and runtime schemas.
 - `uepi_runtime_preview`: create an immutable project/session/map-bound PIE verification plan without editing an asset.
-- `uepi_runtime_approve`: issue a restricted Runtime Ticket after one explicit approval of that unchanged plan.
+- `uepi_runtime_approve`: issue a restricted Runtime Ticket after ReviewEachPlan approval or an automatic trusted-policy decision.
 - `uepi_runtime`: execute ticket-bound PIE start/stop/input/invoke/read/delay/wait/assert steps.
 - `uepi_edit_discover`: discover supported guarded edit operations.
 - `uepi_edit_preview`: create a dry-run operation plan without modifying assets.
@@ -152,7 +152,7 @@ For runtime input, choose the delivery deliberately:
 
 Input delivery evidence does not by itself prove the gameplay effect happened. End the approved plan with a `read`, `wait`, or `assert` against the relevant component state. PIE `start` waits for `running` by default, and `delay` is a separate time-only action.
 
-After an Editor restart, a plan from the old session is rejected. Use the returned current session ID and rebound next action to preview again. If Status reports `recovery_required`, inspect the listed transaction marker before attempting another write.
+After an Editor restart, a plan from the old session is rejected. Use the returned current session ID and rebound next action to preview again. If Status reports `recovery_required`, call `uepi_recovery_inspect` and follow its exact finalize/rollback action before attempting another write.
 
 Successful approved plans save only touched packages by default. UEPI never exposes save-all.
 

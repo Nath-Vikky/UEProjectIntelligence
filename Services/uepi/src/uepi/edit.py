@@ -14,6 +14,7 @@ from .identity import project_identity
 from .operation_catalog import load_catalog, operation_map
 from .plan import PLAN_SCHEMA, canonical_plan_hash, verify_plan_hash
 from .result import envelope
+from .runtime import _human_test_steps
 from .status import resolve_status
 from .diff import build_transaction_diff
 from .store import SnapshotStore
@@ -59,6 +60,88 @@ def _budget_diagnostics(operation_count: int, asset_count: int, budgets: dict[st
     if operation_count > budgets["high_risk_operations"] or asset_count > budgets["high_risk_assets"]:
         diagnostics.append({"severity": "warning", "blocking": False, "code": "UEPI_EDIT_LARGE_ATOMIC_TRANSACTION", "message": "This is a large atomic transaction. UEPI will use extended Apply/Refresh timeouts and preserve all-target backup and rollback semantics.", "phase": "preview", "retryable": False, "recoverable": True})
     return diagnostics
+
+
+def _risk_rank(value: Any) -> int:
+    return {"low": 0, "medium": 1, "high": 2, "critical": 3}.get(str(value or "medium").casefold(), 1)
+
+
+def _authorization_decision(
+    catalog: dict[str, Any],
+    identity: dict[str, Any],
+    session_id: str,
+    operations: list[dict[str, Any]],
+    affected_assets: list[str],
+    descriptors: dict[str, dict[str, Any]],
+    risk_level: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    settings = catalog.get("settings") if isinstance(catalog.get("settings"), dict) else {}
+    nested = settings.get("write_authorization") if isinstance(settings.get("write_authorization"), dict) else {}
+    policy = {**settings, **nested}
+    mode = str(policy.get("mode") or policy.get("write_authorization_mode") or "ReviewEachPlan")
+    decision = {
+        "mode": mode,
+        "policy_decision": "review_required",
+        "automatically_authorized": False,
+        "project_binding_id": identity.get("project_binding_id"),
+        "editor_session_id": session_id,
+        "allowed_asset_roots": [str(item) for item in policy.get("allowed_asset_roots") or []],
+        "allowed_operation_domains": [str(item) for item in policy.get("allowed_operation_domains") or []],
+        "maximum_risk_level": str(policy.get("maximum_risk_level") or "low").casefold(),
+        "maximum_assets_per_transaction": _positive_int(policy.get("maximum_assets_per_transaction"), 1),
+        "allow_asset_delete": bool(policy.get("allow_asset_delete", False)),
+        "allow_asset_rename": bool(policy.get("allow_asset_rename", False)),
+        "allow_runtime_control": bool(policy.get("allow_runtime_control", False)),
+        "always_create_backup": bool(policy.get("always_create_backup", True)),
+        "always_report_after_apply": bool(policy.get("always_report_after_apply", True)),
+        "rejections": [],
+    }
+    if mode == "ReviewEachPlan":
+        return decision, []
+
+    rejections: list[str] = []
+    if mode not in {"TrustedSession", "TrustedProject"}:
+        rejections.append(f"Unsupported authorization mode: {mode}")
+    if mode == "TrustedProject" and str(policy.get("trusted_project_binding_id") or "") != str(identity.get("project_binding_id") or ""):
+        rejections.append("TrustedProjectBindingId does not match the MCP-bound project.")
+    if not session_id:
+        rejections.append("A live Editor session is required for trusted authorization.")
+    roots = [str(item).rstrip("/") for item in decision["allowed_asset_roots"] if str(item).strip()]
+    for asset in affected_assets:
+        if not any(asset.casefold() == root.casefold() or asset.casefold().startswith(root.casefold() + "/") for root in roots):
+            rejections.append(f"Asset is outside AllowedAssetRoots: {asset}")
+    allowed_domains = {str(item).casefold() for item in decision["allowed_operation_domains"]}
+    for operation in operations:
+        op_type = str(operation.get("type") or "")
+        descriptor = descriptors.get(op_type) or {}
+        domain = str(descriptor.get("domain") or "").casefold()
+        if not domain or domain not in allowed_domains:
+            rejections.append(f"Operation domain is outside AllowedOperationDomains: {op_type} ({domain or 'unknown'})")
+        if not decision["allow_asset_delete"] and "delete" in op_type.casefold():
+            rejections.append(f"Asset delete is disabled: {op_type}")
+        if not decision["allow_asset_rename"] and "rename" in op_type.casefold():
+            rejections.append(f"Asset rename is disabled: {op_type}")
+    if _risk_rank(risk_level) > _risk_rank(decision["maximum_risk_level"]):
+        rejections.append(f"Plan risk {risk_level} exceeds MaximumRiskLevel={decision['maximum_risk_level']}.")
+    if len(affected_assets) > int(decision["maximum_assets_per_transaction"]):
+        rejections.append("Affected asset count exceeds MaximumAssetsPerTransaction.")
+
+    decision["rejections"] = list(dict.fromkeys(rejections))
+    decision["policy_decision"] = "rejected" if rejections else "authorized"
+    decision["automatically_authorized"] = not rejections
+    diagnostics = [
+        {
+            "severity": "error",
+            "blocking": True,
+            "code": "UEPI_EDIT_TRUST_POLICY_REJECTED",
+            "message": rejection,
+            "phase": "authorization",
+            "retryable": False,
+            "recoverable": True,
+        }
+        for rejection in decision["rejections"]
+    ]
+    return decision, diagnostics
 
 
 def _now() -> datetime:
@@ -243,9 +326,11 @@ def _runtime_ticket(store: SnapshotStore, plan: dict[str, Any]) -> dict[str, Any
     if not verification:
         return None
     steps = [item for item in verification.get("steps") or [] if isinstance(item, dict)]
+    verification_mode = str(verification.get("verification_mode") or "hybrid")
     requested_actions = {str(item.get("action") or "") for item in steps}
-    allowed_actions = sorted(({"stop"} | requested_actions) & {"start", "stop", "input", "invoke", "read", "wait", "assert", "delay"})
-    allowed_functions = sorted({str(item.get("function")) for item in steps if item.get("action") in {"invoke", "wait", "assert"} and item.get("function")} | {str(item) for item in verification.get("allowed_functions") or [] if isinstance(item, str)})
+    implicit_actions = set() if verification_mode == "human_pie" else {"stop"}
+    allowed_actions = sorted((implicit_actions | requested_actions) & {"start", "stop", "input", "invoke", "read", "wait", "assert", "delay"})
+    allowed_functions = sorted({str(item.get("function")) for item in steps if item.get("action") in {"invoke", "read", "wait", "assert"} and item.get("function")} | {str(item) for item in verification.get("allowed_functions") or [] if isinstance(item, str)})
     allowed_keys = sorted({str(item.get("key")) for item in steps if item.get("action") == "input" and item.get("key")} | {str(item) for item in verification.get("allowed_keys") or [] if isinstance(item, str)})
     allowed_deliveries = sorted({str(item.get("delivery") or "possessed_pawn_input_stack") for item in steps if item.get("action") == "input"} | {str(item) for item in verification.get("allowed_deliveries") or [] if isinstance(item, str)})
     allowed_inputs = [
@@ -275,11 +360,81 @@ def _runtime_ticket(store: SnapshotStore, plan: dict[str, Any]) -> dict[str, Any
         "allowed_deliveries": allowed_deliveries,
         "allowed_inputs": allowed_inputs,
         "allowed_reads": allowed_reads,
+        "verification_mode": verification_mode,
+        "technical_verification": "agent_objective" if verification_mode != "human_pie" else "not_requested",
+        "visual_acceptance": "human_required" if verification_mode in {"human_pie", "hybrid"} else "not_required",
+        "visual_status": "unreviewed" if verification_mode in {"human_pie", "hybrid"} else "not_applicable",
+        "visual_reviewer": "user" if verification_mode in {"human_pie", "hybrid"} else "agent",
+        "human_test_steps": [str(item) for item in verification.get("human_test_steps") or [] if str(item).strip()] or _human_test_steps(steps),
     }
     directory = store.store_dir / "runtime"
     directory.mkdir(parents=True, exist_ok=True)
     (directory / f"{ticket_id.replace(':', '-')}.json").write_text(json.dumps(ticket, ensure_ascii=False, indent=2), encoding="utf-8")
     return ticket
+
+
+def _report_assets(items: Any, *keys: str) -> list[str]:
+    assets: list[str] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        for key in keys:
+            value = item.get(key)
+            if isinstance(value, str) and value and value not in assets:
+                assets.append(value)
+                break
+    return assets
+
+
+def _transaction_report(
+    plan: dict[str, Any],
+    result: dict[str, Any],
+    authorization: dict[str, Any],
+    *,
+    after_fingerprints: list[dict[str, Any]] | None = None,
+    transaction_diff: dict[str, Any] | None = None,
+    refresh_result: dict[str, Any] | None = None,
+    runtime_ticket: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    compile_results = result.get("compile") or []
+    saved_files = result.get("saved_file_hashes") or []
+    backup_directory = result.get("backup_directory") or None
+    runtime_result = {
+        "ticket_id": (runtime_ticket or {}).get("ticket_id"),
+        "technical_verification": (runtime_ticket or {}).get("technical_verification") or "not_run",
+        "verification_mode": (runtime_ticket or {}).get("verification_mode") or (plan.get("verification_plan") or {}).get("verification_mode"),
+        "visual_acceptance": (runtime_ticket or {}).get("visual_acceptance"),
+        "visual_status": (runtime_ticket or {}).get("visual_status"),
+        "visual_reviewer": (runtime_ticket or {}).get("visual_reviewer"),
+        "human_test_steps": (runtime_ticket or {}).get("human_test_steps") or [],
+    }
+    report = {
+        "transaction_id": plan.get("transaction_id"),
+        "intent": plan.get("intent"),
+        "operations": result.get("operations") or plan.get("operations") or [],
+        "affected_assets": plan.get("affected_assets") or [],
+        "compiled_assets": _report_assets(compile_results, "asset", "asset_path", "object_path"),
+        "validation_result": {"ok": bool(result.get("validation_ok")), "compile": compile_results, "baseline_compile": result.get("baseline_compile") or []},
+        "saved_assets": list(result.get("affected_assets") or plan.get("affected_assets") or []) if result.get("saved") else [],
+        "semantic_diff": transaction_diff,
+        "backup_path": backup_directory,
+        "rollback_available": bool(backup_directory),
+        "runtime_verification_result": runtime_result,
+        "human_visual_verification_required": runtime_result["visual_acceptance"] == "human_required",
+        "operation_outcomes": result.get("operations") or [],
+        "atomicity_state": result.get("atomicity_state") or "unknown_recovery_required",
+        "atomicity_restored": bool(result.get("atomicity_restored", False)),
+        "backup": {"directory": backup_directory, "journal_path": result.get("journal_path")},
+        "before_fingerprints": plan.get("before_fingerprints") or [],
+        "after_fingerprints": after_fingerprints or [],
+        "validation": {"ok": bool(result.get("validation_ok")), "compile": compile_results, "baseline_compile": result.get("baseline_compile") or []},
+        "save": {"saved": bool(result.get("saved")), "files": saved_files},
+        "refresh": {"request_id": result.get("refresh_request_id"), "request_path": result.get("refresh_request_path"), "completion": refresh_result},
+        "diff": transaction_diff,
+        "runtime": runtime_result,
+        "authorization": authorization,
+    }
+    return report
 
 
 def discover(store: SnapshotStore, expected_editor_session_id: str | None = None) -> dict[str, Any]:
@@ -368,11 +523,16 @@ def preview(
     diagnostics.extend(_quality_diagnostics(normalized))
     if verification_plan:
         supported_runtime_actions = {"start", "stop", "input", "invoke", "read", "wait", "assert", "delay"}
+        verification_mode = str(verification_plan.get("verification_mode") or "hybrid")
+        if verification_mode not in {"agent_objective", "human_pie", "hybrid"}:
+            diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_VERIFICATION_MODE_INVALID", "message": "verification_plan.verification_mode must be agent_objective, human_pie, or hybrid.", "phase": "preview", "retryable": False, "recoverable": True})
         map_path = verification_plan.get("map")
         if map_path is not None and (not isinstance(map_path, str) or not map_path.startswith("/Game/")):
             diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_MAP_NOT_APPROVED", "message": "verification_plan.map must be an exact /Game package path.", "phase": "preview", "retryable": False, "recoverable": True})
         for step_index, step in enumerate(verification_plan.get("steps") or []):
             action = str(step.get("action") or "") if isinstance(step, dict) else ""
+            if verification_mode == "human_pie" and action in {"start", "stop", "input", "invoke"}:
+                diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_HUMAN_PIE_OBSERVATION_ONLY", "message": f"human_pie verification cannot perform runtime action: {action}", "phase": "preview", "retryable": False, "recoverable": True})
             if action not in supported_runtime_actions:
                 diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_ACTION_NOT_APPROVED", "message": f"Unsupported verification action at step {step_index}: {action}", "phase": "preview", "retryable": False, "recoverable": True})
             elif action == "invoke" and not step.get("function"):
@@ -397,6 +557,10 @@ def preview(
     dependencies = sorted(set(dependencies) - set(affected))
     budgets = _transaction_budgets(catalog)
     diagnostics.extend(_budget_diagnostics(len(normalized), len(affected), budgets))
+    risk_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    risk_level = max((str(descriptors.get(str(item.get("type")), {}).get("risk") or "medium") for item in normalized), key=lambda value: risk_order.get(value, 1), default="low")
+    if len(normalized) > budgets["high_risk_operations"] or len(affected) > budgets["high_risk_assets"]:
+        risk_level = max(risk_level, "high", key=lambda value: risk_order.get(value, 1))
     status = resolve_status(
         store,
         _state(store),
@@ -407,6 +571,18 @@ def preview(
     session_id = str(status["editor"].get("session_id") or "")
     if not session_id:
         diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_EDITOR_SESSION_REQUIRED", "message": "Preview for a writable plan requires an exact live Editor session.", "phase": "preview", "retryable": True, "recoverable": True})
+    authorization, authorization_diagnostics = _authorization_decision(
+        catalog,
+        identity,
+        session_id,
+        normalized,
+        affected,
+        descriptors,
+        risk_level,
+    )
+    diagnostics.extend(authorization_diagnostics)
+    if verification_plan and not bool(authorization.get("allow_runtime_control", False)):
+        diagnostics.append({"severity": "error", "blocking": True, "code": "UEPI_RUNTIME_POLICY_REJECTED", "message": "The edit plan requests Runtime verification, but Runtime control is disabled by the active project authorization policy.", "phase": "preview", "retryable": False, "recoverable": True})
     if any(item.get("blocking") for item in diagnostics):
         return _response(store, tool="uepi_edit_preview", operation="preview", error={"code": next(item["code"] for item in diagnostics if item.get("blocking")), "message": "Edit Preview is blocked; no Apply action is available.", "retryable": False, "candidates": []}, diagnostics=diagnostics)
 
@@ -417,10 +593,7 @@ def preview(
     operation_order = [str(item.get("operation_id")) for item in normalized]
     touched_packages = sorted({asset.split(".", 1)[0] for asset in affected})
     fingerprint_assets = sorted(set(affected + dependencies))
-    risk_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-    risk_level = max((str(descriptors.get(str(item.get("type")), {}).get("risk") or "medium") for item in normalized), key=lambda value: risk_order.get(value, 1), default="low")
-    if len(normalized) > budgets["high_risk_operations"] or len(affected) > budgets["high_risk_assets"]:
-        risk_level = max(risk_level, "high", key=lambda value: risk_order.get(value, 1))
+    approval_required = not bool(authorization.get("automatically_authorized"))
     plan = {
         "schema_version": PLAN_SCHEMA,
         "schema_aliases": ["uepi.edit-plan.v2"],
@@ -458,8 +631,9 @@ def preview(
         "validation_policy": "typed_registry",
         "validation_plan": [{"operation_id": item.get("operation_id"), "validator": descriptors.get(str(item.get("type")), {}).get("validation_behavior") or descriptors.get(str(item.get("type")), {}).get("validation_mode") or "generic_uobject"} for item in normalized],
         "transaction_budget": {**budgets, "operation_count": len(normalized), "asset_count": len(affected)},
-        "risk": {"level": risk_level, "requires_user_approval": True, "operation_count": len(normalized), "asset_count": len(affected)},
-        "approval": {"required": True, "nonce": nonce},
+        "risk": {"level": risk_level, "requires_user_approval": approval_required, "operation_count": len(normalized), "asset_count": len(affected)},
+        "authorization": authorization,
+        "approval": {"required": approval_required, "nonce": nonce, "mode": authorization.get("mode")},
         "evidence": evidence or [],
         "verification_plan": verification_plan,
     }
@@ -515,13 +689,24 @@ def preview(
     path = _plan_path(store, transaction_id.replace(":", "-"))
     path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     audit_path = _audit(store, {"event": "preview", "transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "affected_assets": affected, "dependency_assets": dependencies})
+    apply_arguments = {
+        "transaction_id": transaction_id,
+        "plan_hash": plan["plan_hash"],
+        "approval_nonce": plan["approval_nonce"],
+        "approved": approval_required,
+    }
+    continuation = (
+        "The trusted project policy authorized this immutable Preview; the Agent calls uepi_edit_apply immediately and completes validation, save, refresh, diff, and runtime verification."
+        if not approval_required
+        else "After explicit user approval, the Agent calls uepi_edit_apply immediately and completes post-apply validation, refresh, diff, and approved runtime verification without further confirmation."
+    )
     return _response(
         store,
         tool="uepi_edit_preview",
         operation="preview",
-        result={"plan": plan, "audit_path": audit_path, "approval_request": {"transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "approval_nonce": plan["approval_nonce"], "summary": intent, "affected_assets": affected, "dependency_assets": dependencies, "continuation": "After explicit user approval, the Agent calls uepi_edit_apply immediately and completes post-apply validation, refresh, diff, and approved runtime verification without further confirmation."}},
+        result={"plan": plan, "audit_path": audit_path, "authorization": authorization, "approval_request": {"required": approval_required, "transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "approval_nonce": plan["approval_nonce"], "summary": intent, "affected_assets": affected, "dependency_assets": dependencies, "continuation": continuation}},
         diagnostics=diagnostics,
-        next_actions=[{"reason": "Wait for one explicit user approval, then the Agent must call Apply automatically with these immutable arguments; do not ask the user to invoke the tool manually or reconfirm unchanged phases.", "tool": "uepi_edit_apply", "arguments": {"transaction_id": transaction_id, "plan_hash": plan["plan_hash"], "approval_nonce": plan["approval_nonce"], "approved": True}}],
+        next_actions=[{"reason": "Apply immediately under trusted policy." if not approval_required else "Wait for one explicit user approval, then apply automatically without reconfirming unchanged phases.", "tool": "uepi_edit_apply", "arguments": apply_arguments}],
     )
 
 
@@ -541,7 +726,9 @@ def apply(store: SnapshotStore, transaction_id: str = "", approved: bool = False
     result_path = _result_path(store, transaction_id.replace(":", "-"))
     if result_path.exists():
         return _response(store, tool="uepi_edit_apply", operation="apply", result={"idempotent_replay": True, "apply": json.loads(result_path.read_text(encoding="utf-8-sig"))})
-    if not approved or plan_hash != plan.get("plan_hash") or approval_nonce != plan.get("approval_nonce") or not verify_plan_hash(plan):
+    authorization = plan.get("authorization") if isinstance(plan.get("authorization"), dict) else {}
+    automatically_authorized = bool(authorization.get("automatically_authorized") and authorization.get("policy_decision") == "authorized")
+    if (not approved and not automatically_authorized) or plan_hash != plan.get("plan_hash") or approval_nonce != plan.get("approval_nonce") or not verify_plan_hash(plan):
         return _response(store, tool="uepi_edit_apply", operation="apply", error={"code": "UEPI_EDIT_APPROVAL_MISMATCH", "message": "Apply approval does not match the immutable Preview plan.", "retryable": False, "candidates": []})
     expires = datetime.fromisoformat(str(plan.get("expires_at")).replace("Z", "+00:00"))
     if expires < _now():
@@ -565,7 +752,7 @@ def apply(store: SnapshotStore, transaction_id: str = "", approved: bool = False
     catalog, diagnostics, bridge_error = load_catalog(store, identity, refresh=True)
     if not catalog or catalog.get("catalog_hash") != plan.get("catalog_hash"):
         return _response(store, tool="uepi_edit_apply", operation="apply", error={"code": "UEPI_EDIT_CATALOG_STALE", "message": "Operation catalog changed after Preview.", "retryable": False, "candidates": []}, diagnostics=diagnostics)
-    response = call_bridge(store, "edit.apply", {"transaction_id": transaction_id, "approved": True, "plan_hash": plan_hash, "approval_nonce": approval_nonce, "save": True, "plan": plan}, timeout=_apply_timeout_seconds(plan), expected_identity=identity, expected_editor_session_id=str(plan.get("editor_session_id") or ""))
+    response = call_bridge(store, "edit.apply", {"transaction_id": transaction_id, "approved": approved, "plan_hash": plan_hash, "approval_nonce": approval_nonce, "save": True, "plan": plan}, timeout=_apply_timeout_seconds(plan), expected_identity=identity, expected_editor_session_id=str(plan.get("editor_session_id") or ""))
     if not response.get("ok"):
         code = str((response.get("error") or {}).get("code") or next((item.get("code") for item in response.get("diagnostics") or [] if isinstance(item, dict)), "UEPI_EDIT_APPLY_FAILED"))
         failed_result = response.get("result") if isinstance(response.get("result"), dict) else {}
@@ -589,6 +776,7 @@ def apply(store: SnapshotStore, transaction_id: str = "", approved: bool = False
             else:
                 failed_result["atomicity_state"] = "unknown_recovery_required"
         failed_result["atomicity_restored"] = failed_result["atomicity_state"] in {"not_modified", "compensated"}
+        failed_result["transaction_report"] = _transaction_report(plan, failed_result, authorization)
         audit_path = _audit(store, {"event": "apply_failed", "transaction_id": transaction_id, "plan_hash": plan_hash, "error_code": code, "result": failed_result})
         return _response(store, tool="uepi_edit_apply", operation="apply", result={"apply": failed_result, "atomicity_state": failed_result["atomicity_state"], "atomicity_restored": bool(failed_result.get("atomicity_restored")), "audit_path": audit_path}, error={"code": code, "message": str((response.get("error") or {}).get("message") or failed_result.get("failure_message") or "Editor Apply failed during preflight or execution."), "retryable": False, "candidates": failed_result.get("operations") or []}, diagnostics=diagnostics + list(response.get("diagnostics") or []))
     result = response.get("result") if isinstance(response.get("result"), dict) else {}
@@ -604,6 +792,15 @@ def apply(store: SnapshotStore, transaction_id: str = "", approved: bool = False
         "diff_ready": True,
         "runtime_ticket": runtime_ticket,
     }
+    result["transaction_report"] = _transaction_report(
+        plan,
+        result,
+        authorization,
+        after_fingerprints=after_fingerprints,
+        transaction_diff=result["transaction_diff"],
+        refresh_result=refresh_result,
+        runtime_ticket=runtime_ticket,
+    )
     result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     audit_path = _audit(store, {"event": "apply", "transaction_id": transaction_id, "plan_hash": plan_hash, "result": result})
     next_actions = [{"reason": "Inspect the transaction-bound semantic diff.", "tool": "uepi_diff", "arguments": {"mode": "transaction", "transaction_id": transaction_id}}]

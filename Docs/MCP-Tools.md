@@ -22,7 +22,10 @@ Every tool result uses MCP envelope v2. `max_payload_bytes` applies to the compl
 | `uepi_world` | Editor or UEPI-owned PIE actors/components | Yes |
 | `uepi_refresh` | Request, inspect, or wait for targeted collection | Yes to execute |
 | `uepi_schema` | Property, operation, node, and runtime schemas | Usually yes |
+| `uepi_runtime_preview` | Immutable standalone runtime verification plan | Yes |
+| `uepi_runtime_approve` | Issue a policy-bound runtime ticket | Yes |
 | `uepi_runtime` | Transaction-bound controlled PIE verification | Yes |
+| `uepi_recovery_inspect` | Explain unresolved transaction markers and compare fingerprints | No |
 
 For `uepi_animation`, use `mode="exact_asset"` unless dependency/playback context is explicitly needed. Start procedural reconstruction with `reconstruction_profile` or `driver_track_curves`; request full-pose artifacts only for high-fidelity work.
 
@@ -35,6 +38,8 @@ For `uepi_animation`, use `mode="exact_asset"` unless dependency/playback contex
 | `uepi_edit_apply` | Apply one approved plan after all guards repeat |
 | `uepi_edit_validate` | Re-run transaction validation |
 | `uepi_edit_rollback` | Undo/restore the applied transaction |
+| `uepi_recovery_finalize` | Acknowledge an already-restored exact recovery transaction |
+| `uepi_recovery_rollback` | Restore the exact prepared backup set for a recovery transaction |
 
 Operations remain data inside the edit facade; UEPI does not expose one MCP tool per mutation.
 
@@ -49,12 +54,15 @@ when the user explicitly requests a change:
 uepi_edit_discover
 uepi_schema as needed
 uepi_edit_preview (one complete plan)
-one user approval
+authorization policy decision
+one user approval only in ReviewEachPlan
 uepi_edit_apply
 uepi_edit_validate
 uepi_diff(mode="transaction")
 uepi_runtime only when a returned ticket requires runtime proof
 ```
+
+`TrustedSession` and `TrustedProject` permit immediate Apply only when the unchanged plan satisfies every configured scope, domain, risk, destructive-operation, runtime, project, session, and asset-budget constraint. A successful Apply returns a structured post-action report with intent, operation outcomes, affected/compiled/saved assets, validation, semantic diff, backup and rollback state, runtime verification state, and the human visual verification requirement.
 
 `UEPI_REFRESH_REQUESTED` means retry after the Editor processes the targeted request. `UEPI_SNAPSHOT_STALE` means offline evidence is older than a known change.
 

@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 4,
-	"VersionName": "2.0.0-beta.4",
+	"Version": 5,
+	"VersionName": "2.0.0-beta.5",
 	"FriendlyName": "UEProjectIntelligence",
 	"Description": "Codex-first MCP and guarded Unreal Editor bridge for understanding, editing, and validating Unreal Engine 5.3.2 projects.",
 	"Category": "AI Tools",

@@ -1807,6 +1807,7 @@ TSharedPtr<FJsonObject> AnnotateNodeSemantics(
 		NodeEntity.Attributes.Add(TEXT("semantic_input_key"), StableKeyName);
 		NodeEntity.Attributes.Add(TEXT("input_key"), StableKeyName);
 		NodeEntity.Attributes.Add(TEXT("input_key_display_name"), DisplayKeyName);
+		NodeEntity.Attributes.Add(TEXT("localized_display_name"), DisplayKeyName);
 		NodeEntity.Completeness.Covered.AddUnique(TEXT("node_semantic_input_key"));
 
 		SemanticObject = MakeShared<FJsonObject>();

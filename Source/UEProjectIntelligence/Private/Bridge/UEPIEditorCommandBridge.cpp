@@ -112,7 +112,53 @@ namespace UE::ProjectIntelligence
 
 		FString UEPIPluginBuildId()
 		{
-			return TEXT("uepi-") + UEPIPluginVersion();
+			static const FString BuildId = []()
+			{
+				const FString BuildStamp = TEXT(__DATE__ " " __TIME__);
+				return FString::Printf(TEXT("uepi-%s-%s"), *UEPIPluginVersion(), *FMD5::HashAnsiString(*BuildStamp).Left(12));
+			}();
+			return BuildId;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> StringArrayToJsonValues(const TArray<FString>& Values);
+
+		FString AuthorizationModeString(EUEPIWriteAuthorizationMode Mode)
+		{
+			switch (Mode)
+			{
+			case EUEPIWriteAuthorizationMode::TrustedSession: return TEXT("TrustedSession");
+			case EUEPIWriteAuthorizationMode::TrustedProject: return TEXT("TrustedProject");
+			default: return TEXT("ReviewEachPlan");
+			}
+		}
+
+		FString RiskLevelString(EUEPIMaximumRiskLevel Level)
+		{
+			switch (Level)
+			{
+			case EUEPIMaximumRiskLevel::Low: return TEXT("low");
+			case EUEPIMaximumRiskLevel::Medium: return TEXT("medium");
+			case EUEPIMaximumRiskLevel::Critical: return TEXT("critical");
+			default: return TEXT("high");
+			}
+		}
+
+		TSharedRef<FJsonObject> AuthorizationSettingsObject(const UUEPISettings* Settings)
+		{
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetStringField(TEXT("mode"), Settings ? AuthorizationModeString(Settings->WriteAuthorizationMode) : TEXT("ReviewEachPlan"));
+			Result->SetStringField(TEXT("trusted_project_binding_id"), Settings ? Settings->TrustedProjectBindingId : FString());
+			Result->SetArrayField(TEXT("allowed_asset_roots"), StringArrayToJsonValues(Settings ? Settings->AllowedAssetRoots : TArray<FString>()));
+			Result->SetArrayField(TEXT("allowed_operation_domains"), StringArrayToJsonValues(Settings ? Settings->AllowedOperationDomains : TArray<FString>()));
+			Result->SetStringField(TEXT("maximum_risk_level"), Settings ? RiskLevelString(Settings->MaximumRiskLevel) : TEXT("low"));
+			Result->SetBoolField(TEXT("allow_asset_delete"), Settings && Settings->bAllowAssetDelete);
+			Result->SetBoolField(TEXT("allow_asset_rename"), Settings && Settings->bAllowAssetRename);
+			Result->SetBoolField(TEXT("allow_runtime_control"), Settings && Settings->bAllowRuntimeControl);
+			Result->SetNumberField(TEXT("maximum_assets_per_transaction"), Settings ? Settings->MaximumAssetsPerTransaction : 0);
+			Result->SetBoolField(TEXT("always_create_backup"), Settings && Settings->bAlwaysCreateBackup);
+			Result->SetBoolField(TEXT("always_report_after_apply"), Settings && Settings->bAlwaysReportAfterApply);
+			Result->SetStringField(TEXT("current_project_binding_id"), UEPIProjectBindingId());
+			return Result;
 		}
 
 		FString UEPIFileSha256(const FString& Filename)
@@ -181,7 +227,7 @@ namespace UE::ProjectIntelligence
 			{
 				const FString Prefix = Prepared.LeftChop(FString(TEXT(".prepared.json")).Len());
 				bool bTerminal = false;
-				for (const FString& Phase : { TEXT("applied"), TEXT("failed_rolled_back"), TEXT("rollback_failed"), TEXT("rolled_back") })
+				for (const FString& Phase : { TEXT("applied"), TEXT("failed_rolled_back"), TEXT("rollback_failed"), TEXT("rolled_back"), TEXT("recovery_finalized") })
 				{
 					if (IFileManager::Get().FileExists(*FPaths::Combine(Directory, Prefix + TEXT(".") + Phase + TEXT(".json")))) { bTerminal = true; break; }
 				}
@@ -324,6 +370,91 @@ namespace UE::ProjectIntelligence
 			return Result;
 		}
 
+		TSharedPtr<FJsonObject> LoadJsonFile(const FString& Path)
+		{
+			FString Text;
+			TSharedPtr<FJsonObject> Object;
+			if (!FFileHelper::LoadFileToString(Text, *Path)) return nullptr;
+			const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Text);
+			return FJsonSerializer::Deserialize(Reader, Object) ? Object : nullptr;
+		}
+
+		bool FindRecoveryMarker(const FString& TransactionId, FString& OutPath, TSharedPtr<FJsonObject>& OutJournal)
+		{
+			for (const FString& Path : UEPIUnresolvedRecoveryMarkers())
+			{
+				TSharedPtr<FJsonObject> Journal = LoadJsonFile(Path);
+				if (!Journal.IsValid()) continue;
+				if (TransactionId.IsEmpty() || JsonString(Journal, TEXT("transaction_id")) == TransactionId)
+				{
+					OutPath = Path;
+					OutJournal = Journal;
+					return true;
+				}
+			}
+			return false;
+		}
+
+		TMap<FString, FString> RecoveryBackupFiles(const TSharedPtr<FJsonObject>& Journal)
+		{
+			TMap<FString, FString> Result;
+			if (const TArray<TSharedPtr<FJsonValue>>* Backups = JsonArray(Journal, TEXT("backups")))
+			{
+				for (const TSharedPtr<FJsonValue>& Value : *Backups)
+				{
+					const TSharedPtr<FJsonObject> Item = Value.IsValid() ? Value->AsObject() : nullptr;
+					const FString PackageFile = JsonString(Item, TEXT("package_file"));
+					if (!PackageFile.IsEmpty()) Result.Add(PackageFile, JsonString(Item, TEXT("backup_file")));
+				}
+			}
+			return Result;
+		}
+
+		TSharedRef<FJsonObject> RecoveryInspection(const FString& MarkerPath, const TSharedPtr<FJsonObject>& Journal)
+		{
+			const TMap<FString, FString> BackupFiles = RecoveryBackupFiles(Journal);
+			bool bAllBackupsAvailable = true;
+			bool bDiskMatchesBackup = true;
+			TArray<TSharedPtr<FJsonValue>> FileStates;
+			for (const TPair<FString, FString>& Pair : BackupFiles)
+			{
+				const bool bPackageExists = IFileManager::Get().FileExists(*Pair.Key);
+				const bool bBackupRepresentsMissingPackage = Pair.Value.IsEmpty();
+				const bool bBackupExists = bBackupRepresentsMissingPackage || IFileManager::Get().FileExists(*Pair.Value);
+				const FString PackageHash = bPackageExists ? UEPIFileSha256(Pair.Key) : FString();
+				const FString BackupHash = !Pair.Value.IsEmpty() && bBackupExists ? UEPIFileSha256(Pair.Value) : FString();
+				const bool bMatches = bBackupRepresentsMissingPackage ? !bPackageExists : (bPackageExists && bBackupExists && PackageHash == BackupHash);
+				bAllBackupsAvailable &= bBackupExists;
+				bDiskMatchesBackup &= bMatches;
+				TSharedRef<FJsonObject> FileState = MakeShared<FJsonObject>();
+				FileState->SetStringField(TEXT("package_file"), Pair.Key);
+				FileState->SetStringField(TEXT("backup_file"), Pair.Value);
+				FileState->SetBoolField(TEXT("package_exists"), bPackageExists);
+				FileState->SetBoolField(TEXT("backup_exists"), bBackupExists);
+				FileState->SetBoolField(TEXT("backup_represents_missing_package"), bBackupRepresentsMissingPackage);
+				FileState->SetStringField(TEXT("package_sha256"), PackageHash);
+				FileState->SetStringField(TEXT("backup_sha256"), BackupHash);
+				FileState->SetBoolField(TEXT("disk_matches_backup"), bMatches);
+				FileStates.Add(MakeShared<FJsonValueObject>(FileState));
+			}
+
+			FString RecommendedAction = TEXT("manual_review");
+			if (bAllBackupsAvailable) RecommendedAction = bDiskMatchesBackup ? TEXT("finalize") : TEXT("rollback");
+			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetStringField(TEXT("schema_version"), TEXT("uepi.recovery-inspection.v1"));
+			Result->SetStringField(TEXT("transaction_id"), JsonString(Journal, TEXT("transaction_id")));
+			Result->SetStringField(TEXT("marker_path"), MarkerPath);
+			Result->SetStringField(TEXT("phase"), JsonString(Journal, TEXT("phase")));
+			Result->SetStringField(TEXT("observed_at"), JsonString(Journal, TEXT("observed_at")));
+			Result->SetStringField(TEXT("message"), JsonString(Journal, TEXT("message")));
+			Result->SetArrayField(TEXT("affected_assets"), StringArrayToJsonValues(JsonStringArray(Journal, TEXT("affected_assets"))));
+			Result->SetArrayField(TEXT("files"), FileStates);
+			Result->SetBoolField(TEXT("all_backups_available"), bAllBackupsAvailable);
+			Result->SetBoolField(TEXT("disk_matches_backup"), bDiskMatchesBackup);
+			Result->SetStringField(TEXT("recommended_action"), RecommendedAction);
+			return Result;
+		}
+
 		TSharedPtr<FJsonObject> JsonObjectField(const TSharedPtr<FJsonObject>& Object, const TCHAR* Field);
 
 		FString RuntimeFunctionKey(const UFunction* Function)
@@ -333,7 +464,7 @@ namespace UE::ProjectIntelligence
 				: FString();
 		}
 
-		bool RuntimeFunctionSemanticsAllowed(const UFunction* Function, FString& OutError)
+		bool RuntimeFunctionSemanticsAllowed(const UFunction* Function, FString& OutError, bool bRequirePure = false)
 		{
 			if (!Function || !Function->HasAnyFunctionFlags(FUNC_BlueprintCallable))
 			{
@@ -343,6 +474,11 @@ namespace UE::ProjectIntelligence
 			if (Function->HasAnyFunctionFlags(FUNC_Exec) || Function->HasMetaData(TEXT("Latent")))
 			{
 				OutError = TEXT("Runtime function must be non-Exec and non-Latent.");
+				return false;
+			}
+			if (bRequirePure && !Function->HasAnyFunctionFlags(FUNC_BlueprintPure))
+			{
+				OutError = TEXT("Runtime observation functions must be BlueprintPure.");
 				return false;
 			}
 			return true;
@@ -1249,6 +1385,18 @@ namespace UE::ProjectIntelligence
 		{
 			return EditRollbackResult(RequestId, Params);
 		}
+		if (Command == TEXT("recovery.inspect"))
+		{
+			return RecoveryInspectResult(RequestId, Params);
+		}
+		if (Command == TEXT("recovery.finalize"))
+		{
+			return RecoveryFinalizeResult(RequestId, Params);
+		}
+		if (Command == TEXT("recovery.rollback"))
+		{
+			return RecoveryRollbackResult(RequestId, Params);
+		}
 		return ErrorResponse(RequestId, TEXT("UEPI_BRIDGE_UNKNOWN_COMMAND"), FString::Printf(TEXT("Unknown UEPI bridge command: %s"), *Command));
 	}
 
@@ -1327,6 +1475,16 @@ namespace UE::ProjectIntelligence
 		Result->SetBoolField(TEXT("recovery_required"), RecoveryMarkers.Num() > 0 || !PendingRecoveryTransactionId.IsEmpty());
 		Result->SetStringField(TEXT("pending_recovery_transaction_id"), PendingRecoveryTransactionId);
 		Result->SetArrayField(TEXT("recovery_markers"), StringArrayToJsonValues(RecoveryMarkers));
+		TArray<TSharedPtr<FJsonValue>> RecoveryDetails;
+		for (const FString& MarkerPath : RecoveryMarkers)
+		{
+			if (const TSharedPtr<FJsonObject> Journal = LoadJsonFile(MarkerPath))
+			{
+				RecoveryDetails.Add(MakeShared<FJsonValueObject>(RecoveryInspection(MarkerPath, Journal)));
+			}
+		}
+		Result->SetArrayField(TEXT("recovery_details"), RecoveryDetails);
+		Result->SetObjectField(TEXT("write_authorization"), AuthorizationSettingsObject(GetDefault<UUEPISettings>()));
 		TArray<FString> Capabilities = FUEPIBridgeProtocol::ReadCapabilities();
 		Capabilities.Append(FUEPIBridgeProtocol::WriteCapabilities());
 		Result->SetArrayField(TEXT("capabilities"), StringArrayToJsonValues(Capabilities));
@@ -1733,6 +1891,10 @@ namespace UE::ProjectIntelligence
 		{
 			return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_CAPABILITY_DISABLED"), TEXT("Controlled PIE is disabled in UEPI Project Settings."));
 		}
+		if (!Settings->bAllowRuntimeControl)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_POLICY_REJECTED"), TEXT("Runtime control is disabled by the active UEPI authorization policy."));
+		}
 		if (Action == TEXT("start"))
 		{
 			if (PIEWorld || bOwnsPIESession)
@@ -1759,9 +1921,10 @@ namespace UE::ProjectIntelligence
 			const FString StoppedSession = OwnedRuntimeSessionId; OwnedRuntimeSessionId.Reset(); bOwnsPIESession = false;
 			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>(); Result->SetStringField(TEXT("runtime_session_id"), StoppedSession); Result->SetStringField(TEXT("state"), TEXT("stopping")); return SuccessResponse(RequestId, Result);
 		}
-		if (!PIEWorld || !bOwnsPIESession)
+		const bool bHumanPIEObservation = JsonString(Params, TEXT("verification_mode")) == TEXT("human_pie") && (Action == TEXT("read") || Action == TEXT("observe"));
+		if (!PIEWorld || (!bOwnsPIESession && !bHumanPIEObservation))
 		{
-			return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_SESSION_REQUIRED"), TEXT("A UEPI-owned PIE session is required."));
+			return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_SESSION_REQUIRED"), TEXT("A UEPI-owned PIE session is required, except for observation-only reads in human_pie mode."));
 		}
 		if (Action == TEXT("input"))
 		{
@@ -1833,9 +1996,14 @@ namespace UE::ProjectIntelligence
 				return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_INPUT_DELIVERY_UNSUPPORTED"), FString::Printf(TEXT("Unsupported input delivery: %s"), *Delivery));
 			}
 			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetBoolField(TEXT("api_call_succeeded"), true);
+			Result->SetBoolField(TEXT("delivery_attempted"), true);
 			Result->SetBoolField(TEXT("handled"), bHandled);
 			Result->SetBoolField(TEXT("handled_known"), bHandledKnown);
-			Result->SetBoolField(TEXT("injection_accepted"), bInjectionAccepted || bHandledKnown);
+			Result->SetBoolField(TEXT("binding_handled_known"), bHandledKnown);
+			if (bHandledKnown) Result->SetBoolField(TEXT("binding_handled"), bHandled);
+			else Result->SetField(TEXT("binding_handled"), MakeShared<FJsonValueNull>());
+			Result->SetBoolField(TEXT("injection_accepted"), bInjectionAccepted);
 			Result->SetStringField(TEXT("key"), Key.ToString());
 			Result->SetStringField(TEXT("input_action"), InputActionPath);
 			Result->SetStringField(TEXT("event"), Event);
@@ -1848,7 +2016,7 @@ namespace UE::ProjectIntelligence
 			Result->SetStringField(TEXT("input_component"), Pawn && Pawn->InputComponent ? Pawn->InputComponent->GetPathName() : FString());
 			Result->SetArrayField(TEXT("mapping_contexts"), EnhancedMappingContextValues(Controller->PlayerInput));
 			Result->SetStringField(TEXT("consumption_scope"), Delivery == TEXT("possessed_pawn_input_stack") ? TEXT("player_input_stack") : Delivery);
-			Result->SetStringField(TEXT("consumption_evidence"), bHandledKnown ? TEXT("delivery_api_handled_result") : TEXT("injected_for_next_enhanced_input_tick; verify the approved gameplay state assertion"));
+			Result->SetStringField(TEXT("consumption_evidence"), bHandledKnown ? (bHandled ? TEXT("binding_reported_handled") : TEXT("delivery_api_called_but_no_binding_reported_handled")) : TEXT("binding_handled_unknown; verify the approved gameplay state assertion"));
 			return SuccessResponse(RequestId, Result);
 		}
 		FString ObjectError;
@@ -1864,13 +2032,13 @@ namespace UE::ProjectIntelligence
 			if (!Property) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_PROPERTY_NOT_FOUND"), TEXT("Runtime property was not found."));
 			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>(); Result->SetStringField(TEXT("object_path"), Object->GetPathName()); Result->SetStringField(TEXT("property"), PropertyName); Result->SetField(TEXT("value"), FUEPIPropertyCodec::ReadValue(Property, Property->ContainerPtrToValuePtr<void>(Object))); return SuccessResponse(RequestId, Result);
 		}
-		if (Action == TEXT("invoke"))
+		if (Action == TEXT("invoke") || Action == TEXT("observe"))
 		{
 			if (!Settings->bAllowRuntimeInvoke) return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_INVOKE_DISABLED"), TEXT("Runtime invoke is disabled."));
 			const FString FunctionName = JsonString(Params, TEXT("function"));
 			UFunction* Function = Object->FindFunction(FName(*FunctionName));
 			FString SemanticError;
-			if (!RuntimeFunctionSemanticsAllowed(Function, SemanticError))
+			if (!RuntimeFunctionSemanticsAllowed(Function, SemanticError, Action == TEXT("observe")))
 			{
 				return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_FUNCTION_NOT_ALLOWED"), SemanticError);
 			}
@@ -1884,6 +2052,7 @@ namespace UE::ProjectIntelligence
 				return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_ARGUMENT_INVALID"), SemanticError);
 			}
 			Result->SetBoolField(TEXT("invoked"), true);
+			Result->SetBoolField(TEXT("observation_only"), Action == TEXT("observe"));
 			return SuccessResponse(RequestId, Result);
 		}
 		return ErrorResponse(RequestId, TEXT("UEPI_RUNTIME_ACTION_UNSUPPORTED"), FString::Printf(TEXT("Runtime action is unsupported: %s"), *Action));
@@ -2134,7 +2303,19 @@ namespace UE::ProjectIntelligence
 		SettingsObject->SetBoolField(TEXT("enhanced_input_compiled"), UEPI_WITH_ENHANCED_INPUT != 0);
 		SettingsObject->SetBoolField(TEXT("saving_enabled"), Settings && Settings->bAllowSavingPackages);
 		SettingsObject->SetNumberField(TEXT("max_operations_per_transaction"), Settings ? Settings->MaxWriteOperationsPerTransaction : 0);
-		SettingsObject->SetNumberField(TEXT("max_assets_per_transaction"), Settings ? Settings->MaxWriteAssetsPerTransaction : 0);
+		SettingsObject->SetNumberField(TEXT("max_assets_per_transaction"), Settings ? Settings->MaximumAssetsPerTransaction : 0);
+		SettingsObject->SetObjectField(TEXT("write_authorization"), AuthorizationSettingsObject(Settings));
+		SettingsObject->SetStringField(TEXT("write_authorization_mode"), Settings ? AuthorizationModeString(Settings->WriteAuthorizationMode) : TEXT("ReviewEachPlan"));
+		SettingsObject->SetStringField(TEXT("trusted_project_binding_id"), Settings ? Settings->TrustedProjectBindingId : FString());
+		SettingsObject->SetArrayField(TEXT("allowed_asset_roots"), StringArrayToJsonValues(Settings ? Settings->AllowedAssetRoots : TArray<FString>()));
+		SettingsObject->SetArrayField(TEXT("allowed_operation_domains"), StringArrayToJsonValues(Settings ? Settings->AllowedOperationDomains : TArray<FString>()));
+		SettingsObject->SetStringField(TEXT("maximum_risk_level"), Settings ? RiskLevelString(Settings->MaximumRiskLevel) : TEXT("low"));
+		SettingsObject->SetBoolField(TEXT("allow_asset_delete"), Settings && Settings->bAllowAssetDelete);
+		SettingsObject->SetBoolField(TEXT("allow_asset_rename"), Settings && Settings->bAllowAssetRename);
+		SettingsObject->SetBoolField(TEXT("allow_runtime_control"), Settings && Settings->bAllowRuntimeControl);
+		SettingsObject->SetNumberField(TEXT("maximum_assets_per_transaction"), Settings ? Settings->MaximumAssetsPerTransaction : 0);
+		SettingsObject->SetBoolField(TEXT("always_create_backup"), Settings && Settings->bAlwaysCreateBackup);
+		SettingsObject->SetBoolField(TEXT("always_report_after_apply"), Settings && Settings->bAlwaysReportAfterApply);
 		SettingsObject->SetNumberField(TEXT("high_risk_operation_threshold"), 64);
 		SettingsObject->SetNumberField(TEXT("high_risk_asset_threshold"), 12);
 
@@ -2166,9 +2347,9 @@ namespace UE::ProjectIntelligence
 		{
 			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_BLOCKED_DURING_PIE"), TEXT("UEPI write tools do not run while PIE is active."));
 		}
-		if (!JsonBool(Params, TEXT("approved"), false))
+		if (UEPIUnresolvedRecoveryMarkers().Num() > 0 || !PendingRecoveryTransactionId.IsEmpty())
 		{
-			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_APPROVAL_REQUIRED"), TEXT("edit.apply requires approved=true after user review."));
+			return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_REQUIRED"), TEXT("Resolve the pending UEPI transaction with uepi_recovery_inspect and finalize or rollback before starting another write transaction."));
 		}
 		if (JsonBool(Params, TEXT("save"), false) && !Settings->bAllowSavingPackages)
 		{
@@ -2233,9 +2414,81 @@ namespace UE::ProjectIntelligence
 				}
 			}
 		}
-		if (AffectedAssets.Num() > Settings->MaxWriteAssetsPerTransaction)
+		if (AffectedAssets.Num() > Settings->MaximumAssetsPerTransaction)
 		{
-			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TOO_MANY_ASSETS"), FString::Printf(TEXT("Affected asset count %d exceeds MaxWriteAssetsPerTransaction=%d before modification."), AffectedAssets.Num(), Settings->MaxWriteAssetsPerTransaction));
+			return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TOO_MANY_ASSETS"), FString::Printf(TEXT("Affected asset count %d exceeds MaximumAssetsPerTransaction=%d before modification."), AffectedAssets.Num(), Settings->MaximumAssetsPerTransaction));
+		}
+
+		if (Settings->WriteAuthorizationMode == EUEPIWriteAuthorizationMode::ReviewEachPlan)
+		{
+			if (!JsonBool(Params, TEXT("approved"), false))
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_EDIT_APPROVAL_REQUIRED"), TEXT("ReviewEachPlan requires approved=true after user review of the immutable Preview."));
+			}
+		}
+		else
+		{
+			const TSharedPtr<FJsonObject> Authorization = JsonObjectField(Plan, TEXT("authorization"));
+			if (!Authorization.IsValid() || !JsonBool(Authorization, TEXT("automatically_authorized"), false) || JsonString(Authorization, TEXT("policy_decision")) != TEXT("authorized"))
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TRUST_POLICY_REJECTED"), TEXT("Trusted mode requires an automatically authorized Preview generated under the current project policy."));
+			}
+			const FString CurrentMode = AuthorizationModeString(Settings->WriteAuthorizationMode);
+			if (JsonString(Authorization, TEXT("mode")) != CurrentMode)
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TRUST_POLICY_REJECTED"), TEXT("Write authorization mode changed after Preview."));
+			}
+			if (Settings->WriteAuthorizationMode == EUEPIWriteAuthorizationMode::TrustedProject
+				&& (Settings->TrustedProjectBindingId.IsEmpty() || Settings->TrustedProjectBindingId != UEPIProjectBindingId()))
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TRUST_POLICY_REJECTED"), TEXT("TrustedProject binding does not match the active project."));
+			}
+			for (const FString& AssetPath : AffectedAssets)
+			{
+				const bool bAllowedRoot = Settings->AllowedAssetRoots.ContainsByPredicate([&AssetPath](const FString& Root)
+				{
+					FString NormalizedRoot = Root.TrimStartAndEnd();
+					if (!NormalizedRoot.StartsWith(TEXT("/"))) NormalizedRoot = TEXT("/") + NormalizedRoot;
+					while (NormalizedRoot.EndsWith(TEXT("/")) && NormalizedRoot.Len() > 1) NormalizedRoot.LeftChopInline(1);
+					return AssetPath.Equals(NormalizedRoot, ESearchCase::IgnoreCase) || AssetPath.StartsWith(NormalizedRoot + TEXT("/"), ESearchCase::IgnoreCase);
+				});
+				if (!bAllowedRoot)
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TRUST_POLICY_REJECTED"), FString::Printf(TEXT("Asset is outside AllowedAssetRoots: %s"), *AssetPath));
+				}
+			}
+			auto RiskRank = [](const FString& Risk)
+			{
+				if (Risk.Equals(TEXT("critical"), ESearchCase::IgnoreCase)) return 3;
+				if (Risk.Equals(TEXT("high"), ESearchCase::IgnoreCase)) return 2;
+				if (Risk.Equals(TEXT("medium"), ESearchCase::IgnoreCase)) return 1;
+				return 0;
+			};
+			const int32 MaximumRiskRank = RiskRank(RiskLevelString(Settings->MaximumRiskLevel));
+			for (const TSharedPtr<FJsonValue>& Value : *Operations)
+			{
+				const TSharedPtr<FJsonObject> Operation = Value.IsValid() ? Value->AsObject() : nullptr;
+				const FString Type = JsonString(Operation, TEXT("type"), JsonString(Operation, TEXT("operation")));
+				const TSharedPtr<IUEPIEditOperation> Registered = Registry.FindOperation(Type);
+				if (!Registered.IsValid()) continue;
+				const FUEPIEditOperationDescriptor Descriptor = Registered->GetDescriptor();
+				if (!Settings->AllowedOperationDomains.ContainsByPredicate([&Descriptor](const FString& Domain) { return Domain.Equals(Descriptor.Domain, ESearchCase::IgnoreCase); }))
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TRUST_POLICY_REJECTED"), FString::Printf(TEXT("Operation domain is outside AllowedOperationDomains: %s"), *Descriptor.Domain));
+				}
+				if (RiskRank(Descriptor.Risk) > MaximumRiskRank)
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TRUST_POLICY_REJECTED"), FString::Printf(TEXT("Operation risk exceeds MaximumRiskLevel: %s"), *Type));
+				}
+				if (!Settings->bAllowAssetDelete && Type.Contains(TEXT("delete"), ESearchCase::IgnoreCase))
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TRUST_POLICY_REJECTED"), TEXT("Asset delete operations are disabled by trusted policy."));
+				}
+				if (!Settings->bAllowAssetRename && Type.Contains(TEXT("rename"), ESearchCase::IgnoreCase))
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_EDIT_TRUST_POLICY_REJECTED"), TEXT("Asset rename operations are disabled by trusted policy."));
+				}
+			}
 		}
 		TArray<FString> MissingModules;
 		FString ReadinessError;
@@ -2844,6 +3097,121 @@ namespace UE::ProjectIntelligence
 		return Response;
 	}
 
+	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::RecoveryInspectResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const
+	{
+		const FString RequestedTransactionId = JsonString(Params, TEXT("transaction_id"));
+		TArray<TSharedPtr<FJsonValue>> Inspections;
+		for (const FString& MarkerPath : UEPIUnresolvedRecoveryMarkers())
+		{
+			const TSharedPtr<FJsonObject> Journal = LoadJsonFile(MarkerPath);
+			if (!Journal.IsValid()) continue;
+			if (!RequestedTransactionId.IsEmpty() && JsonString(Journal, TEXT("transaction_id")) != RequestedTransactionId) continue;
+			Inspections.Add(MakeShared<FJsonValueObject>(RecoveryInspection(MarkerPath, Journal)));
+		}
+		if (!RequestedTransactionId.IsEmpty() && Inspections.Num() == 0)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_MARKER_NOT_FOUND"), TEXT("No unresolved recovery marker matched the requested transaction."));
+		}
+		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.recovery-inspect.v1"));
+		Result->SetNumberField(TEXT("marker_count"), Inspections.Num());
+		Result->SetArrayField(TEXT("markers"), Inspections);
+		return SuccessResponse(RequestId, Result);
+	}
+
+	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::RecoveryFinalizeResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params)
+	{
+		const FString TransactionId = JsonString(Params, TEXT("transaction_id"));
+		FString MarkerPath;
+		TSharedPtr<FJsonObject> Journal;
+		if (TransactionId.IsEmpty() || !FindRecoveryMarker(TransactionId, MarkerPath, Journal))
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_MARKER_NOT_FOUND"), TEXT("Finalize requires an exact unresolved recovery transaction_id."));
+		}
+		const TSharedRef<FJsonObject> Inspection = RecoveryInspection(MarkerPath, Journal);
+		bool bDiskMatchesBackup = false;
+		if (!Inspection->TryGetBoolField(TEXT("disk_matches_backup"), bDiskMatchesBackup) || !bDiskMatchesBackup)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_FINALIZE_UNSAFE"), TEXT("Finalize is allowed only after every current package fingerprint matches its prepared backup. Inspect and rollback this transaction first."));
+		}
+		const TArray<FString> AffectedAssets = JsonStringArray(Journal, TEXT("affected_assets"));
+		const TMap<FString, FString> BackupFiles = RecoveryBackupFiles(Journal);
+		FString JournalPath;
+		FString JournalError;
+		if (!FUEPITransactionJournal::Write(TransactionId, TEXT("recovery_finalized"), AffectedAssets, BackupFiles, JsonBool(Journal, TEXT("saved")), TEXT("Recovery marker acknowledged after every current package matched its prepared backup."), JournalPath, JournalError))
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_FINALIZE_FAILED"), JournalError);
+		}
+		if (PendingRecoveryTransactionId == TransactionId)
+		{
+			PendingRecoveryTransactionId.Reset();
+			PendingRecoveryBackupFiles.Reset();
+			PendingRecoveryAffectedAssets.Reset();
+		}
+		FString RefreshId;
+		FString RefreshPath;
+		FString RefreshError;
+		if (AffectedAssets.Num() > 0) WriteRefreshRequest(AffectedAssets, TEXT("live"), RefreshId, RefreshPath, RefreshError);
+		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.recovery-finalize.v1"));
+		Result->SetStringField(TEXT("transaction_id"), TransactionId);
+		Result->SetStringField(TEXT("marker_path"), MarkerPath);
+		Result->SetStringField(TEXT("journal_path"), JournalPath);
+		Result->SetStringField(TEXT("state"), TEXT("finalized"));
+		Result->SetArrayField(TEXT("affected_assets"), StringArrayToJsonValues(AffectedAssets));
+		Result->SetStringField(TEXT("refresh_request_id"), RefreshId);
+		Result->SetStringField(TEXT("refresh_request_path"), RefreshPath);
+		Result->SetStringField(TEXT("refresh_error"), RefreshError);
+		return SuccessResponse(RequestId, Result);
+	}
+
+	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::RecoveryRollbackResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params)
+	{
+		if (GEditor && GEditor->PlayWorld)
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_BLOCKED_DURING_PIE"), TEXT("Recovery rollback cannot run while PIE is active."));
+		}
+		const FString TransactionId = JsonString(Params, TEXT("transaction_id"));
+		FString MarkerPath;
+		TSharedPtr<FJsonObject> Journal;
+		if (TransactionId.IsEmpty() || !FindRecoveryMarker(TransactionId, MarkerPath, Journal))
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_MARKER_NOT_FOUND"), TEXT("Rollback requires an exact unresolved recovery transaction_id."));
+		}
+		const TArray<FString> AffectedAssets = JsonStringArray(Journal, TEXT("affected_assets"));
+		const TMap<FString, FString> BackupFiles = RecoveryBackupFiles(Journal);
+		FString RestoreError;
+		const bool bRestored = FUEPIBackupService::Restore(BackupFiles, AffectedAssets, RestoreError);
+		FString JournalPath;
+		FString JournalError;
+		if (bRestored)
+		{
+			PendingRecoveryTransactionId = TransactionId;
+			PendingRecoveryBackupFiles = BackupFiles;
+			PendingRecoveryAffectedAssets = AffectedAssets;
+			FUEPITransactionJournal::Write(TransactionId, TEXT("rollback_files_restored_reload_pending"), AffectedAssets, BackupFiles, false, TEXT("Recovery rollback restored package files; package reload is pending."), JournalPath, JournalError);
+		}
+		else
+		{
+			FUEPITransactionJournal::Write(TransactionId, TEXT("rollback_failed"), AffectedAssets, BackupFiles, false, RestoreError, JournalPath, JournalError);
+		}
+		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.recovery-rollback.v1"));
+		Result->SetStringField(TEXT("transaction_id"), TransactionId);
+		Result->SetStringField(TEXT("marker_path"), MarkerPath);
+		Result->SetBoolField(TEXT("files_restored"), bRestored);
+		Result->SetBoolField(TEXT("package_reload_pending"), bRestored && AffectedAssets.Num() > 0);
+		Result->SetStringField(TEXT("journal_path"), JournalPath);
+		Result->SetStringField(TEXT("error"), RestoreError.IsEmpty() ? JournalError : RestoreError);
+		Result->SetArrayField(TEXT("affected_assets"), StringArrayToJsonValues(AffectedAssets));
+		TSharedRef<FJsonObject> Response = MakeShared<FJsonObject>();
+		Response->SetStringField(TEXT("id"), RequestId);
+		Response->SetBoolField(TEXT("ok"), bRestored);
+		Response->SetObjectField(TEXT("result"), Result);
+		Response->SetArrayField(TEXT("diagnostics"), bRestored ? EmptyJsonArray() : DiagnosticsArray(TEXT("UEPI_RECOVERY_ROLLBACK_FAILED"), TEXT("error"), RestoreError));
+		return Response;
+	}
+
 	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::MakeSessionObject(const FString& State) const
 	{
 		TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
@@ -2874,6 +3242,7 @@ namespace UE::ProjectIntelligence
 		Root->SetBoolField(TEXT("allow_save"), Settings && Settings->bAllowSavingPackages);
 		Root->SetBoolField(TEXT("allow_pie"), Settings && Settings->bAllowPIEControl);
 		Root->SetBoolField(TEXT("allow_runtime_invoke"), Settings && Settings->bAllowRuntimeInvoke);
+		Root->SetObjectField(TEXT("write_authorization"), AuthorizationSettingsObject(Settings));
 		FUEPIEditOperationRegistry& Registry = FUEPIEditOperationRegistry::Get();
 		Registry.EnsureBuiltinsRegistered();
 		Root->SetStringField(TEXT("catalog_hash"), Registry.GetCatalogHash());

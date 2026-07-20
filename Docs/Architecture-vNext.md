@@ -22,7 +22,7 @@ The response envelope is `uepi.mcp-envelope.v2`. Projection, item limits, byte b
 
 ## Write Path
 
-The Editor-exported Operation Registry is the capability source. The Agent reads before writing, calls Discover, constructs one complete immutable Plan v2, and receives a hash, nonce, expiry, before fingerprints, and affected assets. One explicit user approval authorizes only that exact plan.
+The Editor-exported Operation Registry is the capability source. The Agent reads before writing, calls Discover, constructs one complete immutable Plan v2, and receives a hash, nonce, expiry, before fingerprints, affected assets, and an authorization decision. `ReviewEachPlan` approval authorizes only that exact plan; trusted modes authorize only unchanged plans inside the configured project/session policy.
 
 Apply repeats all guards before mutation, creates a journal and file backups, uses an Unreal transaction, validates touched objects, saves touched packages only, requests targeted refresh, and writes a transaction diff. Failure triggers memory undo or backup restore and package reload. Arbitrary Python, shell, console commands, save-all, source-control submission, broad delete, and plugin enablement are not exposed.
 

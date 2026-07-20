@@ -16,7 +16,7 @@ try:
     from .projections import apply_response_options
     from .identity import project_guard_diagnostics
     from .status import resolve_status
-    from . import diff as diff_service, editor, refresh, runtime, schema_service, world
+    from . import diff as diff_service, editor, recovery, refresh, runtime, schema_service, world
     from .result import envelope, tool_response
     from .timing import attach_timing, begin_request, end_request
 except ImportError:  # Allows direct execution as a script from Codex config.
@@ -27,7 +27,7 @@ except ImportError:  # Allows direct execution as a script from Codex config.
     from uepi.projections import apply_response_options  # type: ignore
     from uepi.identity import project_guard_diagnostics  # type: ignore
     from uepi.status import resolve_status  # type: ignore
-    from uepi import diff as diff_service, editor, refresh, runtime, schema_service, world  # type: ignore
+    from uepi import diff as diff_service, editor, recovery, refresh, runtime, schema_service, world  # type: ignore
     from uepi.result import envelope, tool_response  # type: ignore
     from uepi.timing import attach_timing, begin_request, end_request  # type: ignore
 
@@ -98,12 +98,13 @@ def edit_operation_item_schema() -> dict[str, Any]:
                 "type": "object",
                 "properties": {
                     "operation_id": {"type": "string"},
-                    "type": {"type": "string", "const": operation_type},
-                    "params": params_schema,
+                    "type": {"type": "string", "const": operation_type, "description": f"Discriminator for the {operation_type} operation."},
+                    "params": {**params_schema, "description": f"Typed parameters for {operation_type}; call uepi_schema(action='edit_operation', query='{operation_type}') for the full optional contract and examples."},
                     "depends_on": {"type": "array", "items": {"type": "string"}},
                     "if_exists": {"type": "string", "enum": ["fail", "skip", "reuse"]},
                 },
                 "required": ["type", "params"],
+                "additionalProperties": False,
             }
         )
     return {"oneOf": variants} if variants else {"type": "object", "required": ["type", "params"], "properties": {"type": {"type": "string"}, "params": {"type": "object"}}}
@@ -374,6 +375,8 @@ TOOLS: list[dict[str, Any]] = [
                 "allowed_keys": {"type": "array", "items": {"type": "string"}},
                 "allowed_deliveries": {"type": "array", "items": {"type": "string", "enum": ["player_controller", "possessed_pawn_input_stack", "game_viewport", "enhanced_input_action"]}},
                 "allowed_reads": {"type": "array", "items": {"type": "object"}},
+                "verification_mode": {"type": "string", "enum": ["agent_objective", "human_pie", "hybrid"], "default": "hybrid"},
+                "human_test_steps": {"type": "array", "items": {"type": "string"}},
                 "timeout_seconds": {"type": "number", "minimum": 1, "maximum": 120},
             },
             ["steps"],
@@ -381,7 +384,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "uepi_runtime_approve",
-        "description": "Issue a restricted Runtime Ticket after explicit approval of an immutable Runtime Preview.",
+        "description": "Issue a restricted Runtime Ticket after ReviewEachPlan approval or automatic trusted-policy authorization of an immutable Runtime Preview.",
         "inputSchema": read_schema(
             {
                 "runtime_plan_id": {"type": "string"},
@@ -389,7 +392,7 @@ TOOLS: list[dict[str, Any]] = [
                 "approval_nonce": {"type": "string"},
                 "approved": {"type": "boolean"},
             },
-            ["runtime_plan_id", "plan_hash", "approval_nonce", "approved"],
+            ["runtime_plan_id", "plan_hash", "approval_nonce"],
         ),
     },
     {
@@ -418,6 +421,11 @@ TOOLS: list[dict[str, Any]] = [
                 "poll_interval_ms": {"type": "integer"},
             }
         ),
+    },
+    {
+        "name": "uepi_recovery_inspect",
+        "description": "Inspect unresolved UEPI transaction markers, affected assets, backup fingerprints, current disk state, and the recommended recovery action.",
+        "inputSchema": read_schema({"transaction_id": {"type": "string"}}),
     },
 ]
 
@@ -452,7 +460,7 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "uepi_edit_apply",
-        "description": "Automatically continue an explicitly user-approved immutable UEPI plan through Apply, validation, touched-only save, refresh, and diff.",
+        "description": "Continue an immutable UEPI plan through Apply, validation, touched-only save, refresh, and diff after ReviewEachPlan approval or automatic trusted-policy authorization.",
         "inputSchema": guarded_edit_schema(
             {
                 "transaction_id": {"type": "string"},
@@ -460,7 +468,7 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
                 "approval_nonce": {"type": "string"},
                 "approved": {"type": "boolean"},
             },
-            ["transaction_id", "plan_hash", "approval_nonce", "approved"],
+            ["transaction_id", "plan_hash", "approval_nonce"],
         ),
     },
     {
@@ -473,9 +481,19 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
         "description": "Rollback the last applied UEPI edit transaction through the optional live editor bridge.",
         "inputSchema": guarded_edit_schema({"transaction_id": {"type": "string"}}),
     },
+    {
+        "name": "uepi_recovery_finalize",
+        "description": "Acknowledge an exact unresolved transaction and accept the current package state without restoring backups.",
+        "inputSchema": guarded_edit_schema({"transaction_id": {"type": "string"}}, ["transaction_id"]),
+    },
+    {
+        "name": "uepi_recovery_rollback",
+        "description": "Restore every package in an exact unresolved transaction from its atomic backup set and reload affected Editor packages.",
+        "inputSchema": guarded_edit_schema({"transaction_id": {"type": "string"}}, ["transaction_id"]),
+    },
 ]
 
-SERVER_INSTRUCTIONS = """UEPI is a project-local Unreal Engine 5.3.2 MCP. Always call uepi_status before other tools. Prefer uepi_context to build bounded evidence before answering project questions. Treat Blueprint pin links and evidence as the source of truth. Distinguish live, saved, stale, and refresh_requested data. The Codex profile exposes read and edit tools together so the agent can choose. Edit apply may be available when the editor bridge is online, but it must never run without edit_preview and explicit user approval. Once the user explicitly approves the unchanged immutable Preview, immediately call uepi_edit_apply with its next-action arguments and continue validation, touched-only save, refresh, diff, and approved runtime verification without asking for manual tool invocation or repeated phase confirmations. Never infer approval from the original edit request. Never guess Blueprint pin names; use returned pins and GUIDs.
+SERVER_INSTRUCTIONS = """UEPI is a project-local Unreal Engine 5.3.2 MCP. Always call uepi_status before other tools. Prefer uepi_context to build bounded evidence before answering project questions. Treat Blueprint pin links and evidence as the source of truth. Distinguish live, saved, stale, and refresh_requested data. The Codex profile exposes read and edit tools together so the agent can choose. Every edit must run uepi_edit_preview and Editor preflight first. Inspect result.authorization: ReviewEachPlan requires one explicit user approval of the immutable Preview; TrustedSession or TrustedProject with policy_decision=authorized permits the Agent to call uepi_edit_apply immediately without chat approval. A trusted-policy rejection is final for that plan: revise it to fit the configured roots, domains, risk, delete/rename, runtime, and transaction limits instead of asking the user to override it. After authorization, continue validation, touched-only save, refresh, diff, and approved runtime verification without manual tool invocation or repeated phase confirmations. Never guess Blueprint pin names; use returned pins and GUIDs.
 
 Use uepi_search or uepi_context to identify the minimum set of assets needed for the user's question.
 uepi_context supports routes such as auto, project_overview, gameplay_input_to_effect, input_to_gameplay, blueprint_behavior, animation_playback, ui_flow, asset_dependency_impact, data_driven_behavior, gas_ability_flow, ai_behavior_flow, and network_replication_flow. Prefer gameplay_input_to_effect when a question starts at a key/InputAction and must cross Blueprint assets to a terminal effect; use its input_owner evidence and duplicate-path diagnostics instead of assuming every discovered input node owns player input.
@@ -483,7 +501,7 @@ Then call the narrow domain tool: uepi_asset for local context, uepi_blueprint f
 Reads never require the Unreal Editor when the snapshot/cache is current. If a read response includes diagnostic code UEPI_REFRESH_REQUESTED, a targeted editor refresh request has been queued under the Snapshot Store; retry the same read after the editor processes it. If UEPI_SNAPSHOT_STALE appears, ask the user to open the editor/plugin before expecting realtime data.
 Treat uepi_diff as a generation-level saved snapshot comparison, not a live editor diff.
 
-Runtime-only verification does not require a dummy asset edit. Call uepi_runtime_preview with the exact map and ordered verification steps, obtain one explicit user approval, call uepi_runtime_approve with the unchanged hash/nonce, then use the returned ticket with uepi_runtime. Prefer delivery=possessed_pawn_input_stack for legacy Pawn input, delivery=game_viewport for mapped-key delivery, and delivery=enhanced_input_action with an exact input_action path and typed value for direct Enhanced Input injection. A successful injection proves delivery only; finish with an approved read/wait/assert of gameplay state.
+Runtime-only verification does not require a dummy asset edit. Call uepi_runtime_preview with the exact map, ordered verification steps, and verification_mode. Follow the returned authorization decision: obtain one explicit approval only in ReviewEachPlan, otherwise call uepi_runtime_approve immediately with the unchanged hash/nonce. Then use the ticket with uepi_runtime. Prefer delivery=possessed_pawn_input_stack for legacy Pawn input, delivery=game_viewport for mapped-key delivery, and delivery=enhanced_input_action with an exact input_action path and typed value for direct Enhanced Input injection. API acceptance proves delivery only; finish with an approved read/wait/assert of gameplay state. Treat hybrid and human_pie visual acceptance as user-owned.
 
 For Blueprint writes, choose the design before choosing operations. Prefer compact, idiomatic Blueprint graphs that use state variables, loops, timers, custom events, or helper functions for repeated behavior. Avoid unrolling repeated gameplay logic into many duplicate nodes unless the user explicitly asks for that visual shape. Include the considered alternatives and chosen design rationale in edit_preview evidence; if the current operation catalog cannot express the better design, say so before falling back to a larger graph."""
 
@@ -732,6 +750,8 @@ class UEPIMCPServer:
                 return self._read_result(runtime.approve(engine, arguments), arguments)
             if name == "uepi_runtime":
                 return self._read_result(runtime.execute(engine, arguments), arguments)
+            if name == "uepi_recovery_inspect":
+                return self._read_result(recovery.inspect(engine, arguments), arguments)
             if profile_includes_edit_tools(self.args.tool_profile):
                 if name == "uepi_edit_discover":
                     return self._read_result(
@@ -770,6 +790,10 @@ class UEPIMCPServer:
                     return self._read_result(edit.validate(engine.store, transaction_id=str(arguments.get("transaction_id") or "")), arguments)
                 if name == "uepi_edit_rollback":
                     return self._read_result(edit.rollback(engine.store, transaction_id=str(arguments.get("transaction_id") or "")), arguments)
+                if name == "uepi_recovery_finalize":
+                    return self._read_result(recovery.finalize(engine, arguments), arguments)
+                if name == "uepi_recovery_rollback":
+                    return self._read_result(recovery.rollback(engine, arguments), arguments)
             return self._read_result(engine._error("UEPI_UNKNOWN_TOOL", f"Unknown UEPI tool: {name}", candidates=[tool["name"] for tool in self.tools()], tool=name, operation="call"), arguments)
         except Exception as exc:  # Keep tool failures structured for LLM clients.
             diagnostic = traceback.format_exc(limit=5)

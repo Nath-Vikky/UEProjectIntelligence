@@ -16,7 +16,7 @@ UEPI does not depend on Epic's UE5.8 ModelContextProtocol plugin. The official U
 
 UEPI does not provide arbitrary Python/shell/console execution, plugin enablement, source-control submission, save-all, or broad destructive project edits. It provides only transaction-bound, UEPI-owned PIE verification.
 
-Write operations are exposed through guarded edit tools and remain gated by an immutable preview plan, one explicit user approval, exact-project live bridge availability, repeat preflight, validation, touched-only saving, backup/rollback, targeted refresh, and transaction diff.
+Write operations are exposed through guarded edit tools and remain gated by an immutable preview plan, exact-project live bridge availability, authorization policy, repeat preflight, validation, touched-only saving, backup/rollback, targeted refresh, transaction diff, and a post-action report. `ReviewEachPlan` requires one explicit approval; `TrustedSession` and `TrustedProject` can authorize an unchanged in-policy plan automatically.
 
 The default product path does not use a daemon, HTTP API, worker queue, Web UI, or remote service registration.
 
@@ -104,7 +104,7 @@ Recommended Codex flow:
 2. Use `uepi_overview`, `uepi_search`, or `uepi_context` to identify evidence.
 3. Use the narrow domain tool for the question.
 4. If the user asks to modify the project, use `uepi_edit_discover`, then create one complete `uepi_edit_preview` plan for the intended edit.
-5. Ask for explicit user approval once, then apply, validate, and refresh/diff without additional approval prompts unless the plan changes.
+5. Let UEPI evaluate the project authorization policy. Ask once only in `ReviewEachPlan`; continue directly in `TrustedSession` or `TrustedProject` when the immutable plan is in policy.
 6. If diagnostics include `UEPI_REFRESH_REQUESTED`, wait for the editor plugin to process the targeted request and retry.
 7. If diagnostics include `UEPI_SNAPSHOT_STALE`, open the editor/plugin or run a commandlet scan for realtime freshness.
 
@@ -124,7 +124,12 @@ Recommended Codex flow:
 - `uepi_world`
 - `uepi_refresh`
 - `uepi_schema`
+- `uepi_runtime_preview`
+- `uepi_runtime_approve`
 - `uepi_runtime`
+- `uepi_recovery_inspect`
+- `uepi_recovery_finalize`
+- `uepi_recovery_rollback`
 - `uepi_edit_discover`
 - `uepi_edit_preview`
 - `uepi_edit_apply`
@@ -160,11 +165,11 @@ SQLite cache files are derived data and can be deleted. UEPI can rebuild them fr
 ## Limitations
 
 - Release-qualified engine target is UE5.3.2.
-- Current version is a Codex-first UE5.3.2 Beta. Guarded writes remain approval-bound and intentionally narrower than the read surface.
+- Current version is a Codex-first UE5.3.2 Beta. Guarded writes remain policy-bound and intentionally narrower than the read surface.
 - Animation reads provide static summaries, driver curves, reconstruction profiles, and optional full-pose sample artifacts; they do not evaluate the final runtime pose after every AnimGraph, Control Rig, IK, physics, or retargeting layer.
 - Editor or commandlet collection is required to refresh Snapshots.
 - Editor-closed mode uses the latest saved Snapshot only.
-- The live editor bridge and guarded edit apply are enabled by default; `uepi_edit_apply` still requires preview, explicit approval, validation, touched-only save, and rollback/diff reporting.
+- The live editor bridge and guarded edit apply are enabled by default. Preview, policy evaluation, validation, touched-only save, recovery, diff, and post-action reporting remain mandatory in every authorization mode.
 
 See [`Docs/Known-Limitations.md`](Docs/Known-Limitations.md) for the complete Beta boundary.
 

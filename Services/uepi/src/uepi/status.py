@@ -5,9 +5,18 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import __version__
+from . import (
+    __version__,
+    SERVICE_BUILD_ID,
+    SERVICE_MODULE_PATH,
+    SERVICE_PROCESS_ID,
+    SERVICE_PROCESS_START_TIME,
+    SERVICE_SOURCE_HASH,
+    compute_service_source_hash,
+)
 from .bridge_client import call_bridge, read_bridge_session
 from .identity import session_matches_identity
+from .recovery import inspect_recovery
 from .store import SnapshotState, SnapshotStore, SnapshotStoreError, _parse_utc
 
 
@@ -54,6 +63,23 @@ def resolve_status(
     session_ttl_seconds: float = 30.0,
 ) -> dict[str, Any]:
     diagnostics: list[dict[str, Any]] = []
+    disk_source_hash = compute_service_source_hash()
+    service_restart_required = disk_source_hash != SERVICE_SOURCE_HASH
+    if service_restart_required:
+        diagnostics.append(
+            {
+                "severity": "warning",
+                "blocking": False,
+                "code": "UEPI_SERVICE_RESTART_REQUIRED",
+                "message": "UEPI service source files changed after this MCP process started; restart the MCP/Codex task before relying on the new implementation.",
+                "phase": "service_identity",
+                "retryable": True,
+                "recoverable": True,
+                "loaded_source_hash": SERVICE_SOURCE_HASH,
+                "disk_source_hash": disk_source_hash,
+                "recommended_user_action": "Restart the UEPI MCP server (or restart Codex) so it loads the current plugin service files.",
+            }
+        )
     session = read_bridge_session(store)
     matched = bool(session and session_matches_identity(session, identity))
     heartbeat_age_ms = _heartbeat_age_ms(session or {})
@@ -129,6 +155,7 @@ def resolve_status(
     current_session_build_id = (session or {}).get("plugin_build_id") if matched and fresh else None
     plugin_version = str(probe_result.get("plugin_version") or current_session_version or _installed_plugin_version(identity))
     plugin_build_id = str(probe_result.get("plugin_build_id") or current_session_build_id or (f"uepi-{plugin_version}" if plugin_version else ""))
+    offline_recovery_details = inspect_recovery(store)
     editor = {
         "connected": connected,
         "session_id": session_id or None,
@@ -141,9 +168,11 @@ def resolve_status(
         "pie_owned_by_uepi": bool(probe_result.get("pie_owned_by_uepi", False)),
         "runtime_session_id": probe_result.get("runtime_session_id") or None,
         "gameplay_context": probe_result.get("gameplay_context") if isinstance(probe_result.get("gameplay_context"), dict) else {},
-        "recovery_required": bool(probe_result.get("recovery_required", False)),
+        "recovery_required": bool(probe_result.get("recovery_required", False) or offline_recovery_details),
         "pending_recovery_transaction_id": probe_result.get("pending_recovery_transaction_id") or None,
         "recovery_markers": probe_result.get("recovery_markers") if isinstance(probe_result.get("recovery_markers"), list) else [],
+        "recovery_details": probe_result.get("recovery_details") if isinstance(probe_result.get("recovery_details"), list) else offline_recovery_details,
+        "write_authorization": probe_result.get("write_authorization") if isinstance(probe_result.get("write_authorization"), dict) else (session or {}).get("write_authorization") if isinstance((session or {}).get("write_authorization"), dict) else {},
         "catalog_hash": live_catalog_hash or None,
         "plugin_version": plugin_version or None,
         "plugin_build_id": plugin_build_id or None,
@@ -188,7 +217,7 @@ def resolve_status(
     capabilities = {
         "snapshot_read": state.generation > 0,
         "live_read": connected,
-        "mutation": connected and bool((session or {}).get("write_enabled", True)),
+        "mutation": connected and bool((session or {}).get("write_enabled", True)) and not editor["recovery_required"],
         "save": connected and bool((session or {}).get("allow_save", False)),
         "pie_control": connected and bool((session or {}).get("allow_pie", False)),
         "runtime_invoke": connected and bool((session or {}).get("allow_runtime_invoke", False)),
@@ -204,6 +233,13 @@ def resolve_status(
         "plugin_build_id": plugin_build_id or None,
         "catalog_hash": live_catalog_hash or cached_catalog_hash or None,
         "service_version": __version__,
+        "service_build_id": SERVICE_BUILD_ID,
+        "service_source_hash": SERVICE_SOURCE_HASH,
+        "service_disk_source_hash": disk_source_hash,
+        "service_restart_required": service_restart_required,
+        "service_process_start_time": SERVICE_PROCESS_START_TIME,
+        "service_process_id": SERVICE_PROCESS_ID,
+        "service_loaded_module_path": SERVICE_MODULE_PATH,
         "live_catalog_hash": live_catalog_hash or None,
         "cached_catalog_hash": cached_catalog_hash or None,
     }

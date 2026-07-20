@@ -34,7 +34,10 @@ namespace UE::ProjectIntelligence
 			TEXT("edit.preflight"),
 			TEXT("edit.apply"),
 			TEXT("edit.validate"),
-			TEXT("edit.rollback")
+			TEXT("edit.rollback"),
+			TEXT("recovery.inspect"),
+			TEXT("recovery.finalize"),
+			TEXT("recovery.rollback")
 		};
 		FUEPIEditOperationRegistry& Registry = FUEPIEditOperationRegistry::Get();
 		Registry.EnsureBuiltinsRegistered();

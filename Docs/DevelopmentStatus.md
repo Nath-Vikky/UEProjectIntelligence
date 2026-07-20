@@ -1,6 +1,6 @@
 # UE Project Intelligence Development Status
 
-`main` is the `2.0.0-beta.4` release-candidate line for UE 5.3.2 and Codex.
+`main` is the `2.0.0-beta.5` release-candidate line for UE 5.3.2 and Codex.
 
 ## Implemented
 
@@ -11,7 +11,7 @@
 - Fifteen read/live tools and five guarded edit facade tools in the single `codex` profile.
 - Live Editor status/selection/log cursor/viewport, World actors/components, targeted Refresh jobs, Reflection Schema, and controlled PIE Runtime.
 - Project plugin content mount discovery plus project/plugin C++ source and module-manifest indexing.
-- Editor-exported versioned operation catalog and hash, Plan v2, plan expiry, idempotency, affected assets, before fingerprints, dirty/read-only/path/budget preflight, and one explicit approval.
+- Editor-exported versioned operation catalog and hash, Plan v2, plan expiry, idempotency, affected assets, before fingerprints, dirty/read-only/path/budget preflight, and policy-bound authorization.
 - Plan v2 includes nested project/editor/base state, dependency-checked operation order and references, predicted objects/packages, preconditions, validation/save/verification plans, risk, and hash-bound approval.
 - Dedicated transaction journal, backup/restore service, touched-only package save service with hashes, Validator Registry, memory undo, package reload, targeted post-apply refresh, and transaction diff.
 - Reflected typed property codec for scalar, enum/name/text, object/soft-object, struct, array, set, and map values.
@@ -28,9 +28,15 @@
 - Project-local Codex setup script, machine-readable Doctor, public schemas, v2 contract snapshot, release packaging, architecture/safety/edit/runtime guides, and real-machine report templates.
 - Whole-envelope response projection/pagination/budget enforcement, artifact-backed large animation payloads, strict operation contracts, and end-to-end timing diagnostics.
 - Exact World actor/component reads and filters plus viewport resize, camera metadata, absolute artifacts, and inline MCP image content.
+- Consistent multi-asset live generations, atomic Hard Scope refresh, stable `FKey` routing, Focus/Pin projection preservation, and accurate pre/post-projection payload accounting.
+- Source-hashed Python service identity, patch-specific Editor build IDs, actionable transaction recovery inspection/finalize/rollback, and discriminated edit operation wrappers.
+- Typed Runtime assertions, truthful input-delivery evidence, safe BlueprintPure observations, objective/human/hybrid verification modes, and human-owned visual acceptance.
+- Project settings authorization modes (`ReviewEachPlan`, `TrustedSession`, `TrustedProject`) with bounded roots/domains/risk/destructive/runtime policy and complete post-action reports.
 
 ## Verified In This Development Pass
 
+- The Beta.5 synthetic Snapshot MCP regression passes with multi-asset ownership, exact input routing, focused Pin projection, service identity, recovery, trusted authorization, typed Runtime values, and post-action-report coverage.
+- `GasDemoEditor Win64 Development` compiles successfully against UE 5.3.2 after the Beta.5 recovery, Runtime, authorization, settings, and build-identity changes.
 - UE 5.3.2 `GasDemoEditor Win64 Development` source build completed successfully after vNext runtime changes.
 - Python package/tool compilation passes.
 - Snapshot MCP v2 synthetic regression is the required automated gate.
@@ -74,3 +80,12 @@
 - The destructive four-node Apply and standalone PIE input/state assertion remain explicit real-machine checks; they are not claimed by the synthetic gate.
 
 The `v2.0.0-beta.4` tag may be created after the LLMNPCDemo live checks are recorded.
+
+## Beta.5 Release Gate
+
+- `python -B Tools/test_snapshot_mcp_v2.py` must pass with cross-asset ownership, exact input, focused Pin, projection, service identity, recovery, trusted authorization, typed Runtime, and post-action-report assertions.
+- `GasDemoEditor Win64 Development` must compile against UE 5.3.2 with the matching Beta.5 Bridge.
+- The matching plugin must be copied to LLMNPCDemo and pass Doctor plus `test_live_read_contract.py --llmnpc-regression` from a cold MCP process.
+- TrustedProject Apply and objective Runtime execution remain explicit real-machine tests. Final animation quality remains a user-owned PIE visual decision.
+
+The `v2.0.0-beta.5` tag may be created after the LLMNPCDemo live and trusted-write checks are recorded.

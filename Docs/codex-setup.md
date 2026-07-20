@@ -31,7 +31,7 @@ The default block uses:
 
 The `codex` profile does not require the Unreal Editor to be open when `Saved/UEProjectIntelligence/store/manifests/saved.json` exists.
 
-Edit apply still requires the exact-project Editor Bridge, Plan v2, and explicit user approval. It repeats preflight, backs up, validates, saves touched packages, refreshes, and records diff evidence.
+Edit apply requires the exact-project Editor Bridge, Plan v2, and an authorization decision. `ReviewEachPlan` requires explicit approval; trusted modes can proceed automatically for unchanged in-policy plans. Apply repeats preflight, backs up, validates, saves touched packages, refreshes, and records diff evidence.
 
 ## Project Selection
 
@@ -42,7 +42,7 @@ When no online editor session is available, the MCP server falls back to the exp
 ## Recommended Prompt Rule
 
 ```text
-Use UEPI first. Call uepi_status before other UEPI tools. Use uepi_context to build bounded evidence before answering Unreal project questions. Treat Blueprint pin links, GUIDs, refs, and evidence as source of truth. For edits, choose a compact, idiomatic Blueprint design before choosing operations; prefer variables, loops, timers, custom events, and helper functions over expanded repeated nodes. Build one complete preview plan and ask for explicit user approval once. After approval of the unchanged plan, call uepi_edit_apply yourself and continue validate, touched-only save, refresh/diff, and approved runtime verification without asking the user to invoke Apply or reconfirm phases.
+Use UEPI first. Call uepi_status before other UEPI tools. Use uepi_context to build bounded evidence before answering Unreal project questions. Treat Blueprint pin links, GUIDs, refs, and evidence as source of truth. For edits, choose a compact, idiomatic Blueprint design before choosing operations; prefer variables, loops, timers, custom events, and helper functions over expanded repeated nodes. Build one complete preview plan and inspect its authorization. Ask once only in ReviewEachPlan; apply an authorized trusted plan immediately. Continue validation, touched-only save, refresh/diff, reporting, and approved runtime verification without asking the user to invoke Apply or reconfirm phases.
 ```
 
 ## Quick Check
@@ -74,7 +74,7 @@ uepi_edit_rollback
 
 These tools are part of the default `codex` profile. `codex_write_alpha` remains accepted as a legacy alias, but new installs should use only the single `codex` MCP server.
 
-`uepi_edit_apply` is Agent-ready by default when the editor bridge is online, but the safe workflow is still preview -> one user approval -> apply -> validate -> refresh/diff. For complex Blueprint graph edits, use operation `ref` / endpoint `node_ref` aliases so one preview can create nodes, connect pins, and compile in a single approved transaction. Use the project settings only when you want to opt out of a write domain or disable package saving/bridge behavior.
+`uepi_edit_apply` is Agent-ready when the editor bridge is online, but the workflow remains preview -> authorization policy -> apply -> validate -> refresh/diff -> report. For complex Blueprint graph edits, use operation `ref` / endpoint `node_ref` aliases so one preview can create nodes, connect pins, and compile in a single atomic transaction. Project Settings select ReviewEachPlan, TrustedSession, or exact-binding TrustedProject and define the allowed roots, domains, risk, destructive operations, runtime control, and transaction budget.
 
 The default atomic budget is 96 operations and 12 affected assets. Project Settings can raise the hard limits to 256 operations and 64 assets. UEPI checks the active Editor limits during Preview, before approval, and scales Apply/Refresh timeouts for larger accepted plans.
 
