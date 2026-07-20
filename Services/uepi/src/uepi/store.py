@@ -438,10 +438,14 @@ class SnapshotStore:
 
             asset = scan.get("asset") if isinstance(scan.get("asset"), dict) else {}
             fragment_owner = _normalized_asset_identity(asset.get("canonical_key")) if asset else ""
+            fragment_observed_at = str(scan.get("source_scan_finished_at_utc") or scan.get("finished_at_utc") or "")
             for entity in scan.get("entities") or []:
                 if isinstance(entity, dict) and entity.get("id"):
                     entity_id = str(entity["id"])
-                    entity_by_id[entity_id] = entity
+                    entity_record = dict(entity)
+                    if fragment_observed_at:
+                        entity_record["_uepi_observed_at"] = fragment_observed_at
+                    entity_by_id[entity_id] = entity_record
                     if fragment_owner:
                         entity_owners.setdefault(entity_id, set()).add(fragment_owner)
             for relation in scan.get("relations") or []:

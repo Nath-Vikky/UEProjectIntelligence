@@ -241,6 +241,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 assert focused["result"]["focus"]["node_guid"] == slot_node_guid
                 assert focused["payload_bytes"] < 30000
+                assert focused["truncation"]["final_projection_complete"] is True, focused["truncation"]
                 focused_timings.append(float(focused["timing"]["total_ms"]))
             focused_p95_ms = sorted(focused_timings)[max(0, math.ceil(len(focused_timings) * 0.95) - 1)]
             assert focused_p95_ms < args.focused_node_p95_ms, focused_timings
@@ -288,6 +289,8 @@ def main(argv: list[str] | None = None) -> int:
             assert animation_context["result"]["query_source"] == "sqlite_cache"
             assert not any(item.get("code") == "UEPI_SLOW_OPERATION" for item in animation_context["diagnostics"])
             assert animation_context["result"]["sections"]["animation_summary"]["asset"]["canonical_key"] == "/Game/LLMNPC/Animation/Waving.Waving"
+            assert animation_context["pre_projection_payload_bytes"] < 131072
+            assert animation_context["truncation"]["final_projection_complete"] is True, animation_context["truncation"]
             hard_scope_timings.append(float(animation_context["timing"]["snapshot_query_ms"]))
         assert animation_context is not None
         hard_scope_p95_ms = sorted(hard_scope_timings)[max(0, math.ceil(len(hard_scope_timings) * 0.95) - 1)]

@@ -13,7 +13,7 @@ from uuid import uuid4
 from .store import SnapshotState, SnapshotStore
 
 
-SCHEMA_VERSION = "uepi.sqlite-cache.v2.1"
+SCHEMA_VERSION = "uepi.sqlite-cache.v2.2"
 POINTER_SCHEMA_VERSION = "uepi.sqlite-cache-pointer.v1"
 SYNC_LOCK_TIMEOUT_SECONDS = 60.0
 SYNC_LOCK_STALE_SECONDS = 180.0
@@ -167,7 +167,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             completeness_json TEXT NOT NULL,
             diagnostics_json TEXT NOT NULL,
             evidence_json TEXT NOT NULL,
-            snapshot_json TEXT NOT NULL
+            snapshot_json TEXT NOT NULL,
+            observed_at TEXT NOT NULL
         );
 
         CREATE TABLE relations (
@@ -351,8 +352,8 @@ def _build_and_publish_cache(store: SnapshotStore, state: SnapshotState) -> dict
             """
             INSERT OR REPLACE INTO entities(
                 id, kind, canonical_key, display_name, source_layer,
-                attributes_json, typed_attributes_json, completeness_json, diagnostics_json, evidence_json, snapshot_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                attributes_json, typed_attributes_json, completeness_json, diagnostics_json, evidence_json, snapshot_json, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -367,6 +368,7 @@ def _build_and_publish_cache(store: SnapshotStore, state: SnapshotState) -> dict
                     _json(entity.get("diagnostics") or []),
                     _json(entity.get("evidence") or []),
                     _json(entity.get("snapshot") or {}),
+                    str(entity.get("_uepi_observed_at") or state.manifest.get("created_at_utc") or ""),
                 )
                 for entity in entities
                 if entity.get("id")
@@ -614,6 +616,25 @@ class SQLiteSnapshotCache:
     def entity_by_id(self, entity_id: str, include_snapshot: bool = False) -> dict[str, Any] | None:
         row = self.connection.execute("SELECT * FROM entities WHERE id = ?", (entity_id,)).fetchone()
         return self._entity_from_row(row, include_snapshot=include_snapshot)
+
+    def observed_at_for_identifier(self, identifier: str) -> str | None:
+        needle = str(identifier or "").strip()
+        if not needle:
+            return None
+        row = self.connection.execute(
+            """
+            SELECT observed_at FROM entities
+            WHERE lower(id) = lower(?)
+               OR lower(canonical_key) = lower(?)
+               OR lower(display_name) = lower(?)
+               OR lower(json_extract(attributes_json, '$.object_path')) = lower(?)
+               OR lower(json_extract(attributes_json, '$.package_name')) = lower(?)
+            ORDER BY CASE WHEN kind = 'asset' THEN 0 ELSE 1 END, canonical_key ASC, id ASC
+            LIMIT 1
+            """,
+            (needle, needle, needle, needle, needle),
+        ).fetchone()
+        return str(row["observed_at"] or "") if row and row["observed_at"] else None
 
     def entities_by_ids(self, entity_ids: set[str] | list[str], limit: int = 100, include_snapshot: bool = False) -> list[dict[str, Any]]:
         ids = [item for item in entity_ids if isinstance(item, str) and item]

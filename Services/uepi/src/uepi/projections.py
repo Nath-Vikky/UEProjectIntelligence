@@ -62,7 +62,7 @@ LOW_PRIORITY_KEYS = (
     "driver_track_curves",
 )
 
-CONTRACT_METADATA_ROOTS = ("focus", "query_source", "sections")
+CONTRACT_METADATA_ROOTS = ("focus", "query_source")
 
 
 def _field_tree(fields: list[str]) -> dict[str, Any]:
@@ -277,6 +277,11 @@ def _finalize_budget_state(envelope: dict[str, Any], max_bytes: int) -> None:
     pre_projection_size = int(envelope.get("pre_projection_payload_bytes") or 0)
     if pre_projection_size:
         truncation["pre_projection_byte_limit_hit"] = pre_projection_size > max_bytes
+    final_truncated = bool(truncation.get("truncated"))
+    pre_projection_hit = bool(truncation.get("pre_projection_byte_limit_hit"))
+    truncation["final_projection_complete"] = not final_truncated
+    truncation["final_projection_truncated"] = final_truncated
+    truncation["pre_projection_pressure_only"] = pre_projection_hit and not final_truncated
     envelope["truncation"] = truncation
     _set_payload_size(envelope)
 

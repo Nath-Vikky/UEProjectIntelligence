@@ -32,6 +32,41 @@ def _short_entity(entity: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _context_entity_identity(entity: dict[str, Any]) -> dict[str, Any]:
+    attributes = _as_dict(entity.get("attributes"))
+    keep_attributes = {
+        key: attributes[key]
+        for key in (
+            "object_path",
+            "asset_path",
+            "package_name",
+            "asset_name",
+            "asset_class",
+            "class_path",
+            "sequence_path",
+            "skeleton_path",
+            "animation_asset",
+            "state_name",
+            "slot_name",
+        )
+        if attributes.get(key) not in (None, "")
+    }
+    completeness = _as_dict(entity.get("completeness"))
+    return {
+        "id": entity.get("id"),
+        "kind": entity.get("kind"),
+        "canonical_key": entity.get("canonical_key"),
+        "display_name": entity.get("display_name"),
+        "source_layer": entity.get("source_layer"),
+        "attributes": keep_attributes,
+        "completeness": {
+            key: completeness[key]
+            for key in ("state", "covered", "omitted", "warnings")
+            if completeness.get(key) not in (None, [], {}, "")
+        },
+    }
+
+
 def _relation_summary(relation: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": relation.get("id"),
@@ -1060,15 +1095,24 @@ class AnimationPlaybackRoute(KeywordRoute):
             question,
             {"animation_sequence", "animation_montage", "blend_space", "anim_blueprint", "anim_asset_player"},
         )
+        pack.matches = [_context_entity_identity(item) for item in pack.matches]
+        pack.relations = [
+            {
+                key: item.get(key)
+                for key in ("id", "type", "from_id", "to_id", "source_layer", "derived", "confidence")
+                if item.get(key) is not None
+            }
+            for item in pack.relations
+        ]
         if asset:
-            animation = engine.animation(asset=asset, limit=min(int(args.get("max_items") or 40) * 4, 300))
+            animation = engine.animation(asset=asset, limit=min(int(args.get("max_items") or 40) * 2, 80), summary_only=True)
             if animation.get("ok"):
                 result = _as_dict(animation.get("result"))
                 pack.sections["animation_summary"] = {
-                    "asset": result.get("asset"),
+                    "asset": _context_entity_identity(_as_dict(result.get("asset"))),
                     "motion_summary": result.get("motion_summary"),
                     "sequence": result.get("sequence"),
-                    "entity_count": len(_as_list(result.get("animation_entities"))),
+                    "entity_count": int(result.get("animation_entity_count") or 0),
                 }
                 pack.next_actions.insert(0, {"reason": "Find Blueprint, AnimBP, or asset references that play this animation.", "tool": "uepi_impact", "arguments": {"asset": asset}})
         return pack

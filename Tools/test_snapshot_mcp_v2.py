@@ -453,7 +453,7 @@ def assert_response_budget_contract() -> None:
         },
     )
     projected = apply_response_options(base, {"fields": ["matches.id"], "page_size": 4, "max_payload_bytes": 4096})
-    assert set(projected["result"]) == {"matches", "sections"}
+    assert set(projected["result"]) == {"matches"}
     assert len(projected["result"]["matches"]) <= 4
     assert projected["payload_bytes"] == len(json.dumps(projected, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
     assert projected["payload_bytes"] <= 4096
@@ -470,6 +470,25 @@ def assert_response_budget_contract() -> None:
     )}
     enforce_response_budget(projected, {"fields": ["matches.id"], "page_size": 4, "max_payload_bytes": 4096})
     assert projected["payload_bytes"] <= 4096
+
+    pressure_only_base = envelope(
+        tool="uepi_context",
+        operation="context_route:auto",
+        project={"project_id": "test", "project_name": "Test"},
+        state={"freshness": "current", "saved_generation": 7},
+        result={
+            "matches": [{"id": "asset-only", "attributes": {"blob": "m" * 8000}}],
+            "sections": {"large_internal_section": "s" * 8000},
+        },
+    )
+    pressure_only = apply_response_options(
+        pressure_only_base,
+        {"fields": ["matches.id"], "page_size": 10, "max_payload_bytes": 4096},
+    )
+    assert pressure_only["truncation"]["truncated"] is False
+    assert pressure_only["truncation"]["final_projection_complete"] is True
+    assert pressure_only["truncation"]["pre_projection_byte_limit_hit"] is True
+    assert pressure_only["truncation"]["pre_projection_pressure_only"] is True
 
     schema_response = envelope(
         tool="uepi_schema",
@@ -498,6 +517,8 @@ def assert_response_budget_contract() -> None:
     assert "bone_motion_profile" not in bounded_animation["result"]
     assert bounded_animation["truncation"]["byte_limit_hit"] is False
     assert bounded_animation["truncation"]["pre_projection_byte_limit_hit"] is True
+    assert bounded_animation["truncation"]["final_projection_complete"] is False
+    assert bounded_animation["truncation"]["pre_projection_pressure_only"] is False
     assert bounded_animation["payload_bytes"] <= 4096
 
 
@@ -1917,7 +1938,7 @@ def main() -> int:
             check=True,
         )
         sync_result = json.loads(sync.stdout)
-        assert sync_result["schema_version"] == "uepi.sqlite-cache.v2.1"
+        assert sync_result["schema_version"] == "uepi.sqlite-cache.v2.2"
         assert sync_result["entity_count"] >= 3
 
         process = subprocess.Popen(
@@ -1981,7 +2002,7 @@ def main() -> int:
             assert status["result"]["snapshot"]["generation_comparable"] is False
             assert status["result"]["snapshot"]["freshness"] == "current"
             assert status["result"]["cache"]["synced"] is True
-            assert status["result"]["cache"]["schema_version"] == "uepi.sqlite-cache.v2.1"
+            assert status["result"]["cache"]["schema_version"] == "uepi.sqlite-cache.v2.2"
             overview = request(process, 45, "tools/call", {"name": "uepi_overview", "arguments": {"limit": 10}})["structuredContent"]
             assert_envelope(overview)
             assert "cpp_symbols" in overview["result"]
@@ -2212,10 +2233,13 @@ def main() -> int:
             )["structuredContent"]
             assert_envelope(scoped_animation)
             assert scoped_animation["result"]["query_source"] == "sqlite_cache"
+            assert scoped_animation["pre_projection_payload_bytes"] < 131072
+            assert scoped_animation["truncation"]["final_projection_complete"] is True
             summary = scoped_animation["result"]["sections"]["animation_summary"]
             assert summary["asset"]["canonical_key"] == "/Game/Animations/Waving.Waving"
             assert summary["motion_summary"] is not None
             assert summary["sequence"] is not None
+            assert "pose_samples" not in summary["sequence"]
             root_paths = {
                 _normalized_asset_identity(item.get("canonical_key"))
                 for item in scoped_animation["result"]["matches"]
