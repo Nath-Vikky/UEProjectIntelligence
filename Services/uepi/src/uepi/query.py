@@ -312,6 +312,7 @@ class UEPIQueryEngine:
         code: str,
         message: str,
         candidates: list[dict[str, Any]] | None = None,
+        result: dict[str, Any] | None = None,
         diagnostics: list[dict[str, Any]] | None = None,
         freshness: str | None = None,
         tool: str = "uepi_query",
@@ -334,6 +335,7 @@ class UEPIQueryEngine:
                 "retryable": False,
                 "candidates": candidates or [],
             },
+            result=result,
             diagnostics=self.identity_diagnostics + self._cache_diagnostics() + status["diagnostics"] + (diagnostics or []),
             next_actions=next_actions,
         )
@@ -611,10 +613,31 @@ class UEPIQueryEngine:
         diagnostics: list[dict[str, Any]],
         freshness: str | None,
     ) -> tuple[str | None, list[dict[str, Any]]]:
-        target = str(target or "").strip()
-        if not target:
-            return freshness, diagnostics
-        response = call_bridge(self.store, "asset.refresh_now", {"target_object_paths": [target], "data_mode": "live"}, timeout=2.0)
+        next_freshness, next_diagnostics, _ = self._force_bridge_refresh_many(
+            [target], diagnostics=diagnostics, freshness=freshness
+        )
+        return next_freshness, next_diagnostics
+
+    def _force_bridge_refresh_many(
+        self,
+        targets: list[str],
+        *,
+        diagnostics: list[dict[str, Any]],
+        freshness: str | None,
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
+        clean_targets = list(dict.fromkeys(str(item or "").strip() for item in targets if str(item or "").strip()))
+        previous_generation = self.state.generation
+        summary: dict[str, Any] = {
+            "requested_targets": clean_targets,
+            "refreshed_targets": [],
+            "failed_targets": [],
+            "previous_generation": previous_generation,
+            "new_generation": previous_generation,
+            "atomic": True,
+        }
+        if not clean_targets:
+            return freshness, diagnostics, summary
+        response = call_bridge(self.store, "asset.refresh_now", {"target_object_paths": clean_targets, "data_mode": "live"}, timeout=2.0)
         if response.get("ok"):
             result = _as_dict(response.get("result"))
             request_id = str(result.get("request_id") or "")
@@ -636,28 +659,45 @@ class UEPIQueryEngine:
                     break
                 time.sleep(0.1)
             if completed and str(completed.get("status") or "").casefold() in {"succeeded", "completed"}:
-                previous_generation = self.state.generation
                 self._reload_current_state()
+                summary.update(
+                    {
+                        "request_id": request_id,
+                        "request_path": completed.get("request_path"),
+                        "refreshed_targets": clean_targets,
+                        "new_generation": self.state.generation,
+                        "status": str(completed.get("status") or "succeeded"),
+                    }
+                )
                 return "current", diagnostics + [
                     {
                         "severity": "info",
                         "blocking": False,
                         "code": "UEPI_REFRESH_COMPLETED",
                         "message": "The forced Editor refresh completed and this query was retried against the published generation.",
-                        "target_object_path": target,
+                        "target_object_paths": clean_targets,
                         "request_id": request_id,
                         "request_path": completed.get("request_path"),
                         "previous_generation": previous_generation,
                         "view_generation": self.state.generation,
                         "recoverable": True,
                     }
-                ]
+                ], summary
+            summary.update(
+                {
+                    "request_id": request_id,
+                    "request_path": (completed or {}).get("request_path") or result.get("request_path"),
+                    "failed_targets": clean_targets,
+                    "status": str((completed or {}).get("status") or "wait_timeout"),
+                    "error": (completed or {}).get("error"),
+                }
+            )
             return "refresh_requested", diagnostics + [
                 {
                     "severity": "info",
                     "code": "UEPI_REFRESH_REQUESTED",
                     "message": "A live editor bridge refresh request was queued but did not complete before the atomic refresh timeout.",
-                    "target_object_path": target,
+                    "target_object_paths": clean_targets,
                     "request_path": result.get("request_path"),
                     "request_id": request_id,
                     "request": result.get("request") or {},
@@ -669,8 +709,9 @@ class UEPIQueryEngine:
                         "after_seconds": 0 if result.get("request_id") else 2,
                     },
                 }
-            ]
+            ], summary
         error = _as_dict(response.get("error"))
+        summary.update({"failed_targets": clean_targets, "status": "bridge_unavailable", "error": error.get("message")})
         return freshness, diagnostics + [
             {
                 "severity": "warning",
@@ -680,7 +721,7 @@ class UEPIQueryEngine:
                 "recommended_user_action": "Open or restart the editor so the UEPI live bridge can start, or use Run Snapshot Scan.",
                 "recommended_agent_action": {"tool": "uepi_status"},
             }
-        ]
+        ], summary
 
     def _domain_entities_for_asset(
         self,
@@ -1020,6 +1061,12 @@ class UEPIQueryEngine:
                 focused_node = focused_nodes[0]
                 focused_node_id = str(focused_node.get("id") or "")
                 direct_relations = self.cache.relations_for_entity(focused_node_id, limit=1000)
+                indexed_pin_relations = self.cache.outgoing_relations(focused_node_id, {"has_pin"}, limit=2000)
+                direct_relation_by_id = {
+                    str(relation.get("id") or f"{relation.get('type')}:{relation.get('from_id')}:{relation.get('to_id')}"): relation
+                    for relation in [*direct_relations, *indexed_pin_relations]
+                }
+                direct_relations = list(direct_relation_by_id.values())
                 owned_pin_ids = {
                     str(relation.get("to_id") or "")
                     for relation in direct_relations
@@ -1611,6 +1658,7 @@ class UEPIQueryEngine:
         max_items: int = 40,
         route: str = "auto",
         live: bool = False,
+        refresh: str = "auto",
     ) -> dict[str, Any]:
         from .context_ranker import select_route
         from .context_routes import make_routes
@@ -1619,6 +1667,32 @@ class UEPIQueryEngine:
         legacy_hard_scope = [item for item in scope if isinstance(item, str) and item.startswith("/") and "." in item]
         hard_scope = list(dict.fromkeys((hard_scope or []) + legacy_hard_scope))
         ranking_hints = list(dict.fromkeys((ranking_hints or []) + [item for item in scope if item not in legacy_hard_scope]))
+        refresh_summary: dict[str, Any] | None = None
+        refresh_diagnostics: list[dict[str, Any]] = []
+        if refresh == "force":
+            if not hard_scope:
+                return self._error(
+                    "UEPI_MULTI_ASSET_REFRESH_UNSUPPORTED",
+                    "uepi_context refresh=force requires exact hard_scope asset paths so the refresh can be published atomically.",
+                    result={"refresh": {"requested_targets": [], "refreshed_targets": [], "failed_targets": [], "atomic": True}},
+                    tool="uepi_context",
+                    operation="context_refresh",
+                )
+            _, refresh_diagnostics, refresh_summary = self._force_bridge_refresh_many(
+                hard_scope,
+                diagnostics=[],
+                freshness=None,
+            )
+            if refresh_summary.get("failed_targets"):
+                return self._error(
+                    "UEPI_MULTI_ASSET_REFRESH_UNSUPPORTED",
+                    "The Editor did not publish every hard-scope asset in one atomic live generation.",
+                    result={"refresh": refresh_summary},
+                    diagnostics=refresh_diagnostics,
+                    freshness="refresh_requested",
+                    tool="uepi_context",
+                    operation="context_refresh",
+                )
         limit = max(1, min(max_items, 100))
         routes = make_routes()
         project_summary = {"counts": self.counts, "project": self.state.project}
@@ -1647,6 +1721,8 @@ class UEPIQueryEngine:
         result = pack.to_result(scope, limit)
         result["hard_scope"] = hard_scope
         result["ranking_hints"] = ranking_hints
+        if refresh_summary is not None:
+            result["refresh"] = refresh_summary
         if hard_scope and not result.get("matches"):
             return self._error(
                 "UEPI_SCOPE_NO_MATCH",
@@ -1656,7 +1732,7 @@ class UEPIQueryEngine:
             )
         result["available_routes"] = [candidate.name for candidate in routes]
         result["terms"] = terms[:20]
-        diagnostics: list[dict[str, Any]] = []
+        diagnostics: list[dict[str, Any]] = [*refresh_diagnostics, *pack.diagnostics]
         if live:
             result.setdefault("sections", {})["live_editor"] = live_context(self.store)
             if not result["sections"]["live_editor"].get("status", {}).get("ok"):

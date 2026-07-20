@@ -14,6 +14,7 @@ class ContextPack:
     relations: list[dict[str, Any]] = field(default_factory=list)
     sections: dict[str, Any] = field(default_factory=dict)
     evidence: list[dict[str, Any]] = field(default_factory=list)
+    diagnostics: list[dict[str, Any]] = field(default_factory=list)
     uncertainties: list[str] = field(default_factory=list)
     next_actions: list[dict[str, Any]] = field(default_factory=list)
     query_source: str = "snapshot_fragments"

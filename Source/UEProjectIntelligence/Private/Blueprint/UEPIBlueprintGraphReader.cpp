@@ -35,6 +35,7 @@
 #include "K2Node_ExecutionSequence.h"
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_IfThenElse.h"
+#include "K2Node_InputKey.h"
 #include "K2Node_LoadAsset.h"
 #include "K2Node_MacroInstance.h"
 #include "K2Node_SpawnActor.h"
@@ -1797,6 +1798,23 @@ TSharedPtr<FJsonObject> AnnotateNodeSemantics(
 	TArray<FRelationRecord>& OutRelations)
 {
 	TSharedPtr<FJsonObject> SemanticObject;
+
+	if (const UK2Node_InputKey* InputKeyNode = Cast<UK2Node_InputKey>(&Node))
+	{
+		const FString StableKeyName = InputKeyNode->InputKey.GetFName().ToString();
+		const FString DisplayKeyName = InputKeyNode->InputKey.GetDisplayName().ToString();
+		NodeEntity.Attributes.Add(TEXT("semantic_kind"), TEXT("input_key"));
+		NodeEntity.Attributes.Add(TEXT("semantic_input_key"), StableKeyName);
+		NodeEntity.Attributes.Add(TEXT("input_key"), StableKeyName);
+		NodeEntity.Attributes.Add(TEXT("input_key_display_name"), DisplayKeyName);
+		NodeEntity.Completeness.Covered.AddUnique(TEXT("node_semantic_input_key"));
+
+		SemanticObject = MakeShared<FJsonObject>();
+		SemanticObject->SetStringField(TEXT("kind"), TEXT("input_key"));
+		SemanticObject->SetStringField(TEXT("input_key"), StableKeyName);
+		SemanticObject->SetStringField(TEXT("display_name"), DisplayKeyName);
+		return SemanticObject;
+	}
 
 	if (const UK2Node_IfThenElse* BranchNode = Cast<UK2Node_IfThenElse>(&Node))
 	{

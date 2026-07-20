@@ -12,6 +12,7 @@
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformMisc.h"
@@ -367,6 +368,28 @@ bool UUEPIEditorSubsystem::RunTargetedSnapshotScan(const TArray<FString>& Target
 
 	const UE::ProjectIntelligence::FProjectScanResult Result = UE::ProjectIntelligence::FAssetRegistryScanner::ScanProject(Options);
 
+	TArray<FString> MissingTargets;
+	for (const FString& Target : CleanTargets)
+	{
+		const FString TargetPackage = FPackageName::ObjectPathToPackageName(Target);
+		const bool bFound = Result.Entities.ContainsByPredicate([&TargetPackage](const UE::ProjectIntelligence::FEntityRecord& Entity)
+		{
+			return (Entity.Kind == TEXT("asset") || Entity.Kind == TEXT("asset_redirector"))
+				&& FPackageName::ObjectPathToPackageName(Entity.CanonicalKey).Equals(TargetPackage, ESearchCase::IgnoreCase);
+		});
+		if (!bFound)
+		{
+			MissingTargets.Add(Target);
+		}
+	}
+	if (MissingTargets.Num() > 0)
+	{
+		OutReportPath.Reset();
+		OutError = FString::Printf(TEXT("Atomic targeted scan did not resolve every requested asset: %s"), *FString::Join(MissingTargets, TEXT(", ")));
+		LastCollectorError = OutError;
+		return false;
+	}
+
 	FText ErrorText;
 	if (!UE::ProjectIntelligence::FAssetRegistryScanner::WriteScanResultJson(Result, Options.OutputPath, ErrorText))
 	{
@@ -402,7 +425,7 @@ bool UUEPIEditorSubsystem::RunTargetedSnapshotScan(const TArray<FString>& Target
 	LastAutoScanUtc = FDateTime::UtcNow().ToIso8601();
 	LastAutoScanMode = CommitOptions.DataMode;
 	LastAutoScanManifestPath = CommitResult.ManifestPath;
-	return Result.Diagnostics.Num() == 0;
+	return true;
 }
 
 void UUEPIEditorSubsystem::GetCollectorStatus(FUEPICollectorStatus& OutStatus) const

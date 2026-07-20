@@ -404,6 +404,7 @@ class SnapshotStore:
             raise SnapshotStoreError("No project scans were supplied for merge.")
         merged = dict(scans[0])
         entity_by_id: dict[str, dict[str, Any]] = {}
+        entity_owners: dict[str, set[str]] = {}
         relation_by_id: dict[str, dict[str, Any]] = {}
         diagnostics: list[Any] = []
         tombstones: list[dict[str, Any]] = []
@@ -413,39 +414,36 @@ class SnapshotStore:
                 tombstones.append(scan)
                 tombstone_asset_id = str(scan.get("asset_id") or "")
                 tombstone_owners = _tombstone_owner_identities(scan)
-                removed_ids = {
-                    entity_id
-                    for entity_id, entity in entity_by_id.items()
-                    if (tombstone_asset_id and entity_id == tombstone_asset_id)
-                    or bool(tombstone_owners.intersection(_entity_owner_identities(entity)))
-                }
+                removed_ids: set[str] = set()
+                for entity_id, entity in entity_by_id.items():
+                    owners = entity_owners.get(entity_id, set())
+                    matching_fragment_owners = owners.intersection(tombstone_owners)
+                    if matching_fragment_owners:
+                        remaining_owners = owners - matching_fragment_owners
+                        if remaining_owners:
+                            entity_owners[entity_id] = remaining_owners
+                        else:
+                            removed_ids.add(entity_id)
+                        continue
+                    if (tombstone_asset_id and entity_id == tombstone_asset_id) or (
+                        not owners and bool(tombstone_owners.intersection(_entity_owner_identities(entity)))
+                    ):
+                        removed_ids.add(entity_id)
                 if tombstone_asset_id:
                     removed_ids.add(tombstone_asset_id)
-                frontier = list(removed_ids)
-                while frontier:
-                    current = frontier.pop(0)
-                    for relation in relation_by_id.values():
-                        from_id = str(relation.get("from_id") or "")
-                        to_id = str(relation.get("to_id") or "")
-                        next_id = ""
-                        if from_id == current:
-                            next_id = to_id
-                        elif to_id == current:
-                            next_id = from_id
-                        if not next_id or next_id in removed_ids:
-                            continue
-                        next_entity = entity_by_id.get(next_id)
-                        if not isinstance(next_entity, dict) or _is_asset_entity(next_entity):
-                            continue
-                        removed_ids.add(next_id)
-                        frontier.append(next_id)
                 for entity_id in removed_ids:
                     entity_by_id.pop(entity_id, None)
+                    entity_owners.pop(entity_id, None)
                 continue
 
+            asset = scan.get("asset") if isinstance(scan.get("asset"), dict) else {}
+            fragment_owner = _normalized_asset_identity(asset.get("canonical_key")) if asset else ""
             for entity in scan.get("entities") or []:
                 if isinstance(entity, dict) and entity.get("id"):
-                    entity_by_id[str(entity["id"])] = entity
+                    entity_id = str(entity["id"])
+                    entity_by_id[entity_id] = entity
+                    if fragment_owner:
+                        entity_owners.setdefault(entity_id, set()).add(fragment_owner)
             for relation in scan.get("relations") or []:
                 if isinstance(relation, dict) and relation.get("id"):
                     relation_by_id[str(relation["id"])] = relation

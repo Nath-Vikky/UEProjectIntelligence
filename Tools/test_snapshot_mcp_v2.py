@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT / "Tools"))
 
 from uepi.bridge_client import _read_token  # noqa: E402
 from uepi.cache import cache_status, sync_cache  # noqa: E402
-from uepi.context_routes import _best_domain_asset, _normalized_asset_identity  # noqa: E402
+from uepi.context_routes import _best_domain_asset, _input_resolution, _normalized_asset_identity  # noqa: E402
 from uepi.diff import build_transaction_diff  # noqa: E402
 from uepi.edit import _apply_timeout_seconds, _asset_values, _budget_diagnostics, _refresh_timeout_seconds, _transaction_budgets  # noqa: E402
 from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
@@ -265,7 +265,7 @@ def assert_response_budget_contract() -> None:
         },
     )
     projected = apply_response_options(base, {"fields": ["matches.id"], "page_size": 4, "max_payload_bytes": 4096})
-    assert set(projected["result"]) == {"matches"}
+    assert set(projected["result"]) == {"matches", "sections"}
     assert len(projected["result"]["matches"]) <= 4
     assert projected["payload_bytes"] == len(json.dumps(projected, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
     assert projected["payload_bytes"] <= 4096
@@ -308,8 +308,64 @@ def assert_response_budget_contract() -> None:
     bounded_animation = apply_response_options(animation_response, {"fields": ["bone_motion_profile"], "max_payload_bytes": 4096})
     assert "bone_motion_profile_manifest" in bounded_animation["result"]
     assert "bone_motion_profile" not in bounded_animation["result"]
-    assert bounded_animation["truncation"]["byte_limit_hit"] is True
+    assert bounded_animation["truncation"]["byte_limit_hit"] is False
+    assert bounded_animation["truncation"]["pre_projection_byte_limit_hit"] is True
     assert bounded_animation["payload_bytes"] <= 4096
+
+
+def assert_cross_asset_fragment_ownership_contract() -> None:
+    def asset_fragment(asset_id: str, asset_path: str, node_id: str, shared_id: str, revision: str) -> dict[str, Any]:
+        return {
+            "schema_version": "uepi.asset-fragment.v2",
+            "project_id": "project-fixture",
+            "asset": {"id": asset_id, "canonical_key": asset_path, "kind": "asset"},
+            "entities": [
+                {"id": asset_id, "kind": "asset", "canonical_key": asset_path, "attributes": {"object_path": asset_path}},
+                {"id": node_id, "kind": "blueprint_node", "canonical_key": f"{asset_path}:node:{revision}", "attributes": {"revision": revision}},
+                {"id": shared_id, "kind": "blueprint_event", "canonical_key": "/Script/Test:SharedInput", "attributes": {}},
+            ],
+            "relations": [
+                {"id": f"rel-{asset_id}-{revision}", "type": "contains_node", "from_id": asset_id, "to_id": node_id},
+                {"id": f"rel-{node_id}-shared", "type": "exec_flows_to", "from_id": node_id, "to_id": shared_id},
+            ],
+            "diagnostics": [],
+        }
+
+    def tombstone(asset_id: str, asset_path: str) -> dict[str, Any]:
+        return {
+            "schema_version": "uepi.asset-tombstone.v2",
+            "asset_id": asset_id,
+            "asset_key": asset_path,
+            "package_name": asset_path.split(".", 1)[0],
+            "old_object_path": asset_path,
+        }
+
+    a1 = asset_fragment("asset-a", "/Game/A.A", "node-a-v1", "shared-input", "v1")
+    a2 = asset_fragment("asset-a", "/Game/A.A", "node-a-v2", "shared-input", "v2")
+    b1 = asset_fragment("asset-b", "/Game/B.B", "node-b-v1", "shared-input", "v1")
+    b2 = asset_fragment("asset-b", "/Game/B.B", "node-b-v2", "shared-input", "v2")
+
+    merged_ab = SnapshotStore._merge_project_scans([a1, b1, tombstone("asset-a", "/Game/A.A"), a2])
+    ids_ab = {item["id"] for item in merged_ab["entities"]}
+    assert {"asset-a", "node-a-v2", "asset-b", "node-b-v1", "shared-input"}.issubset(ids_ab)
+    assert "node-a-v1" not in ids_ab
+
+    merged_ba = SnapshotStore._merge_project_scans([b1, a1, tombstone("asset-b", "/Game/B.B"), b2])
+    ids_ba = {item["id"] for item in merged_ba["entities"]}
+    assert {"asset-b", "node-b-v2", "asset-a", "node-a-v1", "shared-input"}.issubset(ids_ba)
+    assert "node-b-v1" not in ids_ba
+
+    nodes = [
+        {"id": "left-alt", "kind": "blueprint_node", "attributes": {"semantic_input_key": "LeftAlt"}},
+        {"id": "three", "kind": "blueprint_node", "attributes": {"semantic_input_key": "Three"}},
+    ]
+    assert _input_resolution("按 3 触发什么", nodes) == {
+        "requested_input": "3",
+        "resolved_input": "Three",
+        "match_mode": "alias_exact",
+        "matched": True,
+    }
+    assert _input_resolution("Press LeftAlt", nodes)["resolved_input"] == "LeftAlt"
 
     discover_response = envelope(
         tool="uepi_edit_discover",
@@ -1636,6 +1692,7 @@ def main() -> int:
     assert_plan_v2_contract()
     assert_runtime_ticket_contract()
     assert_response_budget_contract()
+    assert_cross_asset_fragment_ownership_contract()
     assert_operation_machine_contract()
     assert_context_identity_contract()
     assert_versioned_cache_contract()

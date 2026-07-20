@@ -442,6 +442,57 @@ def _input_key(entity: dict[str, Any]) -> str:
     return ""
 
 
+_INPUT_KEY_ALIASES = {
+    "zero": {"0"},
+    "one": {"1"},
+    "two": {"2"},
+    "three": {"3"},
+    "four": {"4"},
+    "five": {"5"},
+    "six": {"6"},
+    "seven": {"7"},
+    "eight": {"8"},
+    "nine": {"9"},
+    "leftalt": {"left alt", "左alt", "左 alt"},
+    "rightalt": {"right alt", "右alt", "右 alt"},
+}
+
+
+def _input_aliases(key: str) -> set[str]:
+    folded = key.casefold().strip()
+    compact = re.sub(r"[\s_-]+", "", folded)
+    return {folded, compact, *_INPUT_KEY_ALIASES.get(compact, set())}
+
+
+def _input_resolution(question: str, nodes: list[dict[str, Any]]) -> dict[str, Any]:
+    folded = question.casefold()
+    compact_question = re.sub(r"[\s_-]+", "", folded)
+    keyed_nodes = [(node, _input_key(node)) for node in nodes if _input_key(node)]
+    for _, key in sorted(keyed_nodes, key=lambda item: len(item[1]), reverse=True):
+        stable = key.casefold()
+        for alias in sorted(_input_aliases(key), key=len, reverse=True):
+            compact_alias = re.sub(r"[\s_-]+", "", alias)
+            if len(alias) == 1 and alias.isalnum():
+                matched = re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", folded) is not None
+            else:
+                matched = alias in folded or (len(compact_alias) > 1 and compact_alias in compact_question)
+            if matched:
+                return {
+                    "requested_input": alias,
+                    "resolved_input": key,
+                    "match_mode": "stable_key_exact" if alias == stable else "alias_exact",
+                    "matched": True,
+                }
+    phrase = re.search(r"(?:press|key|input|按键|按下|按)\s*[:：]?\s*([A-Za-z0-9_+\-]+)", question, re.IGNORECASE)
+    requested = phrase.group(1) if phrase else None
+    return {
+        "requested_input": requested,
+        "resolved_input": None,
+        "match_mode": "unmatched" if requested else "not_requested",
+        "matched": False,
+    }
+
+
 def _owner_score(asset: str, nodes: list[dict[str, Any]], live_gameplay: dict[str, Any]) -> dict[str, Any]:
     folded = asset.casefold()
     text = " ".join(_entity_text(node) for node in nodes)
@@ -523,6 +574,10 @@ class GameplayInputToEffectRoute(KeywordRoute):
         hard_scope = [str(item) for item in args.get("hard_scope") or [] if str(item).strip()]
         candidates, query_source = _search(engine, question, terms, max_items * 4, self.kinds, hard_scope)
 
+        for scoped_asset in hard_scope:
+            scoped_entities, _ = self._asset_slice(engine, scoped_asset)
+            candidates.extend(scoped_entities)
+
         input_nodes = [item for item in candidates if item.get("kind") == "blueprint_node" and _input_key(item)]
         if not input_nodes and engine.cache:
             input_nodes = [
@@ -533,6 +588,10 @@ class GameplayInputToEffectRoute(KeywordRoute):
             ]
         deduped_inputs = {str(item.get("id") or ""): item for item in input_nodes if item.get("id")}
         input_nodes = list(deduped_inputs.values())
+        input_resolution = _input_resolution(question, input_nodes)
+        resolved_input = str(input_resolution.get("resolved_input") or "")
+        if resolved_input:
+            input_nodes = [item for item in input_nodes if _input_key(item).casefold() == resolved_input.casefold()]
 
         live_gameplay: dict[str, Any] = {}
         try:
@@ -710,6 +769,19 @@ class GameplayInputToEffectRoute(KeywordRoute):
 
         matches = [_short_entity(item) for item in [*selected_inputs, *all_entities.values()] if item.get("kind") in {"asset", "blueprint_node", "blueprint_event", "animation_sequence", "animation_montage"}]
         deduped_matches = {str(item.get("id") or ""): item for item in matches if item.get("id")}
+        route_diagnostics: list[dict[str, Any]] = []
+        if input_resolution.get("match_mode") == "unmatched":
+            route_diagnostics.append(
+                {
+                    "severity": "warning",
+                    "blocking": False,
+                    "code": "UEPI_INPUT_KEY_UNMATCHED",
+                    "message": "The requested input key did not exactly match any stable FKey exported by the scoped Blueprint assets.",
+                    "requested_input": input_resolution.get("requested_input"),
+                    "available_inputs": sorted({_input_key(item) for item in candidates if item.get("kind") == "blueprint_node" and _input_key(item)}),
+                    "recoverable": True,
+                }
+            )
         return ContextPack(
             route=self.name,
             confidence=float(args.get("route_confidence") or 0.0),
@@ -718,6 +790,10 @@ class GameplayInputToEffectRoute(KeywordRoute):
             matches=list(deduped_matches.values())[:max_items],
             relations=[_relation_summary(item) for item in list(all_relations.values()) if item.get("type") in self._FLOW_TYPES][:max_items],
             sections={
+                "input_resolution": input_resolution,
+                "requested_input": input_resolution.get("requested_input"),
+                "resolved_input": input_resolution.get("resolved_input"),
+                "match_mode": input_resolution.get("match_mode"),
                 "input_owner": selected_owner,
                 "input_owner_candidates": owner_candidates,
                 "cross_asset_paths": paths[:10],
@@ -726,6 +802,7 @@ class GameplayInputToEffectRoute(KeywordRoute):
                 "unresolved_dispatches": unresolved[:20],
                 "call_graph_support": "Static direct Blueprint calls are resolved from semantic_function; interface, delegate, and runtime-selected targets remain explicit unresolved dispatches when no exact target is indexed.",
             },
+            diagnostics=route_diagnostics,
             uncertainties=["Static ownership evidence does not prove runtime input consumption; use the runtime input delivery trace for final verification."],
             next_actions=[{"reason": "Verify the selected input path in the active PIE session.", "tool": "uepi_runtime", "arguments": {"action": "input", "delivery": "possessed_pawn_input_stack", "key": _input_key(selected_inputs[0]) if selected_inputs else "<key>", "event": "pressed"}}],
             query_source=query_source,

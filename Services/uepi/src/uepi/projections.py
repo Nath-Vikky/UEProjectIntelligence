@@ -62,6 +62,8 @@ LOW_PRIORITY_KEYS = (
     "driver_track_curves",
 )
 
+CONTRACT_METADATA_ROOTS = ("focus", "query_source", "sections")
+
 
 def _field_tree(fields: list[str]) -> dict[str, Any]:
     tree: dict[str, Any] = {}
@@ -262,6 +264,23 @@ def _ensure_artifact_manifests(original: dict[str, Any], projected: dict[str, An
             projected[manifest_key] = original[manifest_key]
 
 
+def _ensure_contract_metadata(original: dict[str, Any], projected: dict[str, Any]) -> None:
+    for key in CONTRACT_METADATA_ROOTS:
+        if key in original and key not in projected:
+            projected[key] = original[key]
+
+
+def _finalize_budget_state(envelope: dict[str, Any], max_bytes: int) -> None:
+    final_size = _set_payload_size(envelope)
+    truncation = dict(envelope.get("truncation") or {})
+    truncation["byte_limit_hit"] = final_size > max_bytes
+    pre_projection_size = int(envelope.get("pre_projection_payload_bytes") or 0)
+    if pre_projection_size:
+        truncation["pre_projection_byte_limit_hit"] = pre_projection_size > max_bytes
+    envelope["truncation"] = truncation
+    _set_payload_size(envelope)
+
+
 def _trim_to_budget(
     envelope: dict[str, Any],
     result: dict[str, Any],
@@ -368,8 +387,9 @@ def _list_container_paths(value: Any, prefix: str = "") -> list[str]:
 
 def apply_response_options(envelope: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:
     max_bytes = max(4096, min(int(arguments.get("max_payload_bytes") or 131072), 4 * 1024 * 1024))
+    envelope["pre_projection_payload_bytes"] = _encoded_size(envelope)
     if not isinstance(envelope.get("result"), dict):
-        _set_payload_size(envelope)
+        _finalize_budget_state(envelope, max_bytes)
         return envelope
 
     original_result = dict(envelope["result"])
@@ -378,6 +398,7 @@ def apply_response_options(envelope: dict[str, Any], arguments: dict[str, Any]) 
     if fields:
         result = _project(result, _field_tree(fields))
         _ensure_artifact_manifests(original_result, result, fields)
+        _ensure_contract_metadata(original_result, result)
     for field in arguments.get("exclude") or []:
         if isinstance(field, str):
             parts = [part for part in field.removeprefix("result.").split(".") if part]
@@ -457,7 +478,7 @@ def apply_response_options(envelope: dict[str, Any], arguments: dict[str, Any]) 
         qhash=qhash,
         view_generation=view_generation,
     )
-    _set_payload_size(envelope)
+    _finalize_budget_state(envelope, max_bytes)
     return envelope
 
 
@@ -465,6 +486,7 @@ def enforce_response_budget(envelope: dict[str, Any], arguments: dict[str, Any])
     """Rebalance an already projected envelope after late metadata is attached."""
     max_bytes = max(4096, min(int(arguments.get("max_payload_bytes") or 131072), 4 * 1024 * 1024))
     if _set_payload_size(envelope) <= max_bytes or not isinstance(envelope.get("result"), dict):
+        _finalize_budget_state(envelope, max_bytes)
         return envelope
 
     result = envelope["result"]
@@ -489,5 +511,5 @@ def enforce_response_budget(envelope: dict[str, Any], arguments: dict[str, Any])
         qhash=qhash,
         view_generation=view_generation,
     )
-    _set_payload_size(envelope)
+    _finalize_budget_state(envelope, max_bytes)
     return envelope
