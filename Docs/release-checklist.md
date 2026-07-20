@@ -28,7 +28,7 @@
 - [x] `.codex/config.toml` template works.
 - [x] Codex shows UEPI MCP.
 - [x] `uepi_status` works.
-- [x] Unified `--tool-profile codex` lists fifteen read/live tools plus five guarded edit tools.
+- [x] Unified `--tool-profile codex` lists eighteen read/live tools plus eight guarded edit/recovery tools.
 - [x] `Tools/uepi_doctor.py --require-editor` passes for the selected project.
 - [x] `Tools/test_live_read_contract.py --project <UPROJECT>` passes against the rebuilt matching Editor.
 - [x] Example question set in `Docs/codex-example-questions.md` passes.

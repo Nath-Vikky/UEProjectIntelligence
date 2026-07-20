@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.0.0-beta.6
+
+- Made `gameplay_input_to_effect` resolve structured `input_key` and `excluded_input_keys`, honor English and Chinese negation, normalize digit aliases to stable FKeys, reject ambiguous or unknown inputs, and fail closed without unrelated paths or Runtime actions.
+- Unified recovery journal paths at the project root, writes future package/backup paths as absolute filenames, and added fingerprint-confirmed `uepi_recovery_discard` for explicitly retiring obsolete prepared markers without overwriting newer package state.
+- Projected normal Runtime `read(field=...)` responses to the requested child value and separated input-delivery API return evidence from unproven Blueprint binding execution.
+- Replaced full animation Context construction with a bounded summary builder, cached per-asset observation times in SQLite v2.2, and removed repeated full-fragment freshness scans from hot reads.
+- Compacted focused Blueprint node/Pin/link responses so exact GUID reads preserve complete Focus evidence under the response budget.
+- Split final projection completeness from pre-projection budget pressure in truncation metadata.
+
 ## 2.0.0-beta.4
 
 - Added the cache-backed `gameplay_input_to_effect` route with player-input ownership evidence, cross-Blueprint Custom Event traversal, interface candidates, duplicate input diagnostics, terminal effects, and bounded responses.

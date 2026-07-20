@@ -60,7 +60,7 @@ AlwaysReportAfterApply = true
 
 In `ReviewEachPlan`, approval is required exactly once and is not approval to write generally. In trusted modes, the Agent should invoke Apply immediately after a successful unchanged Preview. In all modes it finishes validation, save, refresh, diff, runtime verification, and reporting without extra phase confirmations.
 
-If Status reports `recovery_required`, mutation remains disabled. Call `uepi_recovery_inspect`, compare current and backup fingerprints, and follow only its exact transaction-bound `uepi_recovery_finalize` or `uepi_recovery_rollback` recommendation.
+If Status reports `recovery_required`, mutation remains disabled. Call `uepi_recovery_inspect` and compare normalized current/backup fingerprints. Use `uepi_recovery_finalize` only when every current package matches its backup. Rollback restores old bytes and may overwrite later valid work. For an obsolete marker, ask the user to confirm retaining the inspected current bytes, then call `uepi_recovery_discard` with the returned confirmation token; both service and Editor recheck every fingerprint before clearing the marker.
 
 ## Rejected Commands
 

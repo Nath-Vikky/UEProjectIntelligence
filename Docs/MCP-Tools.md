@@ -39,6 +39,7 @@ For `uepi_animation`, use `mode="exact_asset"` unless dependency/playback contex
 | `uepi_edit_validate` | Re-run transaction validation |
 | `uepi_edit_rollback` | Undo/restore the applied transaction |
 | `uepi_recovery_finalize` | Acknowledge an already-restored exact recovery transaction |
+| `uepi_recovery_discard` | Keep fingerprint-confirmed current package bytes and retire an obsolete prepared marker after explicit user confirmation |
 | `uepi_recovery_rollback` | Restore the exact prepared backup set for a recovery transaction |
 
 Operations remain data inside the edit facade; UEPI does not expose one MCP tool per mutation.

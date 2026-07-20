@@ -110,7 +110,7 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 1. Call `uepi_status`.
 2. Use `uepi_search` or `uepi_context` to identify candidate assets.
 3. Call the narrow read tool needed by the question.
-   For a player key/InputAction that crosses Blueprint assets, use `uepi_context` with `route="gameplay_input_to_effect"`; follow `input_owner` and its reasons instead of assuming every Actor with an input node owns player input.
+   For a player key/InputAction that crosses Blueprint assets, use `uepi_context` with `route="gameplay_input_to_effect"`; pass an exact `input_key` and optional `excluded_input_keys` when known, and follow `input_owner` instead of assuming every Actor with an input node owns player input. Unknown or ambiguous keys intentionally return no path and no Runtime next action.
 4. If the user asks for a project change, call `uepi_edit_discover`, compare compact and expanded Blueprint designs when relevant, then create one complete `uepi_edit_preview` plan for the intended edit.
 5. Evaluate the returned authorization. In `ReviewEachPlan`, ask once; in an authorized `TrustedSession` or `TrustedProject`, call `uepi_edit_apply` immediately. Complete validation, touched-only save, refresh/read, `uepi_diff`, reporting, and Runtime verification without reconfirming unchanged phases.
 6. For `refresh="force"`, the read tool requests, waits, reloads the resulting generation, and retries internally. It returns `UEPI_REFRESH_REQUESTED` with a request ID only when the bounded wait expires.
@@ -135,6 +135,10 @@ Use UEPI first. Call uepi_status, then uepi_overview. When answering project-spe
 - `uepi_runtime_preview`: create an immutable project/session/map-bound PIE verification plan without editing an asset.
 - `uepi_runtime_approve`: issue a restricted Runtime Ticket after ReviewEachPlan approval or an automatic trusted-policy decision.
 - `uepi_runtime`: execute ticket-bound PIE start/stop/input/invoke/read/delay/wait/assert steps.
+- `uepi_recovery_inspect`: compare unresolved transaction backups with normalized current package paths and fingerprints.
+- `uepi_recovery_finalize`: clear a marker only when current package bytes already match every prepared backup.
+- `uepi_recovery_discard`: after explicit confirmation, retain the exact inspected current bytes and retire an obsolete prepared marker without rollback.
+- `uepi_recovery_rollback`: restore the prepared backup set; this can overwrite newer package state and must not be selected merely because bytes differ.
 - `uepi_edit_discover`: discover supported guarded edit operations.
 - `uepi_edit_preview`: create a dry-run operation plan without modifying assets.
 - `uepi_edit_apply`: apply an approved plan through the live editor bridge when write gates allow it.
@@ -150,9 +154,9 @@ For runtime input, choose the delivery deliberately:
 - `player_controller`: direct PlayerController key delivery.
 - `enhanced_input_action`: direct injection of an exact `/Game/...` InputAction plus an approved bool/axis value.
 
-Input delivery evidence does not by itself prove the gameplay effect happened. End the approved plan with a `read`, `wait`, or `assert` against the relevant component state. PIE `start` waits for `running` by default, and `delay` is a separate time-only action.
+`delivery_api_returned_handled` is only the Unreal input-delivery API return value. `binding_handled` remains unknown because that return cannot prove whether downstream Blueprint logic executed. End the approved plan with a `read`, `wait`, or `assert` against the relevant component state. A normal `read` with `field` returns `uepi.runtime-read-projection.v1` containing only that projected value. PIE `start` waits for `running` by default, and `delay` is a separate time-only action.
 
-After an Editor restart, a plan from the old session is rejected. Use the returned current session ID and rebound next action to preview again. If Status reports `recovery_required`, call `uepi_recovery_inspect` and follow its exact finalize/rollback action before attempting another write.
+After an Editor restart, a plan from the old session is rejected. Use the returned current session ID and rebound next action to preview again. If Status reports `recovery_required`, call `uepi_recovery_inspect`. Finalize only when disk matches the backup; rollback only when restoring old bytes is intended. If a later successful transaction made the marker obsolete, obtain explicit user confirmation and call `uepi_recovery_discard` with the exact current-state token returned by Inspect.
 
 Successful approved plans save only touched packages by default. UEPI never exposes save-all.
 

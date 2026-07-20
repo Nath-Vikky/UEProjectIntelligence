@@ -1,6 +1,6 @@
 # UE Project Intelligence Development Status
 
-`main` is the `2.0.0-beta.5` release-candidate line for UE 5.3.2 and Codex.
+`main` is the `2.0.0-beta.6` release-candidate line for UE 5.3.2 and Codex.
 
 ## Implemented
 
@@ -8,7 +8,7 @@
 - Snapshot Store v2 with immutable fragments, live overlay, tombstones, incremental events, targeted requests, and rebuildable SQLite cache.
 - Project binding hash and exact Editor session guards across status, live calls, plans, apply, and runtime tickets.
 - MCP envelope v2, hard scope, exact object-path reads, Blueprint graph/node filters, animation exact mode, projection, byte/item budgets, and opaque generation-bound cursors.
-- Fifteen read/live tools and five guarded edit facade tools in the single `codex` profile.
+- Eighteen read/live tools and eight guarded edit/recovery tools in the single `codex` profile.
 - Live Editor status/selection/log cursor/viewport, World actors/components, targeted Refresh jobs, Reflection Schema, and controlled PIE Runtime.
 - Project plugin content mount discovery plus project/plugin C++ source and module-manifest indexing.
 - Editor-exported versioned operation catalog and hash, Plan v2, plan expiry, idempotency, affected assets, before fingerprints, dirty/read-only/path/budget preflight, and policy-bound authorization.
@@ -33,9 +33,15 @@
 - Source-hashed Python service identity, patch-specific Editor build IDs, actionable transaction recovery inspection/finalize/rollback, and discriminated edit operation wrappers.
 - Typed Runtime assertions, truthful input-delivery evidence, safe BlueprintPure observations, objective/human/hybrid verification modes, and human-owned visual acceptance.
 - Project settings authorization modes (`ReviewEachPlan`, `TrustedSession`, `TrustedProject`) with bounded roots/domains/risk/destructive/runtime policy and complete post-action reports.
+- Structured gameplay input selection with stable FKey aliases, English/Chinese negation, explicit exclusion, ambiguous/unknown fail-closed behavior, and branch-scoped matches and Runtime actions.
+- Project-root recovery path normalization, absolute future journals, and fingerprint-confirmed obsolete-marker discard that keeps newer current package bytes only after explicit confirmation.
+- Lightweight animation Context summaries, SQLite v2.2 per-asset freshness timestamps, compact focused Blueprint reads, Runtime field projection, and separate final/pre-projection completeness metadata.
 
 ## Verified In This Development Pass
 
+- The Beta.6 synthetic Snapshot MCP regression passes structured/excluded/negated/unmatched FKey cases, recovery path/token contracts, Runtime field projection, focused response completeness, animation Context bounds, and SQLite v2.2 cache publication.
+- GasDemo compiles successfully with the Beta.6 recovery discard and Runtime evidence Bridge changes against UE 5.3.2.
+- Against the existing LLMNPCDemo generation 51 offline Snapshot, Waving Context hot reads dropped from the reported 16,090 ms/1,269,335-byte pre-projection result to approximately 350 ms/8.2 KB, without `UEPI_SLOW_OPERATION`; Manny event `333` focused reads complete in approximately 78 ms/22.6 KB with Focus preserved and `truncated=false`.
 - The Beta.5 synthetic Snapshot MCP regression passes with multi-asset ownership, exact input routing, focused Pin projection, service identity, recovery, trusted authorization, typed Runtime values, and post-action-report coverage.
 - `GasDemoEditor Win64 Development` compiles successfully against UE 5.3.2 after the Beta.5 recovery, Runtime, authorization, settings, and build-identity changes.
 - The matching Beta.5 source compiles in LLMNPCDemo, online Doctor passes 17/17 with the exact TrustedProject binding and 64-operation catalog, and `test_live_read_contract.py --llmnpc-regression` passes with `DefaultSlot`, exact `Waving`, 769.721 ms Hard Scope P95, and 1,015.914 ms mixed warm-read P95.
@@ -91,3 +97,12 @@ The `v2.0.0-beta.4` tag may be created after the LLMNPCDemo live checks are reco
 - TrustedProject Apply and objective Runtime execution remain explicit real-machine tests. Final animation quality remains a user-owned PIE visual decision.
 
 The `v2.0.0-beta.5` tag may be created after the LLMNPCDemo live and trusted-write checks are recorded.
+
+## Beta.6 Release Gate
+
+- `python -B Tools/test_snapshot_mcp_v2.py` must pass with all Beta.5 coverage plus input negation/fail-closed, recovery discard, Runtime projection, focused response completeness, and SQLite v2.2 assertions.
+- `GasDemoEditor Win64 Development` and the matching LLMNPCDemo Editor module must compile against UE 5.3.2.
+- The mapped LLMNPCDemo install must pass Doctor 17/17 and `test_live_read_contract.py --llmnpc-regression`; animation Hard Scope P95 must remain below 2 seconds with no slow-operation diagnostic.
+- Clearing an obsolete prepared marker and the subsequent TrustedProject Apply remain explicit live tests because discard requires user confirmation of the exact current-state token.
+
+The `v2.0.0-beta.6` tag may be created after the LLMNPCDemo live read gate and confirmed recovery/edit checks are recorded.

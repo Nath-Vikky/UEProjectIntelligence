@@ -6,6 +6,7 @@ Available routes:
 
 ```text
 project_overview
+gameplay_input_to_effect
 input_to_gameplay
 blueprint_behavior
 animation_playback
@@ -41,6 +42,8 @@ next_actions
 ## Route Intent
 
 `project_overview` gives project counts and likely entry assets.
+
+`gameplay_input_to_effect` resolves one stable FKey, selects likely player input ownership, and traces static Blueprint calls to terminal gameplay effects. Prefer structured `input_key` and `excluded_input_keys`; free-form questions support `exclude`, `not`, `except`, `不要`, `排除`, and `不是`. Multiple positive keys or an unknown key fail closed with empty paths and no Runtime next action.
 
 `input_to_gameplay` links input assets, mapping contexts, Blueprint handlers, and side effects.
 

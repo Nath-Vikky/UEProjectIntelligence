@@ -129,6 +129,7 @@ Recommended Codex flow:
 - `uepi_runtime`
 - `uepi_recovery_inspect`
 - `uepi_recovery_finalize`
+- `uepi_recovery_discard`
 - `uepi_recovery_rollback`
 - `uepi_edit_discover`
 - `uepi_edit_preview`
@@ -141,6 +142,7 @@ The single `codex` profile exposes these read and edit tools together. `codex_wr
 `uepi_context` can route questions through:
 
 - `project_overview`
+- `gameplay_input_to_effect`
 - `input_to_gameplay`
 - `blueprint_behavior`
 - `animation_playback`
