@@ -39,6 +39,10 @@
 
 ## Verified In This Development Pass
 
+- The final Beta.6 revision maps 278 tracked files into LLMNPCDemo with zero SHA-256 mismatches; both `GasDemoEditor` and `LLMNPCDemoEditor` compile successfully against UE 5.3.2.
+- Matching LLMNPCDemo online Doctor passes 17/17 with plugin/Service `2.0.0-beta.6`, current Service identity, the 64-operation catalog, and 96-operation/12-asset limits.
+- The expanded LLMNPC live contract passes nine exact, excluded, Chinese/English-negated, unknown, ambiguous, and not-requested input cases. Default gameplay evidence remains complete at approximately 23 KB; mixed warm-read P95 is 1,015.764 ms and Waving Hard Scope P95 is 649.588 ms.
+- Live recovery inspection resolves the legacy marker's package and backup as existing absolute files. Service and Bridge both recommend `review_current_or_rollback`; discard remains gated on explicit confirmation of the current Manny fingerprint, so the post-recovery TrustedProject Apply test is not yet claimed.
 - The Beta.6 synthetic Snapshot MCP regression passes structured/excluded/negated/unmatched FKey cases, recovery path/token contracts, Runtime field projection, focused response completeness, animation Context bounds, and SQLite v2.2 cache publication.
 - GasDemo compiles successfully with the Beta.6 recovery discard and Runtime evidence Bridge changes against UE 5.3.2.
 - Against the existing LLMNPCDemo generation 51 offline Snapshot, Waving Context hot reads dropped from the reported 16,090 ms/1,269,335-byte pre-projection result to approximately 350 ms/8.2 KB, without `UEPI_SLOW_OPERATION`; Manny event `333` focused reads complete in approximately 78 ms/22.6 KB with Focus preserved and `truncated=false`.

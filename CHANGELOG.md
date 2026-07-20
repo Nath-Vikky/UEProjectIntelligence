@@ -10,6 +10,7 @@
 - Replaced full animation Context construction with a bounded summary builder, cached per-asset observation times in SQLite v2.2, and removed repeated full-fragment freshness scans from hot reads.
 - Compacted focused Blueprint node/Pin/link responses so exact GUID reads preserve complete Focus evidence under the response budget.
 - Split final projection completeness from pre-projection budget pressure in truncation metadata.
+- Compacted gameplay path evidence below the default response budget, added explicit `not_requested` input semantics, expanded natural-language negation, and aligned Bridge recovery recommendations with the Service's non-destructive review flow.
 
 ## 2.0.0-beta.4
 
