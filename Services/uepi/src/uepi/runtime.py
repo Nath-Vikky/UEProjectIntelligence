@@ -34,6 +34,30 @@ def _value_at_path(value: Any, path: str) -> Any:
     return current
 
 
+def _value_at_path_with_presence(value: Any, path: str) -> tuple[bool, Any]:
+    current = value
+    for segment in [item for item in path.split(".") if item]:
+        if not isinstance(current, dict) or segment not in current:
+            return False, None
+        current = current[segment]
+    return True, current
+
+
+def _project_read_result(result: dict[str, Any], field: str) -> dict[str, Any] | None:
+    found, value = _value_at_path_with_presence(result, field)
+    if not found:
+        return None
+    return {
+        "schema_version": "uepi.runtime-read-projection.v1",
+        "field": field,
+        "value": value,
+        "observed_value": _unwrap_typed_value(value),
+        "object_path": result.get("object_path") or result.get("target"),
+        "property": result.get("property"),
+        "function": result.get("function"),
+    }
+
+
 def _unwrap_typed_value(value: Any) -> Any:
     if isinstance(value, dict) and "value" in value and isinstance(value.get("type"), str):
         return value["value"]
@@ -363,6 +387,19 @@ def execute(engine: Any, arguments: dict[str, Any]) -> dict[str, Any]:
                 return engine._error("UEPI_RUNTIME_START_TIMEOUT", "PIE did not reach running state before the approved timeout.", tool="uepi_runtime", operation=action)
         if ticket:
             result = {**result, "verification": {key: ticket.get(key) for key in ("verification_mode", "technical_verification", "visual_acceptance", "visual_status", "visual_reviewer", "human_test_steps")}}
+        if action == "read" and str(arguments.get("field") or ""):
+            field = str(arguments["field"])
+            projected = _project_read_result(result, field)
+            if projected is None:
+                return engine._error(
+                    "UEPI_RUNTIME_FIELD_NOT_FOUND",
+                    f"Runtime read field was not present in the observed result: {field}",
+                    tool="uepi_runtime",
+                    operation=action,
+                )
+            if ticket:
+                projected["verification"] = result["verification"]
+            result = projected
         return engine._envelope(result, diagnostics=response.get("diagnostics") or [], tool="uepi_runtime", operation=action)
 
     if action == "delay":

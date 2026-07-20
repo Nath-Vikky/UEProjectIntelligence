@@ -30,7 +30,7 @@ from uepi.plan import canonical_plan_hash, verify_plan_hash  # noqa: E402
 from uepi.projections import apply_response_options, enforce_response_budget  # noqa: E402
 from uepi.query import make_engine  # noqa: E402
 from uepi.recovery import inspect_recovery  # noqa: E402
-from uepi.runtime import _approved_subset, _canonical_hash as runtime_plan_hash, _matches_approved, _ticket_from_plan, _unwrap_typed_value, _value_at_path  # noqa: E402
+from uepi.runtime import _approved_subset, _canonical_hash as runtime_plan_hash, _matches_approved, _project_read_result, _ticket_from_plan, _unwrap_typed_value, _value_at_path  # noqa: E402
 from uepi.result import envelope, tool_response  # noqa: E402
 from uepi.store import SnapshotStore, resolve_store_root  # noqa: E402
 from uepi.timing import attach_timing, begin_request, end_request, record  # noqa: E402
@@ -716,6 +716,19 @@ def assert_runtime_ticket_contract() -> None:
     observed = {"outputs": {"return_value": {"fields": {"bPlaying": {"value": True}}}}}
     assert _value_at_path(observed, "outputs.return_value.fields.bPlaying.value") is True
     assert _value_at_path(observed, "outputs.return_value.fields.Missing.value") is None
+    projected = _project_read_result(observed, "outputs.return_value.fields.bPlaying")
+    assert projected == {
+        "schema_version": "uepi.runtime-read-projection.v1",
+        "field": "outputs.return_value.fields.bPlaying",
+        "value": {"value": True},
+        "observed_value": {"value": True},
+        "object_path": None,
+        "property": None,
+        "function": None,
+    }
+    scalar_projection = _project_read_result(observed, "outputs.return_value.fields.bPlaying.value")
+    assert scalar_projection and scalar_projection["value"] is True and scalar_projection["observed_value"] is True
+    assert _project_read_result(observed, "outputs.return_value.fields.Missing") is None
     with tempfile.TemporaryDirectory(prefix="uepi_runtime_ticket_") as temp_dir:
         store = SnapshotStore.from_paths(store=Path(temp_dir))
         engine = SimpleNamespace(store=store, identity={"project_binding_id": "sha256:runtime", "project_file": "C:/Test/Test.uproject"})

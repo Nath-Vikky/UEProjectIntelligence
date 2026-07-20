@@ -2022,9 +2022,14 @@ namespace UE::ProjectIntelligence
 			Result->SetBoolField(TEXT("delivery_attempted"), true);
 			Result->SetBoolField(TEXT("handled"), bHandled);
 			Result->SetBoolField(TEXT("handled_known"), bHandledKnown);
-			Result->SetBoolField(TEXT("binding_handled_known"), bHandledKnown);
-			if (bHandledKnown) Result->SetBoolField(TEXT("binding_handled"), bHandled);
-			else Result->SetField(TEXT("binding_handled"), MakeShared<FJsonValueNull>());
+			Result->SetStringField(TEXT("handled_semantics"), TEXT("delivery_api_return_value"));
+			Result->SetBoolField(TEXT("delivery_api_handled_known"), bHandledKnown);
+			if (bHandledKnown) Result->SetBoolField(TEXT("delivery_api_returned_handled"), bHandled);
+			else Result->SetField(TEXT("delivery_api_returned_handled"), MakeShared<FJsonValueNull>());
+			Result->SetBoolField(TEXT("binding_handled_known"), false);
+			Result->SetField(TEXT("binding_handled"), MakeShared<FJsonValueNull>());
+			Result->SetBoolField(TEXT("binding_execution_proven"), false);
+			Result->SetBoolField(TEXT("gameplay_effect_proven"), false);
 			Result->SetBoolField(TEXT("injection_accepted"), bInjectionAccepted);
 			Result->SetStringField(TEXT("key"), Key.ToString());
 			Result->SetStringField(TEXT("input_action"), InputActionPath);
@@ -2038,7 +2043,13 @@ namespace UE::ProjectIntelligence
 			Result->SetStringField(TEXT("input_component"), Pawn && Pawn->InputComponent ? Pawn->InputComponent->GetPathName() : FString());
 			Result->SetArrayField(TEXT("mapping_contexts"), EnhancedMappingContextValues(Controller->PlayerInput));
 			Result->SetStringField(TEXT("consumption_scope"), Delivery == TEXT("possessed_pawn_input_stack") ? TEXT("player_input_stack") : Delivery);
-			Result->SetStringField(TEXT("consumption_evidence"), bHandledKnown ? (bHandled ? TEXT("binding_reported_handled") : TEXT("delivery_api_called_but_no_binding_reported_handled")) : TEXT("binding_handled_unknown; verify the approved gameplay state assertion"));
+			Result->SetStringField(
+				TEXT("consumption_evidence"),
+				bHandledKnown
+					? (bHandled
+						? TEXT("delivery_api_returned_handled; downstream Blueprint execution still requires an approved gameplay state assertion")
+						: TEXT("delivery_api_returned_not_handled; this return value does not prove whether downstream Blueprint logic executed"))
+					: TEXT("input_injection_accepted; downstream Blueprint execution requires an approved gameplay state assertion"));
 			return SuccessResponse(RequestId, Result);
 		}
 		FString ObjectError;
