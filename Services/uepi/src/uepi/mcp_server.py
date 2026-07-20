@@ -196,6 +196,8 @@ TOOLS: list[dict[str, Any]] = [
                 "scope": {"type": "array", "items": {"type": "string"}},
                 "hard_scope": {"type": "array", "items": {"type": "string"}},
                 "ranking_hints": {"type": "array", "items": {"type": "string"}},
+                "input_key": {"type": "string", "description": "Exact stable FKey for gameplay_input_to_effect, for example Three or LeftAlt."},
+                "excluded_input_keys": {"type": "array", "items": {"type": "string"}, "description": "Stable FKeys that must not be selected."},
                 "include_external_endpoints": {"type": "boolean"},
                 "max_items": {"type": "integer"},
             },
@@ -678,6 +680,8 @@ class UEPIMCPServer:
                         scope=scope if isinstance(scope, list) else None,
                         hard_scope=arguments.get("hard_scope") if isinstance(arguments.get("hard_scope"), list) else None,
                         ranking_hints=arguments.get("ranking_hints") if isinstance(arguments.get("ranking_hints"), list) else None,
+                        input_key=str(arguments.get("input_key") or "") or None,
+                        excluded_input_keys=arguments.get("excluded_input_keys") if isinstance(arguments.get("excluded_input_keys"), list) else None,
                         include_external_endpoints=bool(arguments.get("include_external_endpoints", False)),
                         max_items=int(arguments.get("max_items") or 40),
                     ), arguments

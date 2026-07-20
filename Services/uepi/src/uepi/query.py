@@ -1704,6 +1704,8 @@ class UEPIQueryEngine:
         scope: list[str] | None = None,
         hard_scope: list[str] | None = None,
         ranking_hints: list[str] | None = None,
+        input_key: str | None = None,
+        excluded_input_keys: list[str] | None = None,
         include_external_endpoints: bool = False,
         max_items: int = 40,
         route: str = "auto",
@@ -1762,6 +1764,8 @@ class UEPIQueryEngine:
                 "scope": scope,
                 "hard_scope": hard_scope,
                 "ranking_hints": ranking_hints,
+                "input_key": input_key,
+                "excluded_input_keys": excluded_input_keys or [],
                 "include_external_endpoints": include_external_endpoints,
                 "max_items": limit,
                 "terms": terms,
@@ -1771,9 +1775,17 @@ class UEPIQueryEngine:
         result = pack.to_result(scope, limit)
         result["hard_scope"] = hard_scope
         result["ranking_hints"] = ranking_hints
+        if input_key:
+            result["input_key"] = input_key
+        if excluded_input_keys:
+            result["excluded_input_keys"] = excluded_input_keys
         if refresh_summary is not None:
             result["refresh"] = refresh_summary
-        if hard_scope and not result.get("matches"):
+        fail_closed_input = any(
+            item.get("code") in {"UEPI_INPUT_KEY_UNMATCHED", "UEPI_INPUT_KEY_AMBIGUOUS"}
+            for item in pack.diagnostics
+        )
+        if hard_scope and not result.get("matches") and not fail_closed_input:
             return self._error(
                 "UEPI_SCOPE_NO_MATCH",
                 "No indexed entity matched inside the requested hard scope.",

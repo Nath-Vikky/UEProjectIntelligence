@@ -534,12 +534,12 @@ def assert_cross_asset_fragment_ownership_contract() -> None:
         {"id": "left-alt", "kind": "blueprint_node", "attributes": {"semantic_input_key": "LeftAlt"}},
         {"id": "three", "kind": "blueprint_node", "attributes": {"semantic_input_key": "Three"}},
     ]
-    assert _input_resolution("按 3 触发什么", nodes) == {
-        "requested_input": "3",
-        "resolved_input": "Three",
-        "match_mode": "alias_exact",
-        "matched": True,
-    }
+    digit_resolution = _input_resolution("按 3 触发什么", nodes)
+    assert digit_resolution["requested_input"] == "3"
+    assert digit_resolution["resolved_input"] == "Three"
+    assert digit_resolution["match_mode"] == "explicit_phrase"
+    assert digit_resolution["available_inputs"] == ["LeftAlt", "Three"]
+    assert digit_resolution["matched"] is True
     assert _input_resolution("Press LeftAlt", nodes)["resolved_input"] == "LeftAlt"
 
     discover_response = envelope(
@@ -1395,6 +1395,7 @@ def write_fixture(root: Path) -> None:
     character_entities = [
         gameplay_entity(character_asset_id, "asset", character_path, "", "BP_ThirdPersonCharacter", {"asset_name": "BP_ThirdPersonCharacter"}),
         gameplay_entity("node-character-three", "blueprint_node", character_path, "EventGraph::Three", "Three", {"node_guid": "CHAR-THREE", "node_class": "/Script/BlueprintGraph.K2Node_InputKey", "semantic_kind": "input_key", "input_key": "Three"}),
+        gameplay_entity("node-character-left-alt", "blueprint_node", character_path, "EventGraph::LeftAlt", "Left Alt", {"node_guid": "CHAR-LEFT-ALT", "node_class": "/Script/BlueprintGraph.K2Node_InputKey", "semantic_kind": "input_key", "input_key": "LeftAlt"}),
         gameplay_entity("node-get-all-manny", "blueprint_node", character_path, "EventGraph::GetAllActorsOfClass", "Get All Actors Of Class", {"node_guid": "GET-ALL", "semantic_kind": "call_function", "semantic_function": "/Script/Engine.GameplayStatics:GetAllActorsOfClass"}),
         gameplay_entity("node-call-manny-333", "blueprint_node", character_path, "EventGraph::Call333", "333", {"node_guid": "CALL-333", "semantic_kind": "call_function", "semantic_function": "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny.SKEL_BP_LLMNPC_Manny_C:333"}),
         gameplay_entity("pin-get-all-outactors", "blueprint_pin", character_path, "EventGraph::GetAllActorsOfClass:pin:OutActors", "OutActors", {"pin_id": "PIN-OUT-ACTORS", "pin_name": "OutActors", "direction": "output", "pin_category": "object", "pin_subcategory_object": "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny.BP_LLMNPC_Manny_C", "pin_container_type": "array"}),
@@ -2070,9 +2071,9 @@ def main() -> int:
             assert_envelope(gameplay_context)
             gameplay_sections = gameplay_context["result"]["sections"]
             assert gameplay_context["result"]["query_source"] == "sqlite_cache"
-            assert gameplay_sections["requested_input"] == "three"
+            assert gameplay_sections["requested_input"] == "Three"
             assert gameplay_sections["resolved_input"] == "Three"
-            assert gameplay_sections["match_mode"] == "stable_key_exact"
+            assert gameplay_sections["match_mode"] == "explicit_phrase"
             assert gameplay_sections["input_owner"]["asset"].endswith("BP_ThirdPersonCharacter.BP_ThirdPersonCharacter")
             assert gameplay_sections["input_owner"]["owner_confidence"] > 0.5
             assert any(any(step.get("kind") == "cross_asset_call" and step.get("function_or_event") == "333" for step in path["steps"]) for path in gameplay_sections["cross_asset_paths"])
@@ -2080,6 +2081,70 @@ def main() -> int:
             assert any(item.get("diagnostic_code") == "UEPI_DUPLICATE_GAMEPLAY_INPUT_PATH" for item in gameplay_sections["duplicate_paths"])
             assert gameplay_elapsed < 2.0
             assert len(json.dumps(gameplay_context, ensure_ascii=False).encode("utf-8")) < 30000
+
+            def gameplay_input_context(request_id: int, question: str, **arguments: Any) -> dict[str, Any]:
+                value = request(
+                    process,
+                    request_id,
+                    "tools/call",
+                    {
+                        "name": "uepi_context",
+                        "arguments": {
+                            "question": question,
+                            "route": "gameplay_input_to_effect",
+                            "hard_scope": [
+                                "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter",
+                                "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny.BP_LLMNPC_Manny",
+                            ],
+                            "max_items": 40,
+                            **arguments,
+                        },
+                    },
+                )["structuredContent"]
+                assert_envelope(value)
+                return value
+
+            for request_id, question in (
+                (730, "Trace key 3, exclude LeftAlt"),
+                (731, "追踪按键 3 的效果，不要 LeftAlt"),
+            ):
+                resolved = gameplay_input_context(request_id, question)
+                sections = resolved["result"]["sections"]
+                assert sections["resolved_input"] == "Three"
+                assert sections["excluded_input_keys"] == ["LeftAlt"]
+                assert sections["available_inputs"] == ["LeftAlt", "Three"]
+                assert all(item.get("id") != "node-character-left-alt" for item in resolved["result"]["matches"])
+                assert resolved["next_actions"][0]["arguments"]["key"] == sections["resolved_input"]
+
+            left_alt = gameplay_input_context(732, "Trace LeftAlt, not Three")
+            left_alt_sections = left_alt["result"]["sections"]
+            assert left_alt_sections["resolved_input"] == "LeftAlt"
+            assert left_alt_sections["excluded_input_keys"] == ["Three"]
+            assert left_alt["next_actions"][0]["arguments"]["key"] == "LeftAlt"
+
+            structured_key = gameplay_input_context(733, "Trace the requested gameplay input", input_key="3", excluded_input_keys=["LeftAlt"])
+            assert structured_key["result"]["sections"]["resolved_input"] == "Three"
+            assert structured_key["result"]["sections"]["match_mode"] == "structured_exact"
+
+            hinted_key = gameplay_input_context(734, "Trace the requested gameplay input", ranking_hints=["key=Three"])
+            assert hinted_key["result"]["sections"]["resolved_input"] == "Three"
+            assert hinted_key["result"]["sections"]["match_mode"] == "ranking_hint_exact"
+
+            for request_id, question in (
+                (735, "Trace key 4"),
+                (736, "Trace keyboard key 4"),
+            ):
+                unmatched = gameplay_input_context(request_id, question)
+                unmatched_sections = unmatched["result"]["sections"]
+                assert unmatched_sections["requested_input"] == "4"
+                assert unmatched_sections["resolved_input"] is None
+                assert unmatched_sections["selected_inputs"] == []
+                assert unmatched_sections["cross_asset_paths"] == []
+                assert unmatched_sections["terminal_effects"] == []
+                assert unmatched["result"]["matches"] == []
+                assert unmatched["result"]["relations"] == []
+                assert unmatched["next_actions"] == []
+                assert any(item.get("code") == "UEPI_INPUT_KEY_UNMATCHED" and item.get("blocking") is True for item in unmatched["diagnostics"])
 
             gameplay_blueprint = request(
                 process,

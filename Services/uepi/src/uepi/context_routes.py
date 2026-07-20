@@ -430,18 +430,6 @@ def _pin_defaults_for_node(node_id: str, entities: dict[str, dict[str, Any]], re
     return values
 
 
-def _input_key(entity: dict[str, Any]) -> str:
-    title = _node_title(entity).strip()
-    explicit = str(_attribute(entity, "input_key", "key", "semantic_input_key") or "").strip()
-    if explicit:
-        return explicit
-    node_class = str(_attribute(entity, "node_class") or "").casefold()
-    semantic = str(_attribute(entity, "semantic_kind") or "").casefold()
-    if "inputkey" in node_class or semantic in {"input_key", "input_action"}:
-        return title.removeprefix("InputKey ").strip()
-    return ""
-
-
 _INPUT_KEY_ALIASES = {
     "zero": {"0"},
     "one": {"1"},
@@ -457,38 +445,162 @@ _INPUT_KEY_ALIASES = {
     "rightalt": {"right alt", "右alt", "右 alt"},
 }
 
+_INPUT_STABLE_NAMES = {
+    "zero": "Zero",
+    "one": "One",
+    "two": "Two",
+    "three": "Three",
+    "four": "Four",
+    "five": "Five",
+    "six": "Six",
+    "seven": "Seven",
+    "eight": "Eight",
+    "nine": "Nine",
+    "leftalt": "LeftAlt",
+    "rightalt": "RightAlt",
+}
+
+
+def _canonical_input_key(value: Any) -> str:
+    text = str(value or "").strip()
+    compact = re.sub(r"[\s_-]+", "", text.casefold())
+    for stable, aliases in _INPUT_KEY_ALIASES.items():
+        normalized_aliases = {re.sub(r"[\s_-]+", "", str(alias).casefold()) for alias in aliases}
+        if compact == stable or compact in normalized_aliases:
+            return _INPUT_STABLE_NAMES[stable]
+    return text
+
+
+def _input_key(entity: dict[str, Any]) -> str:
+    title = _node_title(entity).strip()
+    explicit = str(_attribute(entity, "semantic_input_key", "input_key", "key") or "").strip()
+    if explicit:
+        return _canonical_input_key(explicit)
+    node_class = str(_attribute(entity, "node_class") or "").casefold()
+    semantic = str(_attribute(entity, "semantic_kind") or "").casefold()
+    if "inputkey" in node_class or semantic in {"input_key", "input_action"}:
+        return _canonical_input_key(title.removeprefix("InputKey ").strip())
+    return ""
+
 
 def _input_aliases(key: str) -> set[str]:
-    folded = key.casefold().strip()
+    folded = _canonical_input_key(key).casefold().strip()
     compact = re.sub(r"[\s_-]+", "", folded)
     return {folded, compact, *_INPUT_KEY_ALIASES.get(compact, set())}
 
 
-def _input_resolution(question: str, nodes: list[dict[str, Any]]) -> dict[str, Any]:
+def _input_mention_pattern(alias: str) -> re.Pattern[str]:
+    escaped = re.escape(alias).replace(r"\ ", r"[\s_-]+")
+    if alias and all(character.isalnum() or character in " _-" for character in alias):
+        return re.compile(rf"(?<![a-z0-9]){escaped}(?![a-z0-9])", re.IGNORECASE)
+    return re.compile(escaped, re.IGNORECASE)
+
+
+def _input_mention_is_negated(question: str, start: int) -> bool:
+    prefix = question[max(0, start - 32):start].casefold()
+    return re.search(r"(?:\b(?:exclude|not|except|without)\b|不要|排除|不是)\s*(?:\bkey\b|按键)?\s*$", prefix) is not None
+
+
+def _hint_input_key(ranking_hints: list[str]) -> str | None:
+    for hint in ranking_hints:
+        match = re.fullmatch(r"\s*(?:input_key|key)\s*=\s*([^\s,]+)\s*", str(hint), re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _input_resolution(
+    question: str,
+    nodes: list[dict[str, Any]],
+    *,
+    input_key: str | None = None,
+    excluded_input_keys: list[str] | None = None,
+    ranking_hints: list[str] | None = None,
+) -> dict[str, Any]:
     folded = question.casefold()
-    compact_question = re.sub(r"[\s_-]+", "", folded)
-    keyed_nodes = [(node, _input_key(node)) for node in nodes if _input_key(node)]
-    for _, key in sorted(keyed_nodes, key=lambda item: len(item[1]), reverse=True):
-        stable = key.casefold()
+    keyed_nodes = [(node, _canonical_input_key(_input_key(node))) for node in nodes if _input_key(node)]
+    available_by_folded = {key.casefold(): key for _, key in keyed_nodes}
+    available_inputs = sorted(set(available_by_folded.values()), key=str.casefold)
+    excluded: set[str] = {_canonical_input_key(item) for item in excluded_input_keys or [] if str(item).strip()}
+    positive_mentions: list[tuple[int, str, str, str]] = []
+
+    for key in available_inputs:
         for alias in sorted(_input_aliases(key), key=len, reverse=True):
-            compact_alias = re.sub(r"[\s_-]+", "", alias)
-            if len(alias) == 1 and alias.isalnum():
-                matched = re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", folded) is not None
-            else:
-                matched = alias in folded or (len(compact_alias) > 1 and compact_alias in compact_question)
-            if matched:
+            for match in _input_mention_pattern(alias).finditer(folded):
+                if _input_mention_is_negated(question, match.start()):
+                    excluded.add(key)
+                else:
+                    positive_mentions.append((match.start(), alias, key, "stable_key_exact" if alias.casefold() == key.casefold() else "alias_exact"))
+
+    structured = str(input_key or "").strip()
+    hint = _hint_input_key(ranking_hints or []) if not structured else None
+    requested = structured or hint
+    request_mode = "structured_exact" if structured else ("ranking_hint_exact" if hint else "")
+
+    if not requested:
+        phrase_patterns = [
+            re.compile(r"\b(?:press|key|input)\b\s*[:：]?\s*([A-Za-z0-9_+\-]+)", re.IGNORECASE),
+            re.compile(r"(?:按键|按下|按)\s*[:：]?\s*([A-Za-z0-9_+\-]+)", re.IGNORECASE),
+        ]
+        explicit_mentions: list[tuple[int, str]] = []
+        for pattern in phrase_patterns:
+            explicit_mentions.extend((match.start(1), match.group(1)) for match in pattern.finditer(question) if not _input_mention_is_negated(question, match.start()))
+        explicit_mentions.sort(key=lambda item: item[0])
+        explicit_keys: list[str] = []
+        for _, value in explicit_mentions:
+            canonical = _canonical_input_key(value)
+            if canonical not in excluded and canonical.casefold() not in {item.casefold() for item in explicit_keys}:
+                explicit_keys.append(canonical)
+        if len(explicit_keys) > 1:
+            return {"requested_input": [value for _, value in explicit_mentions], "resolved_input": None, "excluded_input_keys": sorted(excluded, key=str.casefold), "available_inputs": available_inputs, "ambiguous_inputs": explicit_keys, "match_mode": "ambiguous", "matched": False}
+        if explicit_mentions:
+            requested = explicit_mentions[0][1]
+            request_mode = "explicit_phrase"
+
+            requested_folded = _canonical_input_key(requested).casefold()
+            other_positive = {
+                key.casefold(): key
+                for _, _, key, _ in positive_mentions
+                if key not in excluded and key.casefold() != requested_folded
+            }
+            if other_positive:
+                ambiguous = [_canonical_input_key(requested), *other_positive.values()]
                 return {
-                    "requested_input": alias,
-                    "resolved_input": key,
-                    "match_mode": "stable_key_exact" if alias == stable else "alias_exact",
-                    "matched": True,
+                    "requested_input": [value for _, value in explicit_mentions],
+                    "resolved_input": None,
+                    "excluded_input_keys": sorted(excluded, key=str.casefold),
+                    "available_inputs": available_inputs,
+                    "ambiguous_inputs": ambiguous,
+                    "match_mode": "ambiguous",
+                    "matched": False,
                 }
-    phrase = re.search(r"(?:press|key|input|按键|按下|按)\s*[:：]?\s*([A-Za-z0-9_+\-]+)", question, re.IGNORECASE)
-    requested = phrase.group(1) if phrase else None
+
+    if requested:
+        canonical = _canonical_input_key(requested)
+        resolved = available_by_folded.get(canonical.casefold())
+        if resolved and resolved not in excluded:
+            return {"requested_input": requested, "resolved_input": resolved, "excluded_input_keys": sorted(excluded, key=str.casefold), "available_inputs": available_inputs, "match_mode": request_mode or "alias_exact", "matched": True}
+        return {"requested_input": requested, "resolved_input": None, "excluded_input_keys": sorted(excluded, key=str.casefold), "available_inputs": available_inputs, "match_mode": "unmatched", "matched": False}
+
+    distinct_positive: dict[str, tuple[int, str, str]] = {}
+    for position, alias, key, mode in positive_mentions:
+        if key in excluded:
+            continue
+        previous = distinct_positive.get(key.casefold())
+        if previous is None or position < previous[0]:
+            distinct_positive[key.casefold()] = (position, alias, mode)
+    if len(distinct_positive) == 1:
+        folded_key, (_, alias, mode) = next(iter(distinct_positive.items()))
+        return {"requested_input": alias, "resolved_input": available_by_folded[folded_key], "excluded_input_keys": sorted(excluded, key=str.casefold), "available_inputs": available_inputs, "match_mode": mode, "matched": True}
+    if len(distinct_positive) > 1:
+        ordered = sorted(distinct_positive.items(), key=lambda item: item[1][0])
+        return {"requested_input": [value[1] for _, value in ordered], "resolved_input": None, "excluded_input_keys": sorted(excluded, key=str.casefold), "available_inputs": available_inputs, "ambiguous_inputs": [available_by_folded[key] for key, _ in ordered], "match_mode": "ambiguous", "matched": False}
     return {
-        "requested_input": requested,
+        "requested_input": None,
         "resolved_input": None,
-        "match_mode": "unmatched" if requested else "not_requested",
+        "excluded_input_keys": sorted(excluded, key=str.casefold),
+        "available_inputs": available_inputs,
+        "match_mode": "not_requested",
         "matched": False,
     }
 
@@ -588,10 +700,22 @@ class GameplayInputToEffectRoute(KeywordRoute):
             ]
         deduped_inputs = {str(item.get("id") or ""): item for item in input_nodes if item.get("id")}
         input_nodes = list(deduped_inputs.values())
-        input_resolution = _input_resolution(question, input_nodes)
+        input_resolution = _input_resolution(
+            question,
+            input_nodes,
+            input_key=str(args.get("input_key") or "") or None,
+            excluded_input_keys=[str(item) for item in args.get("excluded_input_keys") or [] if str(item).strip()],
+            ranking_hints=[str(item) for item in args.get("ranking_hints") or [] if str(item).strip()],
+        )
         resolved_input = str(input_resolution.get("resolved_input") or "")
+        excluded_inputs = {str(item).casefold() for item in input_resolution.get("excluded_input_keys") or []}
+        fail_closed = input_resolution.get("match_mode") in {"unmatched", "ambiguous"}
         if resolved_input:
             input_nodes = [item for item in input_nodes if _input_key(item).casefold() == resolved_input.casefold()]
+        elif fail_closed:
+            input_nodes = []
+        elif excluded_inputs:
+            input_nodes = [item for item in input_nodes if _input_key(item).casefold() not in excluded_inputs]
 
         live_gameplay: dict[str, Any] = {}
         try:
@@ -645,6 +769,8 @@ class GameplayInputToEffectRoute(KeywordRoute):
         terminal_effects: list[dict[str, Any]] = []
         unresolved: list[dict[str, Any]] = []
         path_signatures: dict[str, list[dict[str, Any]]] = {}
+        traversed_entity_ids: set[str] = set()
+        traversed_relation_ids: set[str] = set()
 
         for input_node in selected_inputs + [item for item in input_nodes if item not in selected_inputs]:
             start_id = str(input_node.get("id") or "")
@@ -660,6 +786,7 @@ class GameplayInputToEffectRoute(KeywordRoute):
                 current = all_entities.get(current_id)
                 if not current:
                     continue
+                traversed_entity_ids.add(current_id)
                 node_step = {
                     "asset": _root_asset_path(current),
                     "id": current_id,
@@ -753,6 +880,8 @@ class GameplayInputToEffectRoute(KeywordRoute):
                         continue
                     target_id = str(relation.get("to_id") or "")
                     if target_id:
+                        if relation.get("id"):
+                            traversed_relation_ids.add(str(relation["id"]))
                         queue.append((target_id, next_steps, depth + 1))
 
         duplicate_paths: list[dict[str, Any]] = []
@@ -767,19 +896,52 @@ class GameplayInputToEffectRoute(KeywordRoute):
                     "message": "Multiple Blueprint input entries can submit the same terminal gameplay effect.",
                 })
 
-        matches = [_short_entity(item) for item in [*selected_inputs, *all_entities.values()] if item.get("kind") in {"asset", "blueprint_node", "blueprint_event", "animation_sequence", "animation_montage"}]
+        relevant_entity_ids = {
+            str(item.get("id") or "") for item in input_nodes if item.get("id")
+        } | traversed_entity_ids
+        matches = [
+            _short_entity(item)
+            for item in all_entities.values()
+            if str(item.get("id") or "") in relevant_entity_ids
+            and item.get("kind") in {"asset", "blueprint_node", "blueprint_event", "animation_sequence", "animation_montage"}
+        ]
         deduped_matches = {str(item.get("id") or ""): item for item in matches if item.get("id")}
         route_diagnostics: list[dict[str, Any]] = []
-        if input_resolution.get("match_mode") == "unmatched":
+        if input_resolution.get("match_mode") in {"unmatched", "ambiguous"}:
+            ambiguous = input_resolution.get("match_mode") == "ambiguous"
             route_diagnostics.append(
                 {
-                    "severity": "warning",
-                    "blocking": False,
-                    "code": "UEPI_INPUT_KEY_UNMATCHED",
-                    "message": "The requested input key did not exactly match any stable FKey exported by the scoped Blueprint assets.",
+                    "severity": "error",
+                    "blocking": True,
+                    "code": "UEPI_INPUT_KEY_AMBIGUOUS" if ambiguous else "UEPI_INPUT_KEY_UNMATCHED",
+                    "message": (
+                        "Multiple non-excluded input keys were requested; select exactly one stable FKey."
+                        if ambiguous
+                        else "The requested input key did not exactly match any stable FKey exported by the scoped Blueprint assets."
+                    ),
                     "requested_input": input_resolution.get("requested_input"),
-                    "available_inputs": sorted({_input_key(item) for item in candidates if item.get("kind") == "blueprint_node" and _input_key(item)}),
+                    "ambiguous_inputs": input_resolution.get("ambiguous_inputs") or [],
+                    "available_inputs": input_resolution.get("available_inputs") or [],
                     "recoverable": True,
+                }
+            )
+        relevant_relations = [
+            item
+            for item in all_relations.values()
+            if str(item.get("id") or "") in traversed_relation_ids
+        ]
+        next_actions = []
+        if resolved_input and selected_inputs:
+            next_actions.append(
+                {
+                    "reason": "Verify the selected input path in the active PIE session.",
+                    "tool": "uepi_runtime",
+                    "arguments": {
+                        "action": "input",
+                        "delivery": "possessed_pawn_input_stack",
+                        "key": resolved_input,
+                        "event": "pressed",
+                    },
                 }
             )
         return ContextPack(
@@ -788,14 +950,17 @@ class GameplayInputToEffectRoute(KeywordRoute):
             question=question,
             interpretation=self.interpretation,
             matches=list(deduped_matches.values())[:max_items],
-            relations=[_relation_summary(item) for item in list(all_relations.values()) if item.get("type") in self._FLOW_TYPES][:max_items],
+            relations=[_relation_summary(item) for item in relevant_relations if item.get("type") in self._FLOW_TYPES][:max_items],
             sections={
                 "input_resolution": input_resolution,
                 "requested_input": input_resolution.get("requested_input"),
                 "resolved_input": input_resolution.get("resolved_input"),
+                "excluded_input_keys": input_resolution.get("excluded_input_keys") or [],
+                "available_inputs": input_resolution.get("available_inputs") or [],
                 "match_mode": input_resolution.get("match_mode"),
                 "input_owner": selected_owner,
                 "input_owner_candidates": owner_candidates,
+                "selected_inputs": [_short_entity(item) for item in input_nodes[:20]],
                 "cross_asset_paths": paths[:10],
                 "duplicate_paths": duplicate_paths,
                 "terminal_effects": terminal_effects[:20],
@@ -804,7 +969,7 @@ class GameplayInputToEffectRoute(KeywordRoute):
             },
             diagnostics=route_diagnostics,
             uncertainties=["Static ownership evidence does not prove runtime input consumption; use the runtime input delivery trace for final verification."],
-            next_actions=[{"reason": "Verify the selected input path in the active PIE session.", "tool": "uepi_runtime", "arguments": {"action": "input", "delivery": "possessed_pawn_input_stack", "key": _input_key(selected_inputs[0]) if selected_inputs else "<key>", "event": "pressed"}}],
+            next_actions=next_actions,
             query_source=query_source,
         )
 
