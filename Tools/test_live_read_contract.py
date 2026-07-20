@@ -27,13 +27,11 @@ def _attribute(entity: dict[str, Any], key: str) -> Any:
     return attributes.get(key)
 
 
-def _value(server: UEPIMCPServer, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def _structured(server: UEPIMCPServer, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
     response = server.call_tool(tool, arguments)
     value = response.get("structuredContent")
     if not isinstance(value, dict):
         raise AssertionError(f"{tool} did not return structuredContent.")
-    if not value.get("ok"):
-        raise AssertionError(f"{tool} failed: {value.get('error') or value.get('diagnostics')}")
     assert set(value.get("timing") or {}) == set(TIMING_FIELDS)
     assert all(isinstance(item, (int, float)) and item >= 0 for item in value["timing"].values())
     stage_total = sum(value["timing"][field] for field in value["timing"] if field != "total_ms")
@@ -43,6 +41,13 @@ def _value(server: UEPIMCPServer, tool: str, arguments: dict[str, Any]) -> dict[
         assert len(images) == 1
         assert images[0].get("mimeType") == "image/png"
         assert images[0].get("data")
+    return value
+
+
+def _value(server: UEPIMCPServer, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    value = _structured(server, tool, arguments)
+    if not value.get("ok"):
+        raise AssertionError(f"{tool} failed: {value.get('error') or value.get('diagnostics')}")
     return value
 
 
@@ -262,6 +267,63 @@ def main(argv: list[str] | None = None) -> int:
         assert any(item.get("code") == "UEPI_BLUEPRINT_FILTER_NO_MATCH" for item in no_match["diagnostics"])
         assert not any(item.get("code") == "UEPI_REFRESH_REQUESTED" for item in no_match["diagnostics"])
 
+        input_scope = [
+            "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter",
+            "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny.BP_LLMNPC_Manny",
+        ]
+        input_cases = [
+            ("Trace key 3", "Three", [], "3"),
+            ("Trace key 3, exclude LeftAlt", "Three", ["LeftAlt"], "3"),
+            ("追踪按键 3 的效果，不要 LeftAlt", "Three", ["LeftAlt"], "3"),
+            ("Trace key 3 and do not use LeftAlt", "Three", ["LeftAlt"], "3"),
+            ("Trace LeftAlt, not Three", "LeftAlt", ["Three"], "leftalt"),
+            ("Trace key 4", None, [], "4"),
+            ("Trace keyboard key 4", None, [], "4"),
+            ("Trace input Three and LeftAlt", None, [], ["Three", "LeftAlt"]),
+            ("Trace gameplay input without a key", None, [], None),
+        ]
+        input_results: list[dict[str, Any]] = []
+        for question, expected_key, excluded_keys, requested_input in input_cases:
+            context = _structured(
+                server,
+                "uepi_context",
+                {
+                    **guard,
+                    "question": question,
+                    "route": "gameplay_input_to_effect",
+                    "hard_scope": input_scope,
+                    "max_items": 40,
+                },
+            )
+            sections = context["result"].get("sections")
+            assert isinstance(sections, dict), (question, sorted(context["result"]))
+            assert sections["requested_input"] == requested_input, (question, sections)
+            assert sections["resolved_input"] == expected_key, (question, sections)
+            assert sections["excluded_input_keys"] == excluded_keys, (question, sections)
+            if expected_key:
+                assert context["ok"] is True, (question, context["error"])
+                assert sections["selected_inputs"], (question, sections)
+                assert all(item["input_key"] == expected_key for item in sections["cross_asset_paths"]), (question, sections)
+                assert context["next_actions"], (question, context["next_actions"])
+                assert all(item.get("arguments", {}).get("key") == expected_key for item in context["next_actions"]), (question, context["next_actions"])
+            else:
+                assert context["ok"] is (requested_input is None), (question, context["error"])
+                assert sections["selected_inputs"] == [], (question, sections)
+                assert sections["cross_asset_paths"] == [], (question, sections)
+                assert sections["terminal_effects"] == [], (question, sections)
+                assert context["result"]["matches"] == [], (question, context["result"]["matches"])
+                assert context["result"]["relations"] == [], (question, context["result"]["relations"])
+                assert context["next_actions"] == [], (question, context["next_actions"])
+            input_results.append(
+                {
+                    "question": question,
+                    "requested_input": sections["requested_input"],
+                    "resolved_input": sections["resolved_input"],
+                    "excluded_input_keys": sections["excluded_input_keys"],
+                    "next_action_count": len(context["next_actions"]),
+                }
+            )
+
         hard_scope = [
             "/Game/LLMNPC/Blueprints/BP_LLMNPC_Manny",
             "/Game/LLMNPC/Animation/Waving",
@@ -302,6 +364,7 @@ def main(argv: list[str] | None = None) -> int:
         llmnpc = {
             "slot_node_count": len(slot_nodes),
             "animation_asset": animation_summary["asset"]["canonical_key"],
+            "input_cases": input_results,
             "hard_scope_p95_ms": hard_scope_p95_ms,
             "focused_node_p95_ms": focused_p95_ms,
         }

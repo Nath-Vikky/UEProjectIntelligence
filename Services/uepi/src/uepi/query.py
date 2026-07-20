@@ -1951,7 +1951,12 @@ class UEPIQueryEngine:
             item.get("code") in {"UEPI_INPUT_KEY_UNMATCHED", "UEPI_INPUT_KEY_AMBIGUOUS"}
             for item in pack.diagnostics
         )
-        if hard_scope and not result.get("matches") and not fail_closed_input:
+        input_not_requested = (
+            pack.route == "gameplay_input_to_effect"
+            and isinstance(pack.sections, dict)
+            and pack.sections.get("match_mode") == "not_requested"
+        )
+        if hard_scope and not result.get("matches") and not fail_closed_input and not input_not_requested:
             return self._error(
                 "UEPI_SCOPE_NO_MATCH",
                 "No indexed entity matched inside the requested hard scope.",

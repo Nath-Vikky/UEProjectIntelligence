@@ -457,7 +457,7 @@ namespace UE::ProjectIntelligence
 			}
 
 			FString RecommendedAction = TEXT("manual_review");
-			if (bAllBackupsAvailable) RecommendedAction = bDiskMatchesBackup ? TEXT("finalize") : TEXT("rollback");
+			if (bAllBackupsAvailable) RecommendedAction = bDiskMatchesBackup ? TEXT("finalize") : TEXT("review_current_or_rollback");
 			TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 			Result->SetStringField(TEXT("schema_version"), TEXT("uepi.recovery-inspection.v1"));
 			Result->SetStringField(TEXT("transaction_id"), JsonString(Journal, TEXT("transaction_id")));

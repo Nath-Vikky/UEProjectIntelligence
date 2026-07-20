@@ -82,6 +82,62 @@ def _relation_summary(relation: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _gameplay_entity_summary(entity: dict[str, Any]) -> dict[str, Any]:
+    attributes = _as_dict(entity.get("attributes"))
+    keep_attributes = {
+        key: attributes[key]
+        for key in (
+            "blueprint_path",
+            "event_name",
+            "graph_path",
+            "input_key",
+            "node_class",
+            "node_guid",
+            "node_title",
+            "semantic_event",
+            "semantic_function",
+            "semantic_input_key",
+            "semantic_kind",
+            "semantic_owner_class",
+        )
+        if attributes.get(key) not in (None, "")
+    }
+    return {
+        "id": entity.get("id"),
+        "kind": entity.get("kind"),
+        "canonical_key": entity.get("canonical_key"),
+        "display_name": entity.get("display_name"),
+        "source_layer": entity.get("source_layer"),
+        "attributes": keep_attributes,
+    }
+
+
+def _gameplay_relation_summary(relation: dict[str, Any]) -> dict[str, Any]:
+    attributes = _as_dict(relation.get("attributes"))
+    keep_attributes = {
+        key: attributes[key]
+        for key in (
+            "branch_label",
+            "edge_kind",
+            "source_node_class",
+            "source_pin_name",
+            "target_node_class",
+            "target_pin_name",
+        )
+        if attributes.get(key) not in (None, "")
+    }
+    return {
+        "id": relation.get("id"),
+        "type": relation.get("type"),
+        "from_id": relation.get("from_id"),
+        "to_id": relation.get("to_id"),
+        "source_layer": relation.get("source_layer"),
+        "derived": bool(relation.get("derived")),
+        "confidence": relation.get("confidence"),
+        "attributes": keep_attributes,
+    }
+
+
 def _entity_text(entity: dict[str, Any]) -> str:
     return " ".join(
         [
@@ -533,7 +589,7 @@ def _input_mention_pattern(alias: str) -> re.Pattern[str]:
 
 def _input_mention_is_negated(question: str, start: int) -> bool:
     prefix = question[max(0, start - 32):start].casefold()
-    return re.search(r"(?:\b(?:exclude|not|except|without)\b|不要|排除|不是)\s*(?:\bkey\b|按键)?\s*$", prefix) is not None
+    return re.search(r"(?:\b(?:exclude|not|except|without)\b|\bdo\s+not(?:\s+use)?\b|不要|排除|不是)\s*(?:\bkey\b|按键)?\s*$", prefix) is not None
 
 
 def _hint_input_key(ranking_hints: list[str]) -> str | None:
@@ -573,6 +629,15 @@ def _input_resolution(
     request_mode = "structured_exact" if structured else ("ranking_hint_exact" if hint else "")
 
     if not requested:
+        if re.search(r"\bwithout\s+(?:a\s+)?key\b", folded):
+            return {
+                "requested_input": None,
+                "resolved_input": None,
+                "excluded_input_keys": sorted(excluded, key=str.casefold),
+                "available_inputs": available_inputs,
+                "match_mode": "not_requested",
+                "matched": False,
+            }
         phrase_patterns = [
             re.compile(r"\b(?:press|key|input)\b\s*[:：]?\s*([A-Za-z0-9_+\-]+)", re.IGNORECASE),
             re.compile(r"(?:按键|按下|按)\s*[:：]?\s*([A-Za-z0-9_+\-]+)", re.IGNORECASE),
@@ -601,7 +666,7 @@ def _input_resolution(
             if other_positive:
                 ambiguous = [_canonical_input_key(requested), *other_positive.values()]
                 return {
-                    "requested_input": [value for _, value in explicit_mentions],
+                    "requested_input": ambiguous,
                     "resolved_input": None,
                     "excluded_input_keys": sorted(excluded, key=str.casefold),
                     "available_inputs": available_inputs,
@@ -744,7 +809,7 @@ class GameplayInputToEffectRoute(KeywordRoute):
         )
         resolved_input = str(input_resolution.get("resolved_input") or "")
         excluded_inputs = {str(item).casefold() for item in input_resolution.get("excluded_input_keys") or []}
-        fail_closed = input_resolution.get("match_mode") in {"unmatched", "ambiguous"}
+        fail_closed = input_resolution.get("match_mode") in {"unmatched", "ambiguous", "not_requested"}
         if resolved_input:
             input_nodes = [item for item in input_nodes if _input_key(item).casefold() == resolved_input.casefold()]
         elif fail_closed:
@@ -935,7 +1000,7 @@ class GameplayInputToEffectRoute(KeywordRoute):
             str(item.get("id") or "") for item in input_nodes if item.get("id")
         } | traversed_entity_ids
         matches = [
-            _short_entity(item)
+            _gameplay_entity_summary(item)
             for item in all_entities.values()
             if str(item.get("id") or "") in relevant_entity_ids
             and item.get("kind") in {"asset", "blueprint_node", "blueprint_event", "animation_sequence", "animation_montage"}
@@ -985,7 +1050,7 @@ class GameplayInputToEffectRoute(KeywordRoute):
             question=question,
             interpretation=self.interpretation,
             matches=list(deduped_matches.values())[:max_items],
-            relations=[_relation_summary(item) for item in relevant_relations if item.get("type") in self._FLOW_TYPES][:max_items],
+            relations=[_gameplay_relation_summary(item) for item in relevant_relations if item.get("type") in self._FLOW_TYPES][:max_items],
             sections={
                 "input_resolution": input_resolution,
                 "requested_input": input_resolution.get("requested_input"),
@@ -995,7 +1060,7 @@ class GameplayInputToEffectRoute(KeywordRoute):
                 "match_mode": input_resolution.get("match_mode"),
                 "input_owner": selected_owner,
                 "input_owner_candidates": owner_candidates,
-                "selected_inputs": [_short_entity(item) for item in input_nodes[:20]],
+                "selected_inputs": [_gameplay_entity_summary(item) for item in input_nodes[:20]],
                 "cross_asset_paths": paths[:10],
                 "duplicate_paths": duplicate_paths,
                 "terminal_effects": terminal_effects[:20],
