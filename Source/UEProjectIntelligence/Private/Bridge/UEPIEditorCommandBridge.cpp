@@ -227,7 +227,7 @@ namespace UE::ProjectIntelligence
 			{
 				const FString Prefix = Prepared.LeftChop(FString(TEXT(".prepared.json")).Len());
 				bool bTerminal = false;
-				for (const FString& Phase : { TEXT("applied"), TEXT("failed_rolled_back"), TEXT("rollback_failed"), TEXT("rolled_back"), TEXT("recovery_finalized") })
+				for (const FString& Phase : { TEXT("applied"), TEXT("failed_rolled_back"), TEXT("rollback_failed"), TEXT("rolled_back"), TEXT("recovery_finalized"), TEXT("recovery_discarded") })
 				{
 					if (IFileManager::Get().FileExists(*FPaths::Combine(Directory, Prefix + TEXT(".") + Phase + TEXT(".json")))) { bTerminal = true; break; }
 				}
@@ -395,6 +395,24 @@ namespace UE::ProjectIntelligence
 			return false;
 		}
 
+		FString NormalizeRecoveryFilePath(const FString& Input)
+		{
+			if (Input.IsEmpty()) return FString();
+			FString Path = Input;
+			Path.ReplaceInline(TEXT("\\"), TEXT("/"));
+			if (FPaths::IsRelative(Path))
+			{
+				int32 AnchorIndex = Path.Find(TEXT("/Content/"), ESearchCase::IgnoreCase);
+				if (AnchorIndex < 0) AnchorIndex = Path.Find(TEXT("/Saved/"), ESearchCase::IgnoreCase);
+				Path = AnchorIndex >= 0
+					? FPaths::Combine(FPaths::ProjectDir(), Path.Mid(AnchorIndex + 1))
+					: FPaths::ConvertRelativePathToFull(Path);
+			}
+			Path = FPaths::ConvertRelativePathToFull(Path);
+			FPaths::NormalizeFilename(Path);
+			return Path;
+		}
+
 		TMap<FString, FString> RecoveryBackupFiles(const TSharedPtr<FJsonObject>& Journal)
 		{
 			TMap<FString, FString> Result;
@@ -403,8 +421,8 @@ namespace UE::ProjectIntelligence
 				for (const TSharedPtr<FJsonValue>& Value : *Backups)
 				{
 					const TSharedPtr<FJsonObject> Item = Value.IsValid() ? Value->AsObject() : nullptr;
-					const FString PackageFile = JsonString(Item, TEXT("package_file"));
-					if (!PackageFile.IsEmpty()) Result.Add(PackageFile, JsonString(Item, TEXT("backup_file")));
+					const FString PackageFile = NormalizeRecoveryFilePath(JsonString(Item, TEXT("package_file")));
+					if (!PackageFile.IsEmpty()) Result.Add(PackageFile, NormalizeRecoveryFilePath(JsonString(Item, TEXT("backup_file"))));
 				}
 			}
 			return Result;
@@ -1392,6 +1410,10 @@ namespace UE::ProjectIntelligence
 		if (Command == TEXT("recovery.finalize"))
 		{
 			return RecoveryFinalizeResult(RequestId, Params);
+		}
+		if (Command == TEXT("recovery.discard"))
+		{
+			return RecoveryDiscardResult(RequestId, Params);
 		}
 		if (Command == TEXT("recovery.rollback"))
 		{
@@ -3162,6 +3184,78 @@ namespace UE::ProjectIntelligence
 		Result->SetStringField(TEXT("refresh_request_id"), RefreshId);
 		Result->SetStringField(TEXT("refresh_request_path"), RefreshPath);
 		Result->SetStringField(TEXT("refresh_error"), RefreshError);
+		return SuccessResponse(RequestId, Result);
+	}
+
+	TSharedRef<FJsonObject> FUEPIEditorCommandBridge::RecoveryDiscardResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params)
+	{
+		if (!JsonBool(Params, TEXT("acknowledge_keep_current"), false))
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_DISCARD_CONFIRMATION_REQUIRED"), TEXT("Discard requires explicit acknowledgement that the current package bytes must be kept."));
+		}
+		const FString TransactionId = JsonString(Params, TEXT("transaction_id"));
+		FString MarkerPath;
+		TSharedPtr<FJsonObject> Journal;
+		if (TransactionId.IsEmpty() || !FindRecoveryMarker(TransactionId, MarkerPath, Journal))
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_MARKER_NOT_FOUND"), TEXT("Discard requires an exact unresolved recovery transaction_id."));
+		}
+		const TArray<FString> AffectedAssets = JsonStringArray(Journal, TEXT("affected_assets"));
+		for (const FString& AssetPath : AffectedAssets)
+		{
+			const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
+			if (UPackage* ExistingPackage = FindPackage(nullptr, *PackageName))
+			{
+				if (ExistingPackage->IsDirty())
+				{
+					return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_DISCARD_DIRTY_PACKAGE"), FString::Printf(TEXT("Save or discard unsaved Editor changes before retiring the recovery marker: %s"), *PackageName));
+				}
+			}
+		}
+		const TMap<FString, FString> BackupFiles = RecoveryBackupFiles(Journal);
+		const TArray<TSharedPtr<FJsonValue>>* ConfirmedFiles = JsonArray(Params, TEXT("confirmed_current_files"));
+		if (!ConfirmedFiles || ConfirmedFiles->Num() != BackupFiles.Num())
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_DISCARD_STATE_CHANGED"), TEXT("The confirmed file set does not match the prepared transaction. Inspect again."));
+		}
+		TSet<FString> ConfirmedPaths;
+		for (const TSharedPtr<FJsonValue>& Value : *ConfirmedFiles)
+		{
+			const TSharedPtr<FJsonObject> File = Value.IsValid() ? Value->AsObject() : nullptr;
+			const FString PackageFile = NormalizeRecoveryFilePath(JsonString(File, TEXT("package_file")));
+			if (!File.IsValid() || !BackupFiles.Contains(PackageFile) || ConfirmedPaths.Contains(PackageFile))
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_DISCARD_STATE_CHANGED"), TEXT("The confirmed file set does not match the prepared transaction. Inspect again."));
+			}
+			ConfirmedPaths.Add(PackageFile);
+			const bool bExpectedExists = JsonBool(File, TEXT("package_exists"), false);
+			const bool bExists = IFileManager::Get().FileExists(*PackageFile);
+			const FString ExpectedHash = JsonString(File, TEXT("package_sha256"));
+			if (bExists != bExpectedExists || (bExists && UEPIFileSha256(PackageFile) != ExpectedHash))
+			{
+				return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_DISCARD_STATE_CHANGED"), FString::Printf(TEXT("Package bytes changed after recovery inspection: %s"), *PackageFile));
+			}
+		}
+		FString JournalPath;
+		FString JournalError;
+		if (!FUEPITransactionJournal::Write(TransactionId, TEXT("recovery_discarded"), AffectedAssets, BackupFiles, JsonBool(Journal, TEXT("saved")), TEXT("Obsolete prepared marker retired after explicit confirmation of the current package fingerprints."), JournalPath, JournalError))
+		{
+			return ErrorResponse(RequestId, TEXT("UEPI_RECOVERY_DISCARD_FAILED"), JournalError);
+		}
+		if (PendingRecoveryTransactionId == TransactionId)
+		{
+			PendingRecoveryTransactionId.Reset();
+			PendingRecoveryBackupFiles.Reset();
+			PendingRecoveryAffectedAssets.Reset();
+		}
+		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetStringField(TEXT("schema_version"), TEXT("uepi.recovery-discard.v1"));
+		Result->SetStringField(TEXT("transaction_id"), TransactionId);
+		Result->SetStringField(TEXT("marker_path"), MarkerPath);
+		Result->SetStringField(TEXT("journal_path"), JournalPath);
+		Result->SetStringField(TEXT("state"), TEXT("discarded_keep_current"));
+		Result->SetArrayField(TEXT("affected_assets"), StringArrayToJsonValues(AffectedAssets));
+		Result->SetBoolField(TEXT("current_package_fingerprints_confirmed"), true);
 		return SuccessResponse(RequestId, Result);
 	}
 

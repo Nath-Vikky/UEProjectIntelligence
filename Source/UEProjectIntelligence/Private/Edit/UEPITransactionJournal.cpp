@@ -26,7 +26,15 @@ namespace UE::ProjectIntelligence
 		TArray<TSharedPtr<FJsonValue>> Backups;
 		for (const TPair<FString, FString>& Pair : BackupFiles)
 		{
-			TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>(); Item->SetStringField(TEXT("package_file"), Pair.Key); Item->SetStringField(TEXT("backup_file"), Pair.Value); Backups.Add(MakeShared<FJsonValueObject>(Item));
+			FString PackageFile = FPaths::ConvertRelativePathToFull(Pair.Key);
+			FPaths::NormalizeFilename(PackageFile);
+			FString BackupFile;
+			if (!Pair.Value.IsEmpty())
+			{
+				BackupFile = FPaths::ConvertRelativePathToFull(Pair.Value);
+				FPaths::NormalizeFilename(BackupFile);
+			}
+			TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>(); Item->SetStringField(TEXT("package_file"), PackageFile); Item->SetStringField(TEXT("backup_file"), BackupFile); Backups.Add(MakeShared<FJsonValueObject>(Item));
 		}
 		Root->SetArrayField(TEXT("backups"), Backups);
 		FString Text; const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Text); FJsonSerializer::Serialize(Root, Writer);

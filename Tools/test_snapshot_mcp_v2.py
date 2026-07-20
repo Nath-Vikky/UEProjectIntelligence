@@ -64,6 +64,7 @@ EDIT_TOOLS = {
     "uepi_edit_validate",
     "uepi_edit_rollback",
     "uepi_recovery_finalize",
+    "uepi_recovery_discard",
     "uepi_recovery_rollback",
 }
 
@@ -284,11 +285,13 @@ def assert_post_action_report_contract() -> None:
 
 def assert_recovery_inspection_contract() -> None:
     with tempfile.TemporaryDirectory(prefix="uepi_recovery_") as temp_dir:
-        store_dir = Path(temp_dir) / "store"
+        project_dir = Path(temp_dir) / "FixtureProject"
+        root = project_dir / "Saved" / "UEProjectIntelligence"
+        store_dir = root / "store"
         transactions = store_dir / "transactions"
         transactions.mkdir(parents=True)
-        package = Path(temp_dir) / "Content" / "BP_Test.uasset"
-        backup = Path(temp_dir) / "backups" / "BP_Test.uasset"
+        package = project_dir / "Content" / "BP_Test.uasset"
+        backup = store_dir / "backups" / "BP_Test.uasset"
         package.parent.mkdir(parents=True)
         backup.parent.mkdir(parents=True)
         package.write_bytes(b"changed")
@@ -300,16 +303,26 @@ def assert_recovery_inspection_contract() -> None:
                     "transaction_id": "uepi-tx:test",
                     "phase": "prepared",
                     "affected_assets": ["/Game/BP_Test.BP_Test"],
-                    "backups": [{"package_file": str(package), "backup_file": str(backup)}],
+                    "backups": [
+                        {
+                            "package_file": "../../../../../FixtureProject/Content/BP_Test.uasset",
+                            "backup_file": "../../../../../FixtureProject/Saved/UEProjectIntelligence/store/backups/BP_Test.uasset",
+                        }
+                    ],
                 }
             ),
             encoding="utf-8",
         )
-        store = SimpleNamespace(store_dir=store_dir)
+        store = SimpleNamespace(root=root, store_dir=store_dir)
         inspection = inspect_recovery(store)
-        assert inspection[0]["recommended_action"] == "rollback"
+        assert inspection[0]["recommended_action"] == "review_current_or_rollback"
+        assert inspection[0]["files"][0]["package_file"] == str(package.resolve())
+        assert inspection[0]["files"][0]["backup_file"] == str(backup.resolve())
+        first_token = inspection[0]["discard_current_state"]["confirmation_token"]
         package.write_bytes(backup.read_bytes())
-        assert inspect_recovery(store)[0]["recommended_action"] == "finalize"
+        restored = inspect_recovery(store)[0]
+        assert restored["recommended_action"] == "finalize"
+        assert restored["discard_current_state"]["confirmation_token"] != first_token
         (transactions / "tx.recovery_finalized.json").write_text("{}", encoding="utf-8")
         assert inspect_recovery(store) == []
 

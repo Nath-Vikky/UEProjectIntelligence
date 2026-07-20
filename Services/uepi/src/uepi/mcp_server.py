@@ -485,8 +485,20 @@ WRITE_ALPHA_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "uepi_recovery_finalize",
-        "description": "Acknowledge an exact unresolved transaction and accept the current package state without restoring backups.",
+        "description": "Acknowledge an exact unresolved transaction only when every current package already matches its prepared backup.",
         "inputSchema": guarded_edit_schema({"transaction_id": {"type": "string"}}, ["transaction_id"]),
+    },
+    {
+        "name": "uepi_recovery_discard",
+        "description": "After explicit user confirmation, keep the inspected current package bytes and safely retire an obsolete prepared marker without rollback.",
+        "inputSchema": guarded_edit_schema(
+            {
+                "transaction_id": {"type": "string"},
+                "confirmation_token": {"type": "string", "description": "Exact current-state token returned by uepi_recovery_inspect."},
+                "acknowledge_keep_current": {"type": "boolean", "const": True},
+            },
+            ["transaction_id", "confirmation_token", "acknowledge_keep_current"],
+        ),
     },
     {
         "name": "uepi_recovery_rollback",
@@ -796,6 +808,8 @@ class UEPIMCPServer:
                     return self._read_result(edit.rollback(engine.store, transaction_id=str(arguments.get("transaction_id") or "")), arguments)
                 if name == "uepi_recovery_finalize":
                     return self._read_result(recovery.finalize(engine, arguments), arguments)
+                if name == "uepi_recovery_discard":
+                    return self._read_result(recovery.discard(engine, arguments), arguments)
                 if name == "uepi_recovery_rollback":
                     return self._read_result(recovery.rollback(engine, arguments), arguments)
             return self._read_result(engine._error("UEPI_UNKNOWN_TOOL", f"Unknown UEPI tool: {name}", candidates=[tool["name"] for tool in self.tools()], tool=name, operation="call"), arguments)

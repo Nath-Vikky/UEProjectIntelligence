@@ -6,22 +6,41 @@
 
 namespace UE::ProjectIntelligence
 {
+	namespace
+	{
+		FString AbsolutePackageFilename(const FString& PackageName)
+		{
+			FString PackageFile = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+			if (!IFileManager::Get().FileExists(*PackageFile))
+			{
+				const FString MapFile = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetMapPackageExtension());
+				if (IFileManager::Get().FileExists(*MapFile)) PackageFile = MapFile;
+			}
+			PackageFile = FPaths::ConvertRelativePathToFull(PackageFile);
+			FPaths::NormalizeFilename(PackageFile);
+			return PackageFile;
+		}
+	}
+
 	bool FUEPIBackupService::Create(const FString& TransactionId, const TArray<FString>& AffectedAssets, TMap<FString, FString>& OutBackupFiles, FString& OutDirectory, FString& OutError)
 	{
 		OutBackupFiles.Reset();
-		OutDirectory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("backups"), FPaths::MakeValidFileName(TransactionId));
+		OutDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UEProjectIntelligence"), TEXT("store"), TEXT("backups"), FPaths::MakeValidFileName(TransactionId)));
+		FPaths::NormalizeFilename(OutDirectory);
 		IFileManager::Get().MakeDirectory(*OutDirectory, true);
 		for (const FString& AssetPath : AffectedAssets)
 		{
 			if (!AssetPath.StartsWith(TEXT("/"))) continue;
 			const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
-			const FString PackageFile = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+			const FString PackageFile = AbsolutePackageFilename(PackageName);
 			if (!IFileManager::Get().FileExists(*PackageFile))
 			{
 				OutBackupFiles.Add(PackageFile, FString());
 				continue;
 			}
-			const FString BackupFile = FPaths::Combine(OutDirectory, FPaths::MakeValidFileName(PackageName) + FPackageName::GetAssetPackageExtension());
+			FString BackupFile = FPaths::Combine(OutDirectory, FPaths::MakeValidFileName(PackageName) + FPaths::GetExtension(PackageFile, true));
+			BackupFile = FPaths::ConvertRelativePathToFull(BackupFile);
+			FPaths::NormalizeFilename(BackupFile);
 			if (IFileManager::Get().Copy(*BackupFile, *PackageFile, true, true) != COPY_OK)
 			{
 				OutError = FString::Printf(TEXT("Could not back up target package: %s"), *PackageFile);

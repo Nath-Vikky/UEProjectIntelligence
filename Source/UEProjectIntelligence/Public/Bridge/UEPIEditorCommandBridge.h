@@ -51,6 +51,7 @@ namespace UE::ProjectIntelligence
 		TSharedRef<FJsonObject> EditRollbackResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params);
 		TSharedRef<FJsonObject> RecoveryInspectResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params) const;
 		TSharedRef<FJsonObject> RecoveryFinalizeResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params);
+		TSharedRef<FJsonObject> RecoveryDiscardResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params);
 		TSharedRef<FJsonObject> RecoveryRollbackResult(const FString& RequestId, const TSharedPtr<FJsonObject>& Params);
 		TSharedRef<FJsonObject> MakeSessionObject(const FString& State) const;
 		bool WriteSessionObject(const FString& State, FString& OutError) const;
