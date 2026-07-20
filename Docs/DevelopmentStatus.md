@@ -29,6 +29,7 @@
 - Whole-envelope response projection/pagination/budget enforcement, artifact-backed large animation payloads, strict operation contracts, and end-to-end timing diagnostics.
 - Exact World actor/component reads and filters plus viewport resize, camera metadata, absolute artifacts, and inline MCP image content.
 - Consistent multi-asset live generations, atomic Hard Scope refresh, stable `FKey` routing, Focus/Pin projection preservation, and accurate pre/post-projection payload accounting.
+- Cold online Blueprint reads synchronously refresh a missing graph slice and retry inside the same `refresh=auto` tool call; offline reads retain the explicit queued-refresh diagnostic.
 - Source-hashed Python service identity, patch-specific Editor build IDs, actionable transaction recovery inspection/finalize/rollback, and discriminated edit operation wrappers.
 - Typed Runtime assertions, truthful input-delivery evidence, safe BlueprintPure observations, objective/human/hybrid verification modes, and human-owned visual acceptance.
 - Project settings authorization modes (`ReviewEachPlan`, `TrustedSession`, `TrustedProject`) with bounded roots/domains/risk/destructive/runtime policy and complete post-action reports.
@@ -37,6 +38,7 @@
 
 - The Beta.5 synthetic Snapshot MCP regression passes with multi-asset ownership, exact input routing, focused Pin projection, service identity, recovery, trusted authorization, typed Runtime values, and post-action-report coverage.
 - `GasDemoEditor Win64 Development` compiles successfully against UE 5.3.2 after the Beta.5 recovery, Runtime, authorization, settings, and build-identity changes.
+- The matching Beta.5 source compiles in LLMNPCDemo, online Doctor passes 17/17 with the exact TrustedProject binding and 64-operation catalog, and `test_live_read_contract.py --llmnpc-regression` passes with `DefaultSlot`, exact `Waving`, 769.721 ms Hard Scope P95, and 1,015.914 ms mixed warm-read P95.
 - UE 5.3.2 `GasDemoEditor Win64 Development` source build completed successfully after vNext runtime changes.
 - Python package/tool compilation passes.
 - Snapshot MCP v2 synthetic regression is the required automated gate.

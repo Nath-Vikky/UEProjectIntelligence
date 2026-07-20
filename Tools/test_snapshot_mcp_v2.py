@@ -314,6 +314,54 @@ def assert_recovery_inspection_contract() -> None:
         assert inspect_recovery(store) == []
 
 
+def assert_blueprint_auto_refresh_retry_contract(engine: Any) -> None:
+    original_domain_read = engine._domain_entities_for_asset
+    original_force_refresh = engine._force_bridge_refresh_many
+    original_active_session = engine.snapshot.active_editor_session
+    calls = 0
+    refreshed_node = {
+        "id": "auto-refresh-node",
+        "kind": "blueprint_node",
+        "canonical_key": "/Game/BP_MetadataOnly.BP_MetadataOnly:EventGraph:AutoRefreshNode",
+        "display_name": "AutoRefreshNode",
+        "attributes": {"graph_name": "EventGraph", "node_guid": "auto-refresh-guid", "node_class": "K2Node_CallFunction"},
+        "typed_attributes": {},
+        "completeness": {"state": "complete", "covered": [], "omitted": [], "warnings": []},
+        "diagnostics": [],
+        "evidence": [],
+    }
+
+    def domain_read(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        nonlocal calls
+        calls += 1
+        return [] if calls == 1 else [refreshed_node]
+
+    def force_refresh(targets: list[str], **kwargs: Any) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+        return "current", [{"severity": "info", "blocking": False, "code": "UEPI_REFRESH_COMPLETED", "message": "fixture"}], {
+            "requested_assets": targets,
+            "refreshed_assets": targets,
+            "failed_assets": [],
+            "previous_generation": engine.state.generation,
+            "new_generation": engine.state.generation + 1,
+            "atomic": True,
+        }
+
+    try:
+        engine._domain_entities_for_asset = domain_read
+        engine._force_bridge_refresh_many = force_refresh
+        engine.snapshot.active_editor_session = lambda: {"session_id": "fixture-editor"}
+        response = engine.blueprint("/Game/BP_MetadataOnly.BP_MetadataOnly", refresh="auto")
+        assert response["ok"] is True
+        assert response["result"]["blueprint_entities"][0]["id"] == "auto-refresh-node"
+        assert response["result"]["refresh"]["refreshed_assets"] == ["/Game/BP_MetadataOnly.BP_MetadataOnly"]
+        assert any(item.get("code") == "UEPI_REFRESH_COMPLETED" for item in response["diagnostics"])
+        assert calls == 2
+    finally:
+        engine._domain_entities_for_asset = original_domain_read
+        engine._force_bridge_refresh_many = original_force_refresh
+        engine.snapshot.active_editor_session = original_active_session
+
+
 def assert_envelope(value: dict[str, Any]) -> None:
     assert value["schema_version"] == "uepi.mcp-envelope.v2"
     assert "ok" in value
@@ -1754,6 +1802,7 @@ def assert_versioned_cache_contract() -> None:
         try:
             assert old_engine.cache is not None
             old_counts = old_engine.cache.counts()
+            assert_blueprint_auto_refresh_retry_contract(old_engine)
 
             live_path = root / "store" / "manifests" / "live.json"
             live_manifest = json.loads(live_path.read_text(encoding="utf-8"))

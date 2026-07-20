@@ -1055,6 +1055,34 @@ class UEPIQueryEngine:
                     merged[item_id] = item
             domain_entities = list(merged.values())
         unfiltered_domain_entities = list(domain_entities)
+        if not unfiltered_domain_entities and refresh == "auto" and self.snapshot.active_editor_session():
+            target = self._asset_refresh_target(entity, asset)
+            retry_freshness, retry_diagnostics, refresh_summary = self._force_bridge_refresh_many(
+                [target],
+                diagnostics=diagnostics,
+                freshness=freshness,
+            )
+            if refresh_summary.get("refreshed_assets"):
+                retried = self.blueprint(
+                    asset,
+                    limit=limit,
+                    refresh="never",
+                    exact=exact,
+                    graph=graph,
+                    graph_role=graph_role,
+                    node_guid=node_guid,
+                    node_classes=node_classes,
+                    semantic_kinds=semantic_kinds,
+                )
+                retried_result = retried.get("result") if isinstance(retried.get("result"), dict) else {}
+                retried_result["refresh"] = refresh_summary
+                retried["result"] = retried_result
+                retried["diagnostics"] = retry_diagnostics + [
+                    item for item in retried.get("diagnostics") or [] if item not in retry_diagnostics
+                ]
+                if isinstance(retried.get("state"), dict):
+                    retried["state"]["freshness"] = retry_freshness or retried["state"].get("freshness")
+                return retried
 
         def blueprint_filter(item: dict[str, Any]) -> bool:
             if graph and not _graph_name_matches(_first_attribute_value(item, "graph_name", "graph", "graph_path"), graph):
